@@ -11,6 +11,8 @@ Thumbs.db
 # Python
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.mypy_cache/
 .venv/
 venv/
 env/
@@ -25,7 +27,15 @@ coverage/
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+private/
 
 # Logs and generated files
 *.log
 *.tmp
+*.cache
+reports/generated/

@@ -1,0 +1,21 @@
+name: agent-name
+description: Agent 的任务目标和适用范围。
+version: 0.1.0
+status: draft
+role: analyst
+model:
+  provider: provider-name
+  name: model-name
+  temperature: 0
+skills: []
+mcp_servers: []
+knowledge_sources: []
+workflow: null
+memory:
+  mode: session
+  retention: task
+safety:
+  network: denied
+  filesystem: workspace
+  external_write: approval-required
+  command_execution: approval-required

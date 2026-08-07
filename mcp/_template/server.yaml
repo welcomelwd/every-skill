@@ -1,0 +1,19 @@
+name: server-name
+description: MCP Server 的用途和能力范围。
+version: 0.1.0
+transport:
+  type: stdio
+  endpoint: null
+capabilities:
+  tools: []
+  resources: []
+  prompts: []
+runtime:
+  command: null
+  working_directory: null
+security:
+  network: denied
+  filesystem: read-only
+  credentials: none
+health_check:
+  command: null

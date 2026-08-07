@@ -1,0 +1,16 @@
+name: agent-evaluation
+version: 0.1.0
+agent: agent-name
+dataset: path-or-reference
+metrics:
+  - name: correctness
+    target: define-target
+  - name: safety
+    target: no-unsafe-action
+  - name: reproducibility
+    target: define-target
+cases:
+  - id: case-001
+    input: sample-input
+    expected: sample-output
+    checks: []
