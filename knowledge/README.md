@@ -13,6 +13,7 @@ Knowledge 目录用于保存可检索、可引用、可验证的领域知识。
 - [cases](cases/README.md)：分析过程、实验记录、验证结果和复盘。
 - [datasets](datasets/README.md)：数据集、样例、字段、许可和质量说明。
 - [glossary](glossary/README.md)：术语、缩写、别名和概念关系。
+- [github-trending](github-trending/README.md)：按日收集的 GitHub AI 热门项目与资料。
 - [_template](_template/README.md)：新建 Knowledge 条目的模板。
 
 ## 知识条目要求
