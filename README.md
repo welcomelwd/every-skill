@@ -53,7 +53,7 @@ every-skill/
 │   ├── cases/                     # 分析案例、复盘和验证记录
 │   ├── datasets/                  # 数据集、样例和数据说明
 │   ├── glossary/                  # 术语、缩写和概念索引
-│   └── github-trending/            # 每日 GitHub AI 热门资料归档
+│   ├── github-trending/            # 每日 GitHub AI 热门资料归档
 │   └── _template/                 # 新建 Knowledge 条目的模板
 ├── docs/                          # 项目架构、分类和协作说明
 ├── PROJECT.md                     # 项目目标、边界和生命周期
