@@ -48,6 +48,7 @@
 - cases：分析过程、实验记录、验证结果和复盘。
 - datasets：数据集、样本、字段、许可和质量说明。
 - glossary：术语、缩写、别名和概念关系。
+- github-trending：按日整理的 GitHub AI 项目、工具和资料索引。
 
 ## 命名与元数据
 
