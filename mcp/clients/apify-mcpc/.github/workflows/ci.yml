@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Node.js ${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22, 24, 26]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install pnpm and dependencies
+        uses: apify/actions/pnpm-install@v1.1.2
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Check REFERENCE.md is up to date
+        # REFERENCE.md is captured from the CLI's own --help output, so any change to
+        # help text has to be regenerated and committed with it. Node version does not
+        # affect the output, so one column of the matrix is enough.
+        if: matrix.node-version == 24
+        run: pnpm run check:reference
+
+      - name: Unit tests
+        run: pnpm run test:unit
+
+  e2e-node:
+    name: E2E tests (Node.js)
+    runs-on: ubuntu-latest
+    # Backstop against a hung test stalling the job until GitHub's 6h hard kill.
+    # The per-test watchdog in run.sh is the primary guard; this is the safety net.
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install pnpm and dependencies
+        uses: apify/actions/pnpm-install@v1.1.2
+
+      - name: Build
+        run: pnpm run build
+
+      - name: E2E tests
+        # Run without gnome-keyring: @napi-rs/keyring fails fast when no D-Bus secret
+        # service is available, and keychain.ts automatically falls back to encrypted
+        # file storage (~/.mcpc/credentials.json, mode 0600).  The keychain code paths
+        # are covered by unit tests; e2e tests only need credentials to work, not a
+        # specific storage backend.
+        run: ./test/e2e/run.sh --no-build --parallel 6
+
+  e2e-node-modern:
+    name: E2E tests (Node.js, MCP 2026-07-28 server)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install pnpm and dependencies
+        uses: apify/actions/pnpm-install@v1.1.2
+
+      - name: Build
+        run: pnpm run build
+
+      - name: E2E tests (modern-protocol test server)
+        # Protocol-version matrix column: the same suites against the SDK v2
+        # test server speaking pure MCP 2026-07-28 (legacy requests rejected).
+        # Era-specific suites skip themselves via require_server_protocol.
+        run: ./test/e2e/run.sh --no-build --parallel 6 --server-protocol modern
+
+  e2e-bun:
+    name: E2E tests (Bun)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install pnpm and dependencies
+        uses: apify/actions/pnpm-install@v1.1.2
+
+      - name: Build
+        run: pnpm run build
+
+      - name: E2E tests
+        run: ./test/e2e/run.sh --no-build --runtime bun --parallel 4

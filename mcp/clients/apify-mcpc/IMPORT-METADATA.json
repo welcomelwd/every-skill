@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "repository": "apify/mcpc",
+  "source_url": "https://github.com/apify/mcpc",
+  "ref": "default branch",
+  "resolved_commit": "096e7705b49e4c9753a18148be7f3fed55f6eb0c",
+  "category": "mcp",
+  "subcategory": "clients",
+  "slug": "apify-mcpc",
+  "license": "Apache-2.0",
+  "source_date": null,
+  "imported_at": "2026-08-10T00:51:46+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 221,
+  "copied_bytes": 2342429,
+  "excluded_files": [
+    "docs/images/mcpc-demo.gif: binary content",
+    "docs/images/mcpc-screenshot.png: binary content",
+    "docs/vhs/grep.gif: binary content",
+    "docs/vhs/proxy.gif: binary content",
+    "docs/vhs/quickstart.gif: binary content",
+    "docs/vhs/scripting.gif: binary content",
+    "docs/vhs/tools.gif: binary content"
+  ],
+  "execution": "never run by this importer"
+}

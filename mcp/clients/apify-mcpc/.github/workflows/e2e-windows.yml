@@ -1,0 +1,61 @@
+name: E2E Windows
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  e2e-windows-node:
+    name: E2E tests (Windows, Node.js)
+    runs-on: windows-latest
+    # Backstop against a hung test stalling the job until GitHub's 6h hard kill.
+    # The per-test watchdog in run.sh is the primary guard; this is the safety net.
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install pnpm and dependencies
+        uses: apify/actions/pnpm-install@v1.1.2
+
+      - name: Build
+        run: pnpm run build
+
+      - name: E2E tests
+        run: ./test/e2e/run.sh --no-build --parallel 1
+
+  e2e-windows-bun:
+    name: E2E tests (Windows, Bun)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install pnpm and dependencies
+        uses: apify/actions/pnpm-install@v1.1.2
+
+      - name: Build
+        run: pnpm run build
+
+      - name: E2E tests
+        run: ./test/e2e/run.sh --no-build --runtime bun --parallel 1

@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "repository": "tech-leads-club/agent-skills",
+  "source_url": "https://github.com/tech-leads-club/agent-skills",
+  "ref": "default branch",
+  "resolved_commit": "fe318be656b315d5b6f45cf7ea23946b2d0241b0",
+  "category": "skill",
+  "subcategory": "development",
+  "slug": "tech-leads-club-agent-skills",
+  "license": "MIT / CC BY 4.0 / third-party licenses",
+  "source_date": null,
+  "imported_at": "2026-08-10T00:51:46+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 1075,
+  "copied_bytes": 9143635,
+  "excluded_files": [
+    "CLAUDE.md: symlink",
+    ".github/assets/logo.png: binary content",
+    "packages/cli/src/assets/chiptune.mp3: binary, archive, media, or generated artifact",
+    "packages/marketplace/public/apple-touch-icon.png: binary content",
+    "packages/marketplace/public/favicon-32x32.png: binary content",
+    "packages/marketplace/public/favicon.ico: binary content",
+    "packages/marketplace/public/og-image.png: binary content",
+    "packages/marketplace/public/og-tlc-spec-driven.png: binary content",
+    "packages/marketplace/public/white_logo.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

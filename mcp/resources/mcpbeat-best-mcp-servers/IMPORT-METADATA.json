@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "repository": "mcpbeat/best-mcp-servers",
+  "source_url": "https://github.com/mcpbeat/best-mcp-servers",
+  "ref": "default branch",
+  "resolved_commit": "18af0f58127895fc25e687d91253c8f6b7e1ac74",
+  "category": "mcp",
+  "subcategory": "resources",
+  "slug": "mcpbeat-best-mcp-servers",
+  "license": "CC BY 4.0",
+  "source_date": null,
+  "imported_at": "2026-08-10T00:51:46+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 4,
+  "copied_bytes": 107744,
+  "excluded_files": [],
+  "execution": "never run by this importer"
+}

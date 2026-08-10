@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "repository": "trailofbits/skills",
+  "source_url": "https://github.com/trailofbits/skills",
+  "ref": "default branch",
+  "resolved_commit": "7b9bd5f950f89a9ba71b249b9801c1a95be3928e",
+  "category": "skill",
+  "subcategory": "security",
+  "slug": "trailofbits-skills",
+  "license": "CC BY-SA 4.0",
+  "source_date": null,
+  "imported_at": "2026-08-10T00:51:46+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 1200,
+  "copied_bytes": 6380521,
+  "excluded_files": [
+    "plugins/modern-python/hooks/shims/pip3: symlink",
+    "plugins/modern-python/hooks/shims/python3: symlink"
+  ],
+  "execution": "never run by this importer"
+}

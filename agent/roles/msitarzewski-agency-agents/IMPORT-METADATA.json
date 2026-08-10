@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "repository": "msitarzewski/agency-agents",
+  "source_url": "https://github.com/msitarzewski/agency-agents",
+  "ref": "default branch",
+  "resolved_commit": "ebe9c99acb5c96f9468de368d8bead775387d1a7",
+  "category": "agent",
+  "subcategory": "roles",
+  "slug": "msitarzewski-agency-agents",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-10T00:51:46+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 343,
+  "copied_bytes": 4404105,
+  "excluded_files": [],
+  "execution": "never run by this importer"
+}
