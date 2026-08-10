@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "repository": "browser-use/browser-use",
+  "source_url": "https://github.com/browser-use/browser-use",
+  "ref": "default branch",
+  "resolved_commit": "32601887cfbc9f4f1e3cad3e2b678e56aeaeaae4",
+  "category": "agent",
+  "subcategory": "workflows",
+  "slug": "browser-use",
+  "license": null,
+  "source_date": "2026-08-10",
+  "imported_at": "2026-08-10T07:29:55+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 487,
+  "copied_bytes": 5111333,
+  "excluded_files": [
+    "Details omitted from the repaired marker; see 2026-08-10-BATCH1-import-report.md (8 files excluded)."
+  ],
+  "execution": "never run by this importer",
+  "repair_note": "Added after the upstream snapshot's ignore rules filtered the generated marker; source snapshot was not changed."
+}
