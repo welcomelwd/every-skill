@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "repository": "Comfy-Org/ComfyUI",
+  "source_url": "https://github.com/Comfy-Org/ComfyUI",
+  "ref": "master",
+  "resolved_commit": "7d11ec31cb700d881fdf2d73731ecde0093b9540",
+  "category": "knowledge",
+  "subcategory": "tools",
+  "slug": "comfyui",
+  "license": "GPL-3.0",
+  "source_date": null,
+  "imported_at": "2026-08-10T10:21:00+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 998,
+  "copied_bytes": 18842541,
+  "excluded_files": [
+    "comfy/comfy_types/examples/input_options.png: binary content",
+    "comfy/comfy_types/examples/input_types.png: binary content",
+    "comfy/comfy_types/examples/required_hint.png: binary content",
+    "comfy/text_encoders/llama_tokenizer/tokenizer.json: file exceeds 2097152 bytes",
+    "comfy/text_encoders/qwen25_tokenizer/vocab.json: file exceeds 2097152 bytes",
+    "comfy/text_encoders/qwen35_tokenizer/merges.txt: file exceeds 2097152 bytes",
+    "comfy/text_encoders/qwen35_tokenizer/vocab.json: file exceeds 2097152 bytes",
+    "comfy/text_encoders/t5_pile_tokenizer/tokenizer.model: binary content",
+    "comfy/text_encoders/t5_tokenizer/tokenizer.json: file exceeds 2097152 bytes",
+    "input/example.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

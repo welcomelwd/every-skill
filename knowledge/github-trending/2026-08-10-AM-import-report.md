@@ -11,4 +11,4 @@
 | `msitarzewski/agency-agents` | up-to-date | `agent/roles/msitarzewski-agency-agents @ ebe9c99acb5c96f9468de368d8bead775387d1a7` |
 | `harveyai/harvey-labs` | up-to-date | `agent/evaluations/harveyai-harvey-labs @ 55510f0e609ffa5cf6f5df17d9a813ce4bb33d0c` |
 | `NVIDIA/SkillSpector` | up-to-date | `knowledge/tools/nvidia-skillspector @ 2bc641fd0639550a1cae9557491f483e30520afb` |
-| `vitali87/code-graph-rag` | up-to-date | `knowledge/tools/vitali87-code-graph-rag @ 234816efbe6c21a4245eff30e107187c98b2656b` |
+| `vitali87/code-graph-rag` | updated | `knowledge/tools/vitali87-code-graph-rag @ b32c2567718e6d7dd8d34ae18e2d1707671f318d (1164 files, 14621417 bytes); excluded 11 files` |

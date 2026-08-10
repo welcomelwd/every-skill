@@ -4,11 +4,11 @@
 
 | 项目 | 状态 | 目录或原因 |
 | --- | --- | --- |
-| `mastra-ai/mastra` | up-to-date | `agent/frameworks/mastra @ 5637ea9b0d1ccb411276c59a40c650c4b80c742a` |
+| `mastra-ai/mastra` | updated | `agent/frameworks/mastra @ 11eba99851c0eff4d8e5b6cd9b9aceb0397780f6 (3355 files, 26214397 bytes); excluded 10442 files` |
 | `kyegomez/swarms` | up-to-date | `agent/frameworks/swarms @ 7f1703c19ce0dab0d1d431fc770884f63fbc5452` |
 | `daytonaio/daytona` | up-to-date | `agent/workflows/daytona @ ec4c21b2d597091ac09ecc278f3bcc172575a987` |
 | `agent0ai/agent-zero` | up-to-date | `agent/workflows/agent-zero @ 5ff106a2d489d17c2a3b378521a8f29fb29cf77d` |
-| `HKUDS/nanobot` | up-to-date | `agent/workflows/nanobot @ 05d73803e7f68786b611e27d6906ad536fb3888f` |
+| `HKUDS/nanobot` | updated | `agent/workflows/nanobot @ c281e090d03e24220308bdb1dc9049b28d73f054 (1157 files, 13505721 bytes); excluded 5 files` |
 | `HKUDS/DeepTutor` | up-to-date | `agent/workflows/deep-tutor @ 456f9c24226e008f1ff07a7e3455d7b4d39f6221` |
 | `simular-ai/Agent-S` | up-to-date | `agent/workflows/agent-s @ bffdb59c60cbbb38c3a190b2e91da12039e4063c` |
 | `cline/cline` | up-to-date | `agent/runtimes/cline @ 149abb0ddb51d8f1827751b731dd572027069591` |

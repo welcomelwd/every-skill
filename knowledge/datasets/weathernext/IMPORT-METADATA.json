@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "repository": "google-deepmind/weathernext",
+  "source_url": "https://github.com/google-deepmind/weathernext",
+  "ref": "main",
+  "resolved_commit": "71f8883cc0f8ef02903ba6724c9c3ac36fc504f6",
+  "category": "knowledge",
+  "subcategory": "datasets",
+  "slug": "weathernext",
+  "license": "Apache-2.0",
+  "source_date": null,
+  "imported_at": "2026-08-10T10:21:00+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 82,
+  "copied_bytes": 1065047,
+  "excluded_files": [
+    "docs/weathernext1_gen/GenCast_0p25deg_accelerator_scorecard.png: binary content",
+    "docs/weathernext1_gen/GenCast_0p25deg_attention_implementation_scorecard.png: binary content",
+    "docs/weathernext1_gen/GenCast_1p0deg_Mini_ENS_scorecard.png: binary content",
+    "docs/weathernext1_gen/local_runtime_popup_1.png: binary content",
+    "docs/weathernext1_gen/local_runtime_popup_2.png: binary content",
+    "docs/weathernext1_gen/local_runtime_url.png: binary content",
+    "docs/weathernext1_gen/project.png: binary content",
+    "docs/weathernext1_gen/provision_tpu.png: binary content",
+    "docs/weathernext1_gen/tpu_types.png: binary content",
+    "weathernext/weathernext2/configs/WeatherNext2.json: file exceeds 2097152 bytes",
+    "weathernext/weathernext2/configs/WeatherNextCyclones.json: file exceeds 2097152 bytes",
+    "weathernext/weathernext2/configs/WeatherNextCyclones_Mini.json: file exceeds 2097152 bytes"
+  ],
+  "execution": "never run by this importer"
+}

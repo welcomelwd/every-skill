@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "repository": "hetaoBackend/mcp-github-trending",
+  "source_url": "https://github.com/hetaoBackend/mcp-github-trending",
+  "ref": "main",
+  "resolved_commit": "9f2c577b3496657807244cfacc2c651aeb6291ed",
+  "category": "mcp",
+  "subcategory": "servers",
+  "slug": "mcp-github-trending",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-10T10:21:00+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 12,
+  "copied_bytes": 57111,
+  "excluded_files": [],
+  "execution": "never run by this importer"
+}

@@ -4,17 +4,17 @@
 
 | 项目 | 状态 | 目录或原因 |
 | --- | --- | --- |
-| `OpenHands/OpenHands` | up-to-date | `agent/workflows/openhands-openhands @ eb85ed456627d5644c2db94b77c4ebd5623f8b9f` |
+| `OpenHands/OpenHands` | updated | `agent/workflows/openhands-openhands @ 73434d688b8f6f388178c5793368f1b1cc6e2981 (1998 files, 11452867 bytes); excluded 14 files` |
 | `bytedance/deer-flow` | up-to-date | `agent/workflows/bytedance-deer-flow @ 17531d7c118d6111b863f945ff910a7889a235b0` |
-| `langgenius/dify` | up-to-date | `agent/workflows/langgenius-dify @ 648806bc9c32eeb9e7f2307e067435f7de4e0840` |
+| `langgenius/dify` | updated | `agent/workflows/langgenius-dify @ 0f583cfe75bbcbc43c80186426dfaa2ab946edc2 (2927 files, 26214400 bytes); excluded 10519 files` |
 | `hiyouga/LlamaFactory` | up-to-date | `skill/research/hiyouga-llamafactory @ 0bbe481e6e621527284d37f1e13a6b9556c303ec` |
-| `unslothai/unsloth` | updated | `knowledge/tools/unslothai-unsloth @ d6956c383e563a19ff657dfe53990111d2f2ab3c (1041 files, 26214371 bytes); excluded 2258 files` |
+| `unslothai/unsloth` | updated | `knowledge/tools/unslothai-unsloth @ 3bbed688a8e2e32e6d30e8593c71df749b5393fa (1040 files, 26214349 bytes); excluded 2259 files` |
 | `open-webui/open-webui` | up-to-date | `knowledge/products/open-webui-open-webui @ 01f4282f1ffe0d6212f58d3afbeae21fffd0c4be` |
 | `khoj-ai/khoj` | up-to-date | `agent/workflows/khoj-ai-khoj @ ae229ca894c0b80ad84664afcfdde523b5e87057` |
-| `coder/coder` | updated | `agent/runtimes/coder-coder @ 192842c8f2fa93ac9a71614e7be214ded345b764 (2818 files, 26214399 bytes); excluded 9423 files` |
+| `coder/coder` | updated | `agent/runtimes/coder-coder @ cfeae56bedcdc88f6b491c736a712012820c5532 (2822 files, 26214400 bytes); excluded 9420 files` |
 | `anthropics/skills` | up-to-date | `skill/development/anthropics-skills @ f17010c9bb483898c1d9c9f42dde2b3a98889434` |
 | `obra/superpowers` | up-to-date | `skill/development/obra-superpowers @ 44c9b2d6e889982ac18c27d05a19fefe335194e1` |
-| `github/github-mcp-server` | updated | `mcp/servers/github-github-mcp-server @ cdfa34e0a9d3e1ae6825345471f25185dd61d74e (478 files, 4337964 bytes); excluded 62 files` |
+| `github/github-mcp-server` | up-to-date | `mcp/servers/github-github-mcp-server @ cdfa34e0a9d3e1ae6825345471f25185dd61d74e` |
 | `modelcontextprotocol/inspector` | up-to-date | `mcp/tools/modelcontextprotocol-inspector @ c7bccd477d38c2c17afb4878bcca8ee5f563c5d2` |
 | `pydantic/pydantic-ai` | up-to-date | `agent/runtimes/pydantic-pydantic-ai @ 640d5171fe5795e58553b5af414cbcac3e0c7673` |
 | `mem0ai/mem0` | up-to-date | `agent/memory/mem0ai-mem0 @ 4debc58a83377b18be81ae1e5969a300736b2fac` |
@@ -23,7 +23,7 @@
 | `vercel-labs/agent-skills` | up-to-date | `skill/development/vercel-labs-agent-skills @ 7c180d9044c9ae2b442b567aad4e42a28dd5ed62` |
 | `github/awesome-copilot` | up-to-date | `skill/development/github-awesome-copilot @ 3f0bba475ec40b9680e1d0311b9caffeec5ad4c3` |
 | `microsoft/playwright-mcp` | up-to-date | `mcp/servers/microsoft-playwright-mcp @ 7e0457a7cbf88823bf0146d12c46ae12c6818247` |
-| `awslabs/mcp` | up-to-date | `mcp/servers/awslabs-mcp @ 7ad53dc06ff7999235ab5addbbbb98042718c33a` |
+| `awslabs/mcp` | updated | `mcp/servers/awslabs-mcp @ fe3e736ba7e20be839e02aee1c19f0004d8974e9 (1496 files, 26214397 bytes); excluded 2199 files` |
 | `google/adk-python` | up-to-date | `agent/workflows/google-adk-python @ 0477e5743bdf5e0cce5a698951c7b70a07baa80a` |
 | `langchain-ai/langgraph` | up-to-date | `agent/workflows/langchain-ai-langgraph @ d56666f7fbf0d380ad84cdf0cbe5aa48ab0cc086` |
 | `huggingface/agents-course` | up-to-date | `knowledge/cases/huggingface-agents-course @ 8c0832eae634ebb34541c65265caa6da4c5d2c57` |
@@ -35,12 +35,12 @@
 | `PrimeIntellect-ai/prime-agent` | up-to-date | `agent/runtimes/primeintellect-ai-prime-agent @ a18809e00ea30638584d87b3afea7285a9d7296c` |
 | `TauricResearch/TradingAgents` | up-to-date | `agent/workflows/tauricresearch-tradingagents @ a33fd4c0f134485a43553a2c23a63cb14adbd88f` |
 | `NVIDIA/garak` | up-to-date | `knowledge/tools/nvidia-garak @ cafbe992780df70015de7295ca026b70c4629ada` |
-| `EleutherAI/lm-evaluation-harness` | up-to-date | `knowledge/tools/eleutherai-lm-evaluation-harness @ 671b1550ff9541341a3d2cdff16ee7a224c34298` |
+| `EleutherAI/lm-evaluation-harness` | updated | `knowledge/tools/eleutherai-lm-evaluation-harness @ 877a60934697c98c886cc8f57d325783544892fb (16225 files, 12463668 bytes); excluded 25 files` |
 | `mattpocock/skills` | up-to-date | `skill/development/mattpocock-skills @ 84fdeffd12f2ee307994d1eb6feb48173b6e0502` |
 | `NVIDIA/skills` | up-to-date | `skill/operations/nvidia-skills @ a9ea6f987f3a2e5efbd6f94ad394dc0b64265719` |
 | `modelcontextprotocol/typescript-sdk` | up-to-date | `mcp/clients/modelcontextprotocol-typescript-sdk @ cc4b41617ce3601b1290d67216ea0b194a3cd9ac` |
 | `modelcontextprotocol/registry` | up-to-date | `mcp/resources/modelcontextprotocol-registry @ f36b7dd4afe2d540a4ceb9b64d3627085bf5db03` |
-| `openai/openai-agents-python` | up-to-date | `agent/runtimes/openai-openai-agents-python @ 92de6cf547ca34e98a89041b50513652a97bfbca` |
+| `openai/openai-agents-python` | updated | `agent/runtimes/openai-openai-agents-python @ 2e3aa55fee2b590625d82ebdf89f39b3343b2518 (1501 files, 18773837 bytes); excluded 10 files` |
 | `microsoft/agent-framework` | up-to-date | `agent/workflows/microsoft-agent-framework @ d0a4165f170193ba1d026a259af40d35bb7eaefe` |
 | `GenAI-Security-Project/GenAI-LLM-Top10` | up-to-date | `knowledge/security/genai-security-project-genai-llm-top10 @ 7bbe0f06f468cdcc61fa73e1752183c6cfd23987` |
 | `open-compass/opencompass` | up-to-date | `knowledge/tools/open-compass-opencompass @ 96263b1a16899260586c8e945eea06934c43c225` |
