@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "repository": "vercel-labs/agent-skills",
+  "source_url": "https://github.com/vercel-labs/agent-skills",
+  "ref": "default branch",
+  "resolved_commit": "7c180d9044c9ae2b442b567aad4e42a28dd5ed62",
+  "category": "skill",
+  "subcategory": "development",
+  "slug": "vercel-labs-agent-skills",
+  "license": "MIT",
+  "source_date": "2026-08-08",
+  "imported_at": "2026-08-10T06:15:03+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 435,
+  "copied_bytes": 7506781,
+  "excluded_files": [
+    "CLAUDE.md: symlink",
+    "skills/deploy-to-vercel.zip: binary, archive, media, or generated artifact",
+    "skills/react-best-practices.zip: binary, archive, media, or generated artifact",
+    "skills/react-view-transitions.zip: binary, archive, media, or generated artifact",
+    "skills/vercel-cli-with-tokens.zip: binary, archive, media, or generated artifact",
+    "skills/web-design-guidelines.zip: binary, archive, media, or generated artifact",
+    "skills/deploy-to-vercel/Archive.zip: binary, archive, media, or generated artifact"
+  ],
+  "execution": "never run by this importer"
+}

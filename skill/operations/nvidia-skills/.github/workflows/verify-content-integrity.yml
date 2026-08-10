@@ -1,0 +1,126 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 NVIDIA Corporation. All rights reserved.
+#
+# Verify that each skill's files still match its signed manifest.
+#
+# A skill.oms.sig is a Sigstore bundle wrapping a DSSE/in-toto statement that
+# lists every signed file and its sha256 digest. Checking that a signature is
+# *present* and *genuine* does NOT prove the files still match it — a skill can
+# carry a real signature while its content has drifted (e.g. a team signs an
+# early commit, keeps editing, and the sync picks up later content with the
+# stale signature). This check recomputes each signed file's hash and compares
+# it to the manifest, failing on any mismatch or missing file.
+#
+# On a pull request it checks only the skills changed in the PR (so it catches
+# drift being introduced without blocking on unrelated pre-existing state). On
+# a schedule / manual run it checks the whole catalog as a safety net for
+# drift already on main.
+#
+# Scheduled/manual failures are surfaced in a rolling tracker issue
+# (label: integrity-failure) — a silently red scheduled run alerts no one,
+# which is how published mismatches sat unnoticed for a week in July 2026.
+# The issue auto-closes when a sweep comes back clean.
+
+name: Verify Content Integrity
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  schedule:
+    # Daily full-catalog sweep (07:17 UTC). Surfaces pre-existing drift.
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  content-integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history so the PR diff (base...head) can be computed.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Verify content matches signatures
+        id: verify
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -o pipefail
+          python3 .github/scripts/verify_content_integrity.py 2>&1 \
+            | tee /tmp/integrity-report.txt
+
+      - name: Update integrity tracker issue
+        # Full-catalog runs only (schedule / manual). PR failures are
+        # visible on the PR itself; sweep failures otherwise alert no one.
+        # always() so this runs whether the sweep passed (close tracker)
+        # or failed (open/update tracker).
+        if: ${{ always() && github.event_name != 'pull_request' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SWEEP_OUTCOME: ${{ steps.verify.outcome }}
+        run: |
+          set -euo pipefail
+
+          gh label create integrity-failure \
+            --color D93F0B \
+            --description "Published catalog content fails signature verification (daily sweep)" \
+            --force >/dev/null
+
+          existing=$(gh issue list --label integrity-failure --state open \
+                       --json number --jq '.[0].number // empty' --limit 1)
+
+          if [ "$SWEEP_OUTCOME" = "success" ]; then
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" \
+                --comment "Daily integrity sweep is clean — all published skill content matches its signatures again. Closing automatically. ([run]($RUN_URL))"
+              echo "Sweep clean — closed tracking issue #$existing"
+            else
+              echo "Sweep clean — nothing to track"
+            fi
+            exit 0
+          fi
+
+          # Failed sweep: build the tracker body from the report's
+          # finding lines. If the report file is missing (step crashed
+          # before producing output), say so rather than posting empty.
+          findings=$(grep -E "MISMATCH|MISSING|EXTRA|INVALID|could not parse" /tmp/integrity-report.txt || true)
+          finding_count=$(printf '%s' "$findings" | grep -c . || true)
+
+          body=/tmp/integrity-issue-body.md
+          {
+            echo "The daily full-catalog integrity sweep is failing: published skill content does not match its \`skill.oms.sig\`. Anyone verifying our signatures with public tooling gets failures on these files today."
+            echo ""
+            echo "**Last updated:** $(date -u +%Y-%m-%d) by [sweep run]($RUN_URL) — $finding_count finding(s)"
+            echo ""
+            echo '```'
+            if [ -n "$findings" ]; then
+              echo "$findings"
+            else
+              echo "(report unavailable — see the run log)"
+            fi
+            echo '```'
+            echo ""
+            echo "**Recovery (skill owners):** the mismatch exists at your source repo — content was modified after the signing run. Open a PR that touches the skill directory (a trivial SKILL.md version bump works if your changes are already merged), comment \`/nvskills-ci\`, and merge with the generated signature commit. Do not modify skill files afterward. Steps: https://nvidia.atlassian.net/wiki/spaces/GAIT/pages/3483240468"
+            echo ""
+            echo "This issue auto-updates on every failing sweep and closes automatically when a sweep passes."
+          } > "$body"
+
+          title="Integrity sweep failing — $finding_count file(s) do not match their signatures"
+
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --title "$title" --body-file "$body"
+            echo "Updated tracking issue #$existing"
+          else
+            gh issue create --title "$title" --body-file "$body" --label integrity-failure
+            echo "Opened new tracking issue"
+          fi

@@ -1,0 +1,49 @@
+# Troubleshooting
+
+Below are suggestions on how to fix some common errors you might encounter while using Pydantic AI. If the issue you're experiencing is not listed below or addressed in the documentation, please feel free to ask in the [Pydantic Slack](help.md) or create an issue on [GitHub](https://github.com/pydantic/pydantic-ai/issues).
+
+## Jupyter Notebook Errors
+
+### `RuntimeError: This event loop is already running`
+
+**Modern Jupyter/IPython (7.0+)**: This environment supports top-level `await` natively. You can use [`Agent.run()`][pydantic_ai.agent.Agent.run] directly in notebook cells without additional setup:
+
+```python {test="skip" lint="skip"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+result = await agent.run('Who let the dogs out?')
+```
+
+**Legacy environments or specific integrations**: If you encounter event loop conflicts, use [`nest-asyncio`](https://pypi.org/project/nest-asyncio/):
+
+```python {test="skip"}
+import nest_asyncio
+
+from pydantic_ai import Agent
+
+nest_asyncio.apply()
+
+agent = Agent('openai:gpt-5.2')
+result = agent.run_sync('Who let the dogs out?')
+```
+
+**Note**: This also applies to Google Colab and [Marimo](https://github.com/marimo-team/marimo) environments.
+
+## `RuntimeError: Event loop is closed`
+
+Synchronous methods like [`Agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] reuse the thread's current event loop, and install a fresh one if other code closed it. If this error is raised from inside `httpx` or `httpcore` during a model request, the agent was already used before its event loop was closed: the provider's HTTP connection pool still holds connections bound to the dead loop. Recreate the agent together with its model and provider (or pass a fresh `http_client` to the provider); reusing an existing `Model` instance keeps the dead connection pool. Avoid closing an event loop that other code is still using.
+
+## API Key Configuration
+
+### [`UserError`][pydantic_ai.exceptions.UserError]: Set the `[PROVIDER]_API_KEY` environment variable or pass it via the provider's `api_key=...` argument
+
+If you're running into issues with setting the API key for your model, visit the [Models](models/overview.md) page to learn more about how to set an environment variable and/or pass in an `api_key` argument.
+
+To try Pydantic AI without an API key, use the built-in [`'test'` model](testing.md#unit-testing-with-testmodel): [`Agent('test')`][pydantic_ai.agent.Agent].
+
+## Monitoring HTTPX Requests
+
+You can use custom `httpx` clients in your models in order to access specific requests, responses, and headers at runtime.
+
+It's particularly helpful to use `logfire`'s [HTTPX integration](logfire.md#monitoring-http-requests) to monitor the above.

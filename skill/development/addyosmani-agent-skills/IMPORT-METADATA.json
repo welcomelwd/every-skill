@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "repository": "addyosmani/agent-skills",
+  "source_url": "https://github.com/addyosmani/agent-skills",
+  "ref": "default branch",
+  "resolved_commit": "7676817c12a1317454ae3898a0c5c1eacf5dd3d5",
+  "category": "skill",
+  "subcategory": "development",
+  "slug": "addyosmani-agent-skills",
+  "license": "to verify",
+  "source_date": "2026-08-09",
+  "imported_at": "2026-08-10T06:15:03+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 183,
+  "copied_bytes": 781825,
+  "excluded_files": [],
+  "execution": "never run by this importer"
+}

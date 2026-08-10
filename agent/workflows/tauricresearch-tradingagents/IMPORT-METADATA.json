@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "repository": "TauricResearch/TradingAgents",
+  "source_url": "https://github.com/TauricResearch/TradingAgents",
+  "ref": "default branch",
+  "resolved_commit": "a33fd4c0f134485a43553a2c23a63cb14adbd88f",
+  "category": "agent",
+  "subcategory": "workflows",
+  "slug": "tauricresearch-tradingagents",
+  "license": "to verify",
+  "source_date": "2026-08-09",
+  "imported_at": "2026-08-10T06:15:03+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 148,
+  "copied_bytes": 739817,
+  "excluded_files": [
+    ".env.enterprise.example: sensitive filename",
+    ".env.example: sensitive filename",
+    "assets/TauricResearch.png: binary content",
+    "assets/analyst.png: binary content",
+    "assets/researcher.png: binary content",
+    "assets/risk.png: binary content",
+    "assets/schema.png: binary content",
+    "assets/trader.png: binary content",
+    "assets/cli/cli_init.png: binary content",
+    "assets/cli/cli_news.png: binary content",
+    "assets/cli/cli_technical.png: binary content",
+    "assets/cli/cli_transaction.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

@@ -1,0 +1,10 @@
+name: Nemotron Speech
+repo: nvidia-riva/Nemotron-speech-skills
+description: Deploy and operate NVIDIA Nemotron Speech (Riva) NIMs — ASR, TTS, and NMT, cloud-hosted via build.nvidia.com or self-hosted on your own GPU.
+links:
+  discussions: false
+skills:
+  - path: skills/nemotron-speech/
+    catalog_dir: nemotron-speech
+  - path: skills/nemotron-asr-finetune/
+    catalog_dir: nemotron-asr-finetune

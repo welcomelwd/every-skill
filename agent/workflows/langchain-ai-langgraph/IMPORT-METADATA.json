@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "repository": "langchain-ai/langgraph",
+  "source_url": "https://github.com/langchain-ai/langgraph",
+  "ref": "default branch",
+  "resolved_commit": "d56666f7fbf0d380ad84cdf0cbe5aa48ab0cc086",
+  "category": "agent",
+  "subcategory": "workflows",
+  "slug": "langchain-ai-langgraph",
+  "license": "MIT",
+  "source_date": "2026-08-08",
+  "imported_at": "2026-08-10T06:15:03+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 664,
+  "copied_bytes": 13104961,
+  "excluded_files": [
+    "libs/cli/examples/.env.example: sensitive filename",
+    "libs/cli/js-examples/.env.example: sensitive filename",
+    "libs/cli/js-examples/static/studio.png: binary content",
+    "libs/cli/python-monorepo-example/apps/agent/.env.example: sensitive filename",
+    "libs/cli/uv-examples/monorepo/apps/agent/.env.example: sensitive filename",
+    "libs/cli/uv-examples/simple/.env.example: sensitive filename"
+  ],
+  "execution": "never run by this importer"
+}

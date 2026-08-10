@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "repository": "google/skills",
+  "source_url": "https://github.com/google/skills",
+  "ref": "default branch",
+  "resolved_commit": "092e210b243601797a0fb939040be2b1288e6d39",
+  "category": "skill",
+  "subcategory": "operations",
+  "slug": "google-skills",
+  "license": "to verify",
+  "source_date": "2026-08-09",
+  "imported_at": "2026-08-10T06:15:03+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 507,
+  "copied_bytes": 3083698,
+  "excluded_files": [],
+  "execution": "never run by this importer"
+}

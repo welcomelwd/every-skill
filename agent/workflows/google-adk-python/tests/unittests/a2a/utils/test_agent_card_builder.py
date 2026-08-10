@@ -1,0 +1,1250 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import json
+from unittest.mock import Mock
+from unittest.mock import patch
+
+from a2a.types import AgentCapabilities
+from a2a.types import AgentCard
+from a2a.types import AgentProvider
+from a2a.types import AgentSkill
+from a2a.types import SecurityScheme
+from google.adk.a2a import _compat
+from google.adk.a2a.utils.agent_card_builder import _build_agent_description
+from google.adk.a2a.utils.agent_card_builder import _build_loop_description
+from google.adk.a2a.utils.agent_card_builder import _build_orchestration_skill
+from google.adk.a2a.utils.agent_card_builder import _build_parallel_description
+from google.adk.a2a.utils.agent_card_builder import _build_sequential_description
+from google.adk.a2a.utils.agent_card_builder import _convert_example_tool_examples
+from google.adk.a2a.utils.agent_card_builder import _extract_inputs_from_examples
+from google.adk.a2a.utils.agent_card_builder import _get_agent_skill_name
+from google.adk.a2a.utils.agent_card_builder import _get_agent_type
+from google.adk.a2a.utils.agent_card_builder import _get_default_description
+from google.adk.a2a.utils.agent_card_builder import _get_input_modes
+from google.adk.a2a.utils.agent_card_builder import _get_output_modes
+from google.adk.a2a.utils.agent_card_builder import _get_workflow_description
+from google.adk.a2a.utils.agent_card_builder import AgentCardBuilder
+from google.adk.agents.base_agent import BaseAgent
+from google.adk.agents.llm_agent import LlmAgent
+from google.adk.agents.loop_agent import LoopAgent
+from google.adk.agents.parallel_agent import ParallelAgent
+from google.adk.agents.sequential_agent import SequentialAgent
+from google.adk.tools.example_tool import ExampleTool
+from google.adk.workflow import FunctionNode
+from google.adk.workflow import START
+from google.adk.workflow import Workflow
+from pydantic import BaseModel
+import pytest
+
+
+class TestAgentCardBuilder:
+  """Test suite for AgentCardBuilder class."""
+
+  def test_init_with_valid_agent(self):
+    """Test successful initialization with valid agent."""
+    # Arrange
+    mock_agent = Mock(spec=BaseAgent)
+    mock_agent.name = "test_agent"
+
+    # Act
+    builder = AgentCardBuilder(agent=mock_agent)
+
+    # Assert
+    assert builder._agent == mock_agent
+    assert builder._rpc_url == "http://localhost:80/a2a"
+    assert isinstance(builder._capabilities, AgentCapabilities)
+    assert builder._doc_url is None
+    assert builder._provider is None
+    assert builder._security_schemes is None
+    assert builder._agent_version == "0.0.1"
+
+  def test_init_with_custom_parameters(self):
+    """Test initialization with custom parameters."""
+    # Arrange
+    mock_agent = Mock(spec=BaseAgent)
+    mock_agent.name = "test_agent"
+    mock_capabilities = Mock(spec=AgentCapabilities)
+    mock_provider = Mock(spec=AgentProvider)
+    mock_security_schemes = {"test": Mock(spec=SecurityScheme)}
+
+    # Act
+    builder = AgentCardBuilder(
+        agent=mock_agent,
+        rpc_url="https://example.com/a2a",
+        capabilities=mock_capabilities,
+        doc_url="https://docs.example.com",
+        provider=mock_provider,
+        agent_version="1.2.3",
+        security_schemes=mock_security_schemes,
+    )
+
+    # Assert
+    assert builder._agent == mock_agent
+    assert builder._rpc_url == "https://example.com/a2a"
+    assert builder._capabilities == mock_capabilities
+    assert builder._doc_url == "https://docs.example.com"
+    assert builder._provider == mock_provider
+    assert builder._security_schemes == mock_security_schemes
+    assert builder._agent_version == "1.2.3"
+
+  def test_init_with_none_agent(self):
+    """Test initialization with None agent raises ValueError."""
+    # Act & Assert
+    with pytest.raises(ValueError, match="Agent cannot be None or empty."):
+      AgentCardBuilder(agent=None)
+
+  def test_init_with_empty_agent(self):
+    """Test initialization with empty agent raises ValueError."""
+    # Arrange
+    mock_agent = None
+
+    # Act & Assert
+    with pytest.raises(ValueError, match="Agent cannot be None or empty."):
+      AgentCardBuilder(agent=mock_agent)
+
+  def test_init_rejects_function_node(self):
+    """__init__ raises TypeError for a bare FunctionNode.
+
+    FunctionNode is a BaseNode but is intended for use inside a
+    Workflow, not as a standalone A2A root. Without this guard the
+    builder would silently produce a degenerate "custom agent" card.
+    """
+
+    async def my_fn(node_input):
+      return f"echo: {node_input}"
+
+    fn_node = FunctionNode(func=my_fn, name="echo_fn")
+
+    with pytest.raises(
+        TypeError, match="requires a BaseAgent or Workflow, got FunctionNode"
+    ):
+      AgentCardBuilder(agent=fn_node)
+
+  def test_init_rejects_arbitrary_object(self):
+    """__init__ raises TypeError for non-BaseNode objects."""
+    with pytest.raises(
+        TypeError, match="requires a BaseAgent or Workflow, got str"
+    ):
+      AgentCardBuilder(agent="not an agent")
+
+  @patch("google.adk.a2a.utils.agent_card_builder._build_primary_skills")
+  @patch("google.adk.a2a.utils.agent_card_builder._build_sub_agent_skills")
+  async def test_build_success(
+      self, mock_build_sub_skills, mock_build_primary_skills
+  ):
+    """Test successful agent card building."""
+    # Arrange
+    mock_agent = Mock(spec=BaseAgent)
+    mock_agent.name = "test_agent"
+    mock_agent.description = "Test agent description"
+
+    # Use real AgentSkill protos so the card builder works on both SDK versions.
+    primary_skill = AgentSkill(
+        id="primary", name="primary", description="d", tags=["t"]
+    )
+    sub_skill = AgentSkill(id="sub", name="sub", description="d", tags=["t"])
+    mock_build_primary_skills.return_value = [primary_skill]
+    mock_build_sub_skills.return_value = [sub_skill]
+
+    builder = AgentCardBuilder(agent=mock_agent)
+
+    # Act
+    result = await builder.build()
+
+    # Assert
+    assert isinstance(result, AgentCard)
+    assert result.name == "test_agent"
+    assert result.description == "Test agent description"
+    assert not result.documentation_url  # None on 0.3, "" on 1.x
+    assert _compat.agent_card_url(result) == "http://localhost:80/a2a"
+    assert result.version == "0.0.1"
+    assert list(result.skills) == [primary_skill, sub_skill]
+    assert result.default_input_modes == ["text/plain"]
+    assert result.default_output_modes == ["text/plain"]
+    # supports_authenticated_extended_card only exists in 0.3.x.
+    if not _compat.IS_A2A_V1:
+      assert result.supports_authenticated_extended_card is False
+    # Proto: unset embedded message returns empty message, not None
+    if _compat.IS_A2A_V1:
+      assert not result.provider.url and not result.provider.organization
+    else:
+      assert result.provider is None
+    # Proto: security_schemes field behavior differs on 1.x
+    if not _compat.IS_A2A_V1:
+      assert result.security_schemes is None
+
+  @patch("google.adk.a2a.utils.agent_card_builder._build_primary_skills")
+  @patch("google.adk.a2a.utils.agent_card_builder._build_sub_agent_skills")
+  async def test_build_with_custom_parameters(
+      self, mock_build_sub_skills, mock_build_primary_skills
+  ):
+    """Test agent card building with custom parameters."""
+    # Arrange
+    mock_agent = Mock(spec=BaseAgent)
+    mock_agent.name = "test_agent"
+    mock_agent.description = None  # Should use default description
+
+    primary_skill = AgentSkill(
+        id="primary", name="primary", description="d", tags=["t"]
+    )
+    sub_skill = AgentSkill(id="sub", name="sub", description="d", tags=["t"])
+    mock_build_primary_skills.return_value = [primary_skill]
+    mock_build_sub_skills.return_value = [sub_skill]
+
+    # Use real (non-Mock) A2A objects so they serialize into the proto card on
+    # 1.x. The 1.x branch now propagates provider/security_schemes (previously
+    # dropped), so a Mock(spec=...) would fail MessageToDict serialization.
+    provider = AgentProvider(
+        organization="ACME", url="https://acme.example.com"
+    )
+    security_schemes = {"test": _compat.make_api_key_scheme(name="X-API-Key")}
+
+    builder = AgentCardBuilder(
+        agent=mock_agent,
+        rpc_url="https://example.com/a2a/",
+        doc_url="https://docs.example.com",
+        provider=provider,
+        agent_version="2.0.0",
+        security_schemes=security_schemes,
+    )
+
+    # Act
+    result = await builder.build()
+
+    # Assert
+    assert result.name == "test_agent"
+    assert result.description == "An ADK Agent"  # Default description
+    # documentation_url is populated on both SDKs.
+    assert result.documentation_url == "https://docs.example.com"
+    assert (
+        _compat.agent_card_url(result) == "https://example.com/a2a"
+    )  # Should strip trailing slash
+    assert result.version == "2.0.0"
+    # provider / security_schemes now propagate on BOTH versions.
+    assert result.provider.organization == "ACME"
+    assert "test" in result.security_schemes
+
+  @patch("google.adk.a2a.utils.agent_card_builder._build_primary_skills")
+  @patch("google.adk.a2a.utils.agent_card_builder._build_sub_agent_skills")
+  async def test_build_propagates_capabilities_provider_security_schemes(
+      self, mock_build_sub_skills, mock_build_primary_skills
+  ):
+    """capabilities/provider/security_schemes round-trip on both SDKs."""
+    # Regression: the 1.x branch of AgentCardBuilder.build previously
+    # dropped capabilities/provider/security_schemes (only the 0.3.x branch
+    # set them), silently losing caller config on 1.x. Uses real (non-Mock)
+    # A2A objects so they serialize into the proto card on 1.x.
+    mock_agent = Mock(spec=BaseAgent)
+    mock_agent.name = "test_agent"
+    mock_agent.description = None
+    mock_build_primary_skills.return_value = []
+    mock_build_sub_skills.return_value = []
+
+    capabilities = AgentCapabilities(streaming=True)
+    provider = AgentProvider(
+        organization="ACME", url="https://acme.example.com"
+    )
+    security_schemes = {
+        "api_key": _compat.make_api_key_scheme(name="X-API-Key")
+    }
+
+    builder = AgentCardBuilder(
+        agent=mock_agent,
+        rpc_url="https://example.com/a2a/",
+        capabilities=capabilities,
+        provider=provider,
+        security_schemes=security_schemes,
+    )
+
+    result = await builder.build()
+
+    # Capabilities propagated on both versions.
+    assert result.capabilities.streaming
+    # Provider propagated on both versions.
+    assert result.provider.organization == "ACME"
+    assert result.provider.url == "https://acme.example.com"
+    # Security schemes propagated on both versions.
+    assert "api_key" in result.security_schemes
+
+  @patch("google.adk.a2a.utils.agent_card_builder._build_primary_skills")
+  @patch("google.adk.a2a.utils.agent_card_builder._build_sub_agent_skills")
+  async def test_build_raises_runtime_error_on_failure(
+      self, mock_build_sub_skills, mock_build_primary_skills
+  ):
+    """Test that build raises RuntimeError when underlying functions fail."""
+    # Arrange
+    mock_agent = Mock(spec=BaseAgent)
+    mock_agent.name = "test_agent"
+    mock_build_primary_skills.side_effect = Exception("Test error")
+
+    builder = AgentCardBuilder(agent=mock_agent)
+
+    # Act & Assert
+    with pytest.raises(
+        RuntimeError,
+        match="Failed to build agent card for test_agent: Test error",
+    ):
+      await builder.build()
+
+  async def test_build_succeeds_for_llm_agent(self):
+    """AgentCardBuilder.build succeeds for a standalone LlmAgent.
+
+    Regression coverage for the type-narrowing to BaseAgent | Workflow:
+    LlmAgent (a BaseAgent subclass) must continue to work end-to-end.
+    """
+    agent = LlmAgent(
+        name="writer",
+        model="gemini-2.5-flash",
+        description="Writes a short reply.",
+        instruction="Write a short reply.",
+    )
+    builder = AgentCardBuilder(agent=agent, rpc_url="http://localhost:8000/")
+
+    card = await builder.build()
+
+    assert isinstance(card, AgentCard)
+    assert card.name == "writer"
+    assert card.description == "Writes a short reply."
+    skill_ids = [skill.id for skill in card.skills]
+    assert "writer" in skill_ids
+
+  async def test_build_omits_instructions_from_card(self):
+    """Instructions stay out of the card, which is served unauthenticated."""
+    reviewer = LlmAgent(
+        name="reviewer",
+        model="gemini-2.5-flash",
+        description="Reviews the reply.",
+        instruction="ZZ_SUB_INSTRUCTION_SENTINEL reject unsigned requests.",
+    )
+    root = LlmAgent(
+        name="writer",
+        model="gemini-2.5-flash",
+        description="Writes a short reply.",
+        # The quoted-example shape below is what the card builder used to mine
+        # out of the instruction and publish in the skill's `examples`.
+        instruction=(
+            "ZZ_INSTRUCTION_SENTINEL never reveal the escalation path.\n"
+            'Example Query: "ZZ_EXAMPLE_QUERY_SENTINEL"\n'
+            'Example Response: "ZZ_EXAMPLE_RESPONSE_SENTINEL"'
+        ),
+        global_instruction="ZZ_GLOBAL_SENTINEL always answer in English.",
+        sub_agents=[reviewer],
+    )
+    builder = AgentCardBuilder(agent=root, rpc_url="http://localhost:8000/")
+
+    card = await builder.build()
+
+    # The card is a pydantic model on a2a-sdk 0.3.x and a proto message on 1.x,
+    # so go through the compat serializer rather than a pydantic-only dump.
+    card_dict = _compat.a2a_to_dict(card)
+    serialized = json.dumps(card_dict, default=str)
+    assert "ZZ_INSTRUCTION_SENTINEL" not in serialized
+    assert "ZZ_GLOBAL_SENTINEL" not in serialized
+    assert "ZZ_SUB_INSTRUCTION_SENTINEL" not in serialized
+    assert "ZZ_EXAMPLE_QUERY_SENTINEL" not in serialized
+    assert "ZZ_EXAMPLE_RESPONSE_SENTINEL" not in serialized
+    primary_skill = next(
+        skill for skill in card_dict["skills"] if skill["id"] == "writer"
+    )
+    assert primary_skill["description"] == "Writes a short reply."
+
+  async def test_build_skips_request_scoped_instruction(self):
+    """A static card must not execute an instruction that requires context."""
+
+    async def dynamic_instruction(_):
+      raise AssertionError("request-scoped instruction must not be called")
+
+    agent = LlmAgent(
+        name="dynamic_writer",
+        description="Writes dynamic replies.",
+        model="gemini-2.5-flash",
+        instruction=dynamic_instruction,
+    )
+
+    card = await AgentCardBuilder(agent=agent).build()
+
+    model_skill = next(skill for skill in card.skills if skill.name == "model")
+    assert model_skill.description == "Writes dynamic replies."
+
+  async def test_build_succeeds_for_workflow_with_llm_agent_node(self):
+    """AgentCardBuilder.build succeeds for a Workflow (no sub_agents)."""
+    writer = LlmAgent(
+        name="writer",
+        model="gemini-2.5-flash",
+        description="Writes the reply.",
+        instruction="Write a short reply.",
+    )
+    workflow = Workflow(
+        name="pipe",
+        description="A simple pipeline.",
+        edges=[(START, writer)],
+    )
+    builder = AgentCardBuilder(agent=workflow, rpc_url="http://localhost:8000/")
+
+    card = await builder.build()
+
+    assert isinstance(card, AgentCard)
+    assert card.name == "pipe"
+    skill_ids = [skill.id for skill in card.skills]
+    assert "pipe" in skill_ids  # primary workflow skill
+    assert any("writer" in sid for sid in skill_ids)  # child node skill
+
+  async def test_build_succeeds_for_workflow_with_output_schema_node(self):
+    """AgentCardBuilder.build succeeds for a Workflow whose LlmAgent has output_schema."""
+
+    class _Out(BaseModel):
+      text: str
+
+    writer = LlmAgent(
+        name="writer",
+        model="gemini-2.5-flash",
+        instruction="Write a short reply.",
+        output_schema=_Out,
+    )
+    workflow = Workflow(name="pipe", edges=[(START, writer)])
+    builder = AgentCardBuilder(agent=workflow, rpc_url="http://localhost:8000/")
+
+    card = await builder.build()
+
+    assert card.name == "pipe"
+    primary_skill = next(s for s in card.skills if s.id == "pipe")
+    assert "graph_workflow" in primary_skill.tags
+
+  async def test_build_succeeds_for_empty_workflow(self):
+    """AgentCardBuilder.build succeeds for a Workflow with no edges."""
+    workflow = Workflow(name="empty_wf", description="An empty workflow.")
+    builder = AgentCardBuilder(agent=workflow, rpc_url="http://localhost:8000/")
+
+    card = await builder.build()
+
+    assert card.name == "empty_wf"
+    assert card.description == "An empty workflow."
+    # Only the primary skill, no orchestration skill since no child nodes.
+    assert len(card.skills) == 1
+    assert "graph_workflow" in card.skills[0].tags
+
+
+class TestHelperFunctions:
+  """Test suite for helper functions."""
+
+  def test_get_agent_type_llm_agent(self):
+    """Test _get_agent_type for LlmAgent."""
+    # Arrange
+    mock_agent = Mock(spec=LlmAgent)
+
+    # Act
+    result = _get_agent_type(mock_agent)
+
+    # Assert
+    assert result == "llm"
+
+  def test_get_agent_type_sequential_agent(self):
+    """Test _get_agent_type for SequentialAgent."""
+    # Arrange
+    mock_agent = Mock(spec=SequentialAgent)
+
+    # Act
+    result = _get_agent_type(mock_agent)
+
+    # Assert
+    assert result == "sequential_workflow"
+
+  def test_get_agent_type_parallel_agent(self):
+    """Test _get_agent_type for ParallelAgent."""
+    # Arrange
+    mock_agent = Mock(spec=ParallelAgent)
+
+    # Act
+    result = _get_agent_type(mock_agent)
+
+    # Assert
+    assert result == "parallel_workflow"
+
+  def test_get_agent_type_loop_agent(self):
+    """Test _get_agent_type for LoopAgent."""
+    # Arrange
+    mock_agent = Mock(spec=LoopAgent)
+
+    # Act
+    result = _get_agent_type(mock_agent)
+
+    # Assert
+    assert result == "loop_workflow"
+
+  def test_get_agent_type_custom_agent(self):
+    """Test _get_agent_type for custom agent."""
+    # Arrange
+    mock_agent = Mock(spec=BaseAgent)
+
+    # Act
+    result = _get_agent_type(mock_agent)
+
+    # Assert
+    assert result == "custom_agent"
+
+  def test_get_agent_skill_name_llm_agent(self):
+    """Test _get_agent_skill_name for LlmAgent."""
+    # Arrange
+    mock_agent = Mock(spec=LlmAgent)
+
+    # Act
+    result = _get_agent_skill_name(mock_agent)
+
+    # Assert
+    assert result == "model"
+
+  def test_get_agent_skill_name_workflow_agents(self):
+    """Test _get_agent_skill_name for workflow agents."""
+    # Arrange
+    mock_sequential = Mock(spec=SequentialAgent)
+    mock_parallel = Mock(spec=ParallelAgent)
+    mock_loop = Mock(spec=LoopAgent)
+
+    # Act & Assert
+    assert _get_agent_skill_name(mock_sequential) == "workflow"
+    assert _get_agent_skill_name(mock_parallel) == "workflow"
+    assert _get_agent_skill_name(mock_loop) == "workflow"
+
+  def test_get_agent_skill_name_custom_agent(self):
+    """Test _get_agent_skill_name for custom agent."""
+    # Arrange
+    mock_agent = Mock(spec=BaseAgent)
+
+    # Act
+    result = _get_agent_skill_name(mock_agent)
+
+    # Assert
+    assert result == "custom"
+
+  def test_get_agent_type_workflow(self):
+    """Test _get_agent_type for the v2 graph-based Workflow."""
+    workflow = Workflow(name="wf")
+
+    result = _get_agent_type(workflow)
+
+    assert result == "graph_workflow"
+
+  def test_get_agent_skill_name_workflow(self):
+    """Test _get_agent_skill_name for the v2 graph-based Workflow."""
+    workflow = Workflow(name="wf")
+
+    result = _get_agent_skill_name(workflow)
+
+    assert result == "workflow"
+
+  def test_get_default_description_llm_agent(self):
+    """Test _get_default_description for LlmAgent."""
+    # Arrange
+    mock_agent = Mock(spec=LlmAgent)
+
+    # Act
+    result = _get_default_description(mock_agent)
+
+    # Assert
+    assert result == "An LLM-based agent"
+
+  def test_get_default_description_sequential_agent(self):
+    """Test _get_default_description for SequentialAgent."""
+    # Arrange
+    mock_agent = Mock(spec=SequentialAgent)
+
+    # Act
+    result = _get_default_description(mock_agent)
+
+    # Assert
+    assert result == "A sequential workflow agent"
+
+  def test_get_default_description_parallel_agent(self):
+    """Test _get_default_description for ParallelAgent."""
+    # Arrange
+    mock_agent = Mock(spec=ParallelAgent)
+
+    # Act
+    result = _get_default_description(mock_agent)
+
+    # Assert
+    assert result == "A parallel workflow agent"
+
+  def test_get_default_description_loop_agent(self):
+    """Test _get_default_description for LoopAgent."""
+    # Arrange
+    mock_agent = Mock(spec=LoopAgent)
+
+    # Act
+    result = _get_default_description(mock_agent)
+
+    # Assert
+    assert result == "A loop workflow agent"
+
+  def test_get_default_description_custom_agent(self):
+    """Test _get_default_description for custom agent."""
+    # Arrange
+    mock_agent = Mock(spec=BaseAgent)
+
+    # Act
+    result = _get_default_description(mock_agent)
+
+    # Assert
+    assert result == "A custom agent"
+
+  def test_get_input_modes_llm_agent(self):
+    """Test _get_input_modes for LlmAgent."""
+    # Arrange
+    mock_agent = Mock(spec=LlmAgent)
+
+    # Act
+    result = _get_input_modes(mock_agent)
+
+    # Assert
+    assert result is None  # Currently returns None for all cases
+
+  def test_get_input_modes_non_llm_agent(self):
+    """Test _get_input_modes for non-LlmAgent."""
+    # Arrange
+    mock_agent = Mock(spec=BaseAgent)
+
+    # Act
+    result = _get_input_modes(mock_agent)
+
+    # Assert
+    assert result is None
+
+  def test_get_output_modes_llm_agent_with_config(self):
+    """Test _get_output_modes for LlmAgent with response_modalities."""
+    # Arrange
+    mock_config = Mock()
+    mock_config.response_modalities = ["text/plain", "application/json"]
+    mock_agent = Mock(spec=LlmAgent)
+    mock_agent.generate_content_config = mock_config
+
+    # Act
+    result = _get_output_modes(mock_agent)
+
+    # Assert
+    assert result == ["text/plain", "application/json"]
+
+  def test_get_output_modes_llm_agent_without_config(self):
+    """Test _get_output_modes for LlmAgent without config."""
+    # Arrange
+    mock_agent = Mock(spec=LlmAgent)
+    mock_agent.generate_content_config = None
+
+    # Act
+    result = _get_output_modes(mock_agent)
+
+    # Assert
+    assert result is None
+
+  def test_get_output_modes_llm_agent_without_response_modalities(self):
+    """Test _get_output_modes for LlmAgent without response_modalities."""
+    # Arrange
+    mock_config = Mock()
+    del mock_config.response_modalities
+    mock_agent = Mock(spec=LlmAgent)
+    mock_agent.generate_content_config = mock_config
+
+    # Act
+    result = _get_output_modes(mock_agent)
+
+    # Assert
+    assert result is None
+
+  def test_get_output_modes_non_llm_agent(self):
+    """Test _get_output_modes for non-LlmAgent."""
+    # Arrange
+    mock_agent = Mock(spec=BaseAgent)
+
+    # Act
+    result = _get_output_modes(mock_agent)
+
+    # Assert
+    assert result is None
+
+
+class TestDescriptionBuildingFunctions:
+  """Test suite for description building functions."""
+
+  def test_build_agent_description_with_description(self):
+    """Test _build_agent_description with agent description."""
+    # Arrange
+    mock_agent = Mock(spec=BaseAgent)
+    mock_agent.description = "Test agent description"
+    mock_agent.sub_agents = []
+
+    # Act
+    result = _build_agent_description(mock_agent)
+
+    # Assert
+    assert result == "Test agent description"
+
+  def test_build_agent_description_without_description(self):
+    """Test _build_agent_description without agent description."""
+    # Arrange
+    mock_agent = Mock(spec=BaseAgent)
+    mock_agent.description = None
+    mock_agent.sub_agents = []
+
+    # Act
+    result = _build_agent_description(mock_agent)
+
+    # Assert
+    assert result == "A custom agent"  # Default description
+
+  def test_build_llm_agent_description_excludes_instructions(self):
+    """Test _build_agent_description ignores an LlmAgent's instructions."""
+    # Arrange
+    mock_agent = Mock(spec=LlmAgent)
+    mock_agent.description = "Test agent"
+    mock_agent.instruction = "You should help users."
+    mock_agent.global_instruction = "Your role is to assist."
+
+    # Act
+    result = _build_agent_description(mock_agent)
+
+    # Assert
+    assert result == "Test agent"
+
+  def test_build_llm_agent_description_without_description(self):
+    """Test _build_agent_description for an LlmAgent without a description."""
+    # Arrange
+    mock_agent = Mock(spec=LlmAgent)
+    mock_agent.description = None
+    mock_agent.instruction = "You should help users."
+    mock_agent.global_instruction = None
+
+    # Act
+    result = _build_agent_description(mock_agent)
+
+    # Assert
+    assert result == "An LLM-based agent"  # Default description
+
+  def test_get_workflow_description_sequential_agent(self):
+    """Test _get_workflow_description for SequentialAgent."""
+    # Arrange
+    mock_sub_agent1 = Mock(spec=BaseAgent)
+    mock_sub_agent1.name = "agent1"
+    mock_sub_agent1.description = "First agent"
+    mock_sub_agent2 = Mock(spec=BaseAgent)
+    mock_sub_agent2.name = "agent2"
+    mock_sub_agent2.description = "Second agent"
+
+    mock_agent = Mock(spec=SequentialAgent)
+    mock_agent.sub_agents = [mock_sub_agent1, mock_sub_agent2]
+
+    # Act
+    result = _get_workflow_description(mock_agent)
+
+    # Assert
+    assert result is not None
+    assert (
+        result
+        == "First, this agent will First agent Finally, this agent will Second"
+        " agent."
+    )
+
+  def test_get_workflow_description_parallel_agent(self):
+    """Test _get_workflow_description for ParallelAgent."""
+    # Arrange
+    mock_sub_agent1 = Mock(spec=BaseAgent)
+    mock_sub_agent1.name = "agent1"
+    mock_sub_agent1.description = "First agent"
+    mock_sub_agent2 = Mock(spec=BaseAgent)
+    mock_sub_agent2.name = "agent2"
+    mock_sub_agent2.description = "Second agent"
+
+    mock_agent = Mock(spec=ParallelAgent)
+    mock_agent.sub_agents = [mock_sub_agent1, mock_sub_agent2]
+
+    # Act
+    result = _get_workflow_description(mock_agent)
+
+    # Assert
+    assert result is not None
+    assert (
+        result == "This agent will First agent and Second agent simultaneously."
+    )
+
+  def test_get_workflow_description_loop_agent(self):
+    """Test _get_workflow_description for LoopAgent."""
+    # Arrange
+    mock_sub_agent1 = Mock(spec=BaseAgent)
+    mock_sub_agent1.name = "agent1"
+    mock_sub_agent1.description = "First agent"
+    mock_sub_agent2 = Mock(spec=BaseAgent)
+    mock_sub_agent2.name = "agent2"
+    mock_sub_agent2.description = "Second agent"
+
+    mock_agent = Mock(spec=LoopAgent)
+    mock_agent.sub_agents = [mock_sub_agent1, mock_sub_agent2]
+    mock_agent.max_iterations = 5
+
+    # Act
+    result = _get_workflow_description(mock_agent)
+
+    # Assert
+    assert (
+        result
+        == "This agent will First agent and Second agent in a loop (max 5"
+        " iterations)."
+    )
+
+  def test_get_workflow_description_loop_agent_unlimited(self):
+    """Test _get_workflow_description for LoopAgent with unlimited iterations."""
+    # Arrange
+    mock_sub_agent1 = Mock(spec=BaseAgent)
+    mock_sub_agent1.name = "agent1"
+    mock_sub_agent1.description = "First agent"
+
+    mock_agent = Mock(spec=LoopAgent)
+    mock_agent.sub_agents = [mock_sub_agent1]
+    mock_agent.max_iterations = None
+
+    # Act
+    result = _get_workflow_description(mock_agent)
+
+    # Assert
+    assert (
+        result
+        == "This agent will First agent in a loop (max unlimited iterations)."
+    )
+
+  def test_get_workflow_description_no_sub_agents(self):
+    """Test _get_workflow_description for agent without sub-agents."""
+    # Arrange
+    mock_agent = Mock(spec=SequentialAgent)
+    mock_agent.sub_agents = []
+
+    # Act
+    result = _get_workflow_description(mock_agent)
+
+    # Assert
+    assert result is None
+
+  def test_get_workflow_description_custom_agent(self):
+    """Test _get_workflow_description for custom agent."""
+    # Arrange
+    mock_agent = Mock(spec=BaseAgent)
+    mock_agent.sub_agents = [Mock(spec=BaseAgent)]
+
+    # Act
+    result = _get_workflow_description(mock_agent)
+
+    # Assert
+    assert result is None
+
+  def test_get_workflow_description_workflow_with_nodes(self):
+    """_get_workflow_description lists graph nodes for a Workflow."""
+    writer = LlmAgent(
+        name="writer",
+        model="gemini-2.5-flash",
+        description="Writes the reply",
+    )
+    reviewer = LlmAgent(
+        name="reviewer",
+        model="gemini-2.5-flash",
+        description="Reviews the reply",
+    )
+    workflow = Workflow(
+        name="pipe", edges=[(START, writer), (writer, reviewer)]
+    )
+
+    result = _get_workflow_description(workflow)
+
+    assert result is not None
+    assert "writer: Writes the reply" in result
+    assert "reviewer: Reviews the reply" in result
+
+  def test_get_workflow_description_empty_workflow(self):
+    """_get_workflow_description returns None for a workflow with no nodes."""
+    workflow = Workflow(name="empty_wf")
+
+    result = _get_workflow_description(workflow)
+
+    assert result is None
+
+  def test_build_sequential_description_single_agent(self):
+    """Test _build_sequential_description with single sub-agent."""
+    # Arrange
+    mock_sub_agent = Mock(spec=BaseAgent)
+    mock_sub_agent.name = "agent1"
+    mock_sub_agent.description = "First agent"
+
+    mock_agent = Mock(spec=SequentialAgent)
+    mock_agent.sub_agents = [mock_sub_agent]
+
+    # Act
+    result = _build_sequential_description(mock_agent)
+
+    # Assert
+    assert result == "First, this agent will First agent."
+
+  def test_build_sequential_description_multiple_agents(self):
+    """Test _build_sequential_description with multiple sub-agents."""
+    # Arrange
+    mock_sub_agent1 = Mock(spec=BaseAgent)
+    mock_sub_agent1.name = "agent1"
+    mock_sub_agent1.description = "First agent"
+    mock_sub_agent2 = Mock(spec=BaseAgent)
+    mock_sub_agent2.name = "agent2"
+    mock_sub_agent2.description = "Second agent"
+    mock_sub_agent3 = Mock(spec=BaseAgent)
+    mock_sub_agent3.name = "agent3"
+    mock_sub_agent3.description = "Third agent"
+
+    mock_agent = Mock(spec=SequentialAgent)
+    mock_agent.sub_agents = [mock_sub_agent1, mock_sub_agent2, mock_sub_agent3]
+
+    # Act
+    result = _build_sequential_description(mock_agent)
+
+    # Assert
+    assert (
+        result
+        == "First, this agent will First agent Then, this agent will Second"
+        " agent Finally, this agent will Third agent."
+    )
+
+  def test_build_sequential_description_without_descriptions(self):
+    """Test _build_sequential_description with sub-agents without descriptions."""
+    # Arrange
+    mock_sub_agent1 = Mock(spec=BaseAgent)
+    mock_sub_agent1.name = "agent1"
+    mock_sub_agent1.description = None
+    mock_sub_agent2 = Mock(spec=BaseAgent)
+    mock_sub_agent2.name = "agent2"
+    mock_sub_agent2.description = None
+
+    mock_agent = Mock(spec=SequentialAgent)
+    mock_agent.sub_agents = [mock_sub_agent1, mock_sub_agent2]
+
+    # Act
+    result = _build_sequential_description(mock_agent)
+
+    # Assert
+    assert (
+        result
+        == "First, this agent will execute the agent1 agent Finally, this agent"
+        " will execute the agent2 agent."
+    )
+
+  def test_build_parallel_description_single_agent(self):
+    """Test _build_parallel_description with single sub-agent."""
+    # Arrange
+    mock_sub_agent = Mock(spec=BaseAgent)
+    mock_sub_agent.name = "agent1"
+    mock_sub_agent.description = "First agent"
+
+    mock_agent = Mock(spec=ParallelAgent)
+    mock_agent.sub_agents = [mock_sub_agent]
+
+    # Act
+    result = _build_parallel_description(mock_agent)
+
+    # Assert
+    assert result == "This agent will First agent simultaneously."
+
+  def test_build_parallel_description_multiple_agents(self):
+    """Test _build_parallel_description with multiple sub-agents."""
+    # Arrange
+    mock_sub_agent1 = Mock(spec=BaseAgent)
+    mock_sub_agent1.name = "agent1"
+    mock_sub_agent1.description = "First agent"
+    mock_sub_agent2 = Mock(spec=BaseAgent)
+    mock_sub_agent2.name = "agent2"
+    mock_sub_agent2.description = "Second agent"
+    mock_sub_agent3 = Mock(spec=BaseAgent)
+    mock_sub_agent3.name = "agent3"
+    mock_sub_agent3.description = "Third agent"
+
+    mock_agent = Mock(spec=ParallelAgent)
+    mock_agent.sub_agents = [mock_sub_agent1, mock_sub_agent2, mock_sub_agent3]
+
+    # Act
+    result = _build_parallel_description(mock_agent)
+
+    # Assert
+    assert (
+        result
+        == "This agent will First agent , Second agent and Third agent"
+        " simultaneously."
+    )
+
+  def test_build_loop_description_single_agent(self):
+    """Test _build_loop_description with single sub-agent."""
+    # Arrange
+    mock_sub_agent = Mock(spec=BaseAgent)
+    mock_sub_agent.name = "agent1"
+    mock_sub_agent.description = "First agent"
+
+    mock_agent = Mock(spec=LoopAgent)
+    mock_agent.sub_agents = [mock_sub_agent]
+    mock_agent.max_iterations = 3
+
+    # Act
+    result = _build_loop_description(mock_agent)
+
+    # Assert
+    assert result == "This agent will First agent in a loop (max 3 iterations)."
+
+  def test_build_loop_description_multiple_agents(self):
+    """Test _build_loop_description with multiple sub-agents."""
+    # Arrange
+    mock_sub_agent1 = Mock(spec=BaseAgent)
+    mock_sub_agent1.name = "agent1"
+    mock_sub_agent1.description = "First agent"
+    mock_sub_agent2 = Mock(spec=BaseAgent)
+    mock_sub_agent2.name = "agent2"
+    mock_sub_agent2.description = "Second agent"
+
+    mock_agent = Mock(spec=LoopAgent)
+    mock_agent.sub_agents = [mock_sub_agent1, mock_sub_agent2]
+    mock_agent.max_iterations = 10
+
+    # Act
+    result = _build_loop_description(mock_agent)
+
+    # Assert
+    assert (
+        result
+        == "This agent will First agent and Second agent in a loop (max 10"
+        " iterations)."
+    )
+
+  def test_build_orchestration_skill_with_sub_agents(self):
+    """Test _build_orchestration_skill with sub-agents."""
+    # Arrange
+    mock_sub_agent1 = Mock(spec=BaseAgent)
+    mock_sub_agent1.name = "agent1"
+    mock_sub_agent1.description = "First agent description"
+    mock_sub_agent2 = Mock(spec=BaseAgent)
+    mock_sub_agent2.name = "agent2"
+    mock_sub_agent2.description = "Second agent description"
+
+    mock_agent = Mock(spec=BaseAgent)
+    mock_agent.name = "main_agent"
+    mock_agent.sub_agents = [mock_sub_agent1, mock_sub_agent2]
+
+    # Act
+    result = _build_orchestration_skill(mock_agent, "sequential_workflow")
+
+    # Assert
+    assert result is not None
+    assert result.id == "main_agent-sub-agents"
+    assert result.name == "sub-agents"
+    assert (
+        result.description
+        == "Orchestrates: agent1: First agent description; agent2: Second agent"
+        " description"
+    )
+    assert result.tags == ["sequential_workflow", "orchestration"]
+
+  def test_build_orchestration_skill_without_descriptions(self):
+    """Test _build_orchestration_skill with sub-agents without descriptions."""
+    # Arrange
+    mock_sub_agent1 = Mock(spec=BaseAgent)
+    mock_sub_agent1.name = "agent1"
+    mock_sub_agent1.description = None
+    mock_sub_agent2 = Mock(spec=BaseAgent)
+    mock_sub_agent2.name = "agent2"
+    mock_sub_agent2.description = None
+
+    mock_agent = Mock(spec=BaseAgent)
+    mock_agent.name = "main_agent"
+    mock_agent.sub_agents = [mock_sub_agent1, mock_sub_agent2]
+
+    # Act
+    result = _build_orchestration_skill(mock_agent, "parallel_workflow")
+
+    # Assert
+    assert result is not None
+    assert (
+        result.description
+        == "Orchestrates: agent1: No description; agent2: No description"
+    )
+
+  def test_build_orchestration_skill_no_sub_agents(self):
+    """Test _build_orchestration_skill with no sub-agents."""
+    # Arrange
+    mock_agent = Mock(spec=BaseAgent)
+    mock_agent.sub_agents = []
+
+    # Act
+    result = _build_orchestration_skill(mock_agent, "custom_agent")
+
+    # Assert
+    assert result is None
+
+
+class TestExampleExtractionFunctions:
+  """Test suite for example extraction functions."""
+
+  def test_convert_example_tool_examples_with_model_dump(self):
+    """Test _convert_example_tool_examples with examples that have model_dump."""
+    # Arrange
+    mock_input = Mock()
+    mock_input.model_dump.return_value = {"text": "test input"}
+    mock_output1 = Mock()
+    mock_output1.model_dump.return_value = {"text": "test output 1"}
+    mock_output2 = Mock()
+    mock_output2.model_dump.return_value = {"text": "test output 2"}
+
+    mock_example = Mock()
+    mock_example.input = mock_input
+    mock_example.output = [mock_output1, mock_output2]
+
+    mock_tool = Mock(spec=ExampleTool)
+    mock_tool.examples = [mock_example]
+
+    # Act
+    result = _convert_example_tool_examples(mock_tool)
+
+    # Assert
+    assert len(result) == 1
+    assert result[0]["input"] == {"text": "test input"}
+    assert result[0]["output"] == [
+        {"text": "test output 1"},
+        {"text": "test output 2"},
+    ]
+
+  def test_convert_example_tool_examples_without_model_dump(self):
+    """Test _convert_example_tool_examples with examples without model_dump."""
+    # Arrange
+    mock_input = {"text": "test input"}
+    mock_output1 = {"text": "test output 1"}
+    mock_output2 = {"text": "test output 2"}
+
+    mock_example = Mock()
+    mock_example.input = mock_input
+    mock_example.output = [mock_output1, mock_output2]
+
+    mock_tool = Mock(spec=ExampleTool)
+    mock_tool.examples = [mock_example]
+
+    # Act
+    result = _convert_example_tool_examples(mock_tool)
+
+    # Assert
+    assert len(result) == 1
+    assert result[0]["input"] == {"text": "test input"}
+    assert result[0]["output"] == [
+        {"text": "test output 1"},
+        {"text": "test output 2"},
+    ]
+
+  def test_convert_example_tool_examples_multiple_examples(self):
+    """Test _convert_example_tool_examples with multiple examples."""
+    # Arrange
+    mock_example1 = Mock()
+    mock_example1.input = {"text": "input 1"}
+    mock_example1.output = [{"text": "output 1"}]
+
+    mock_example2 = Mock()
+    mock_example2.input = {"text": "input 2"}
+    mock_example2.output = [{"text": "output 2"}]
+
+    mock_tool = Mock(spec=ExampleTool)
+    mock_tool.examples = [mock_example1, mock_example2]
+
+    # Act
+    result = _convert_example_tool_examples(mock_tool)
+
+    # Assert
+    assert len(result) == 2
+    assert result[0]["input"] == {"text": "input 1"}
+    assert result[0]["output"] == [{"text": "output 1"}]
+    assert result[1]["input"] == {"text": "input 2"}
+    assert result[1]["output"] == [{"text": "output 2"}]
+
+  def test_convert_example_tool_examples_empty_list(self):
+    """Test _convert_example_tool_examples with empty examples list."""
+    # Arrange
+    mock_tool = Mock(spec=ExampleTool)
+    mock_tool.examples = []
+
+    # Act
+    result = _convert_example_tool_examples(mock_tool)
+
+    # Assert
+    assert result == []
+
+  def test_extract_inputs_from_examples_from_plain_text_input(self):
+    """Test _extract_inputs_from_examples on plain text as input."""
+    # Arrange
+    examples = [
+        {
+            "input": {"text": "What is the weather?"},
+            "output": [{"text": "What time is it?"}],
+        },
+        {
+            "input": {"text": "The weather is sunny."},
+            "output": [{"text": "It is 3 PM."}],
+        },
+    ]
+
+    # Act
+    result = _extract_inputs_from_examples(examples)
+
+    # Assert
+    assert len(result) == 2
+    assert result[0] == "What is the weather?"
+    assert result[1] == "The weather is sunny."
+
+  def test_extract_inputs_from_examples_from_example_tool(self):
+    """Test _extract_inputs_from_examples as extracted from ExampleTool."""
+
+    # Arrange
+    # This is what would be extracted from an ExampleTool
+    examples = [
+        {
+            "input": {
+                "role": "user",
+                "parts": [{"text": "What is the weather?"}],
+            },
+            "output": [
+                {
+                    "role": "model",
+                    "parts": [{"text": "What time is it?"}],
+                },
+            ],
+        },
+        {
+            "input": {
+                "role": "user",
+                "parts": [{"text": "The weather is sunny."}],
+            },
+            "output": [
+                {
+                    "role": "model",
+                    "parts": [{"text": "It is 3 PM."}],
+                },
+            ],
+        },
+    ]
+
+    # Act
+    result = _extract_inputs_from_examples(examples)
+
+    # Assert
+    assert len(result) == 2
+    assert result[0] == "What is the weather?"
+    assert result[1] == "The weather is sunny."
+
+  def test_extract_inputs_from_examples_none_input(self):
+    """Test _extract_inputs_from_examples on None as input."""
+    # Act
+    result = _extract_inputs_from_examples(None)
+
+    # Assert
+    assert len(result) == 0

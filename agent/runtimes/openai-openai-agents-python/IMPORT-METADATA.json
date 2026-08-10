@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "repository": "openai/openai-agents-python",
+  "source_url": "https://github.com/openai/openai-agents-python",
+  "ref": "default branch",
+  "resolved_commit": "3b62591fc308c95f8bdd01f1aa6a5e68ca216f7c",
+  "category": "agent",
+  "subcategory": "runtimes",
+  "slug": "openai-openai-agents-python",
+  "license": "MIT",
+  "source_date": "2026-08-09",
+  "imported_at": "2026-08-10T06:15:03+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 1498,
+  "copied_bytes": 18693013,
+  "excluded_files": [
+    "CLAUDE.md: symlink",
+    "docs/assets/images/graph.png: binary content",
+    "docs/assets/images/harness_with_compute.png: binary content",
+    "docs/assets/images/mcp-tracing.jpg: binary, archive, media, or generated artifact",
+    "docs/assets/images/orchestration.png: binary content",
+    "examples/basic/media/image_bison.jpg: binary, archive, media, or generated artifact",
+    "examples/basic/media/partial_o3-and-o4-mini-system-card.pdf: binary content",
+    "examples/sandbox/data/f1040.pdf: binary content",
+    "examples/sandbox/data/sample_w2.pdf: binary content",
+    "examples/sandbox/tutorials/vision_website_clone/reference-site.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

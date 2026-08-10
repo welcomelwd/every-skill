@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "repository": "modelcontextprotocol/servers",
+  "source_url": "https://github.com/modelcontextprotocol/servers",
+  "ref": "default branch",
+  "resolved_commit": "76d64c822f5125032f89eb71dbdb94e42b434821",
+  "category": "mcp",
+  "subcategory": "examples",
+  "slug": "modelcontextprotocol-servers",
+  "license": "MIT",
+  "source_date": "2026-08-09",
+  "imported_at": "2026-08-10T06:15:03+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 144,
+  "copied_bytes": 1445724,
+  "excluded_files": [
+    ".npmrc: sensitive filename"
+  ],
+  "execution": "never run by this importer"
+}
