@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "source_date": "2026-08-10",
+  "batch": "POPULAR-BATCH-4",
+  "source_markdown": "knowledge/github-trending/2026-08-10.md",
+  "selection_note": "Final 9 non-starred candidates remaining from the confirmed popular-project list after STAR-BATCH-1 and POPULAR-BATCH-2/3. Canonical repository names and default refs were revalidated before import.",
+  "projects": [
+    {
+      "repository": "microsoft/markitdown",
+      "source_url": "https://github.com/microsoft/markitdown",
+      "category": "knowledge",
+      "subcategory": "tools",
+      "slug": "markitdown",
+      "ref": "main",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "ollama/ollama",
+      "source_url": "https://github.com/ollama/ollama",
+      "category": "knowledge",
+      "subcategory": "tools",
+      "slug": "ollama",
+      "ref": "main",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "huggingface/transformers",
+      "source_url": "https://github.com/huggingface/transformers",
+      "category": "knowledge",
+      "subcategory": "tools",
+      "slug": "transformers",
+      "ref": "main",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "BerriAI/litellm",
+      "source_url": "https://github.com/BerriAI/litellm",
+      "category": "knowledge",
+      "subcategory": "tools",
+      "slug": "litellm",
+      "ref": "litellm_internal_staging",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "promptfoo/promptfoo",
+      "source_url": "https://github.com/promptfoo/promptfoo",
+      "category": "knowledge",
+      "subcategory": "evaluations",
+      "slug": "promptfoo",
+      "ref": "main",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "Arize-ai/phoenix",
+      "source_url": "https://github.com/Arize-ai/phoenix",
+      "category": "knowledge",
+      "subcategory": "evaluations",
+      "slug": "phoenix",
+      "ref": "main",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "Giskard-AI/giskard-oss",
+      "source_url": "https://github.com/Giskard-AI/giskard-oss",
+      "renamed_from": "giskard-ai/giskard-oss",
+      "source_url_alias": "https://github.com/giskard-ai/giskard-oss",
+      "category": "knowledge",
+      "subcategory": "evaluations",
+      "slug": "giskard-oss",
+      "ref": "main",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "openai/codex-security",
+      "source_url": "https://github.com/openai/codex-security",
+      "category": "knowledge",
+      "subcategory": "security",
+      "slug": "codex-security",
+      "ref": "main",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "NationalSecurityAgency/ghidra",
+      "source_url": "https://github.com/NationalSecurityAgency/ghidra",
+      "category": "knowledge",
+      "subcategory": "reverse-engineering",
+      "slug": "ghidra",
+      "ref": "master",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    }
+  ]
+}
