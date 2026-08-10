@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "repository": "NVIDIA/SkillSpector",
+  "source_url": "https://github.com/NVIDIA/SkillSpector",
+  "ref": "default branch",
+  "resolved_commit": "2bc641fd0639550a1cae9557491f483e30520afb",
+  "category": "knowledge",
+  "subcategory": "tools",
+  "slug": "nvidia-skillspector",
+  "license": "Apache-2.0",
+  "source_date": null,
+  "imported_at": "2026-08-10T06:20:37+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 275,
+  "copied_bytes": 3152024,
+  "excluded_files": [
+    ".env.example: sensitive filename",
+    "contrib/batch_scan/.env.example: sensitive filename"
+  ],
+  "execution": "never run by this importer"
+}

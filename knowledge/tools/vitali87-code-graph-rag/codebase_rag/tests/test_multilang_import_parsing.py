@@ -1,0 +1,333 @@
+#!/usr/bin/env python3
+
+
+import tempfile
+from pathlib import Path
+from unittest.mock import MagicMock
+
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
+
+
+def test_javascript_import_parsing() -> None:
+    """Test JavaScript import parsing."""
+    test_code = """
+import { func1, func2 } from './utils';
+import React from 'react';
+import * as helpers from './helpers';
+const fs = require('fs');
+
+function main() {
+    func1();
+    React.createElement();
+    helpers.doSomething();
+    fs.readFile();
+}
+"""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        test_file = Path(temp_dir) / "test.js"
+        test_file.write_text(encoding="utf-8", data=test_code)
+
+        parsers, queries = load_parsers()
+        assert "javascript" in parsers, "JavaScript parser not available"
+
+        mock_ingestor = MagicMock()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=Path(temp_dir),
+            parsers=parsers,
+            queries=queries,
+        )
+
+        updater.run()
+
+        project_name = Path(temp_dir).name
+        test_module = f"{project_name}.test"
+
+        assert test_module in updater.factory.import_processor.import_mapping, (
+            f"No import mapping for {test_module}"
+        )
+        actual_imports = updater.factory.import_processor.import_mapping[test_module]
+
+        expected = {
+            "func1": f"{project_name}.utils.func1",
+            "func2": f"{project_name}.utils.func2",
+            "React": "react.default",
+            "helpers": f"{project_name}.helpers",
+            "fs": "fs",
+        }
+
+        for name, path in expected.items():
+            assert name in actual_imports, f"Missing import: {name}"
+            assert actual_imports[name] == path, (
+                f"Wrong path for {name}: expected {path}, got {actual_imports[name]}"
+            )
+
+
+def test_java_import_parsing() -> None:
+    """Test Java import parsing."""
+    test_code = """
+import java.util.List;
+import java.util.*;
+import static java.lang.Math.PI;
+
+public class Test {
+    public void main() {
+        List<String> list = new ArrayList<>();
+        System.out.println(PI);
+    }
+}
+"""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        test_file = Path(temp_dir) / "test.java"
+        test_file.write_text(encoding="utf-8", data=test_code)
+
+        parsers, queries = load_parsers()
+        if "java" not in parsers:
+            return
+
+        mock_ingestor = MagicMock()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=Path(temp_dir),
+            parsers=parsers,
+            queries=queries,
+        )
+
+        updater.run()
+
+        project_name = Path(temp_dir).name
+        test_module = f"{project_name}.test"
+
+        assert test_module in updater.factory.import_processor.import_mapping, (
+            f"No import mapping for {test_module}"
+        )
+        actual_imports = updater.factory.import_processor.import_mapping[test_module]
+
+        expected = {
+            "List": "java.util.List",
+            "PI": "java.lang.Math.PI",
+            "*java.util": "java.util",
+        }
+
+        for name, path in expected.items():
+            assert name in actual_imports, f"Missing import: {name}"
+            assert actual_imports[name] == path, (
+                f"Wrong path for {name}: expected {path}, got {actual_imports[name]}"
+            )
+
+
+def test_rust_import_parsing() -> None:
+    """Test Rust import parsing."""
+    test_code = """
+use std::collections::HashMap;
+use std::{fs, io};
+use crate::utils::*;
+use std::collections::HashMap as Map;
+
+fn main() {
+    let mut map = HashMap::new();
+    let file = fs::File::open("test.txt");
+    let mut other_map = Map::new();
+}
+"""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        test_file = Path(temp_dir) / "test.rs"
+        test_file.write_text(encoding="utf-8", data=test_code)
+
+        parsers, queries = load_parsers()
+        if "rust" not in parsers:
+            return
+
+        mock_ingestor = MagicMock()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=Path(temp_dir),
+            parsers=parsers,
+            queries=queries,
+        )
+
+        updater.run()
+
+        project_name = Path(temp_dir).name
+        test_module = f"{project_name}.test"
+
+        assert test_module in updater.factory.import_processor.import_mapping, (
+            f"No import mapping for {test_module}"
+        )
+        actual_imports = updater.factory.import_processor.import_mapping[test_module]
+
+        # Local (crate::) targets are rewritten to project qns at parse time
+        # (issue #1007); external targets keep their raw `::` path.
+        expected = {
+            "HashMap": "std::collections::HashMap",
+            "fs": "std::fs",
+            "io": "std::io",
+            "*crate::utils": f"{project_name}.utils",
+            "Map": "std::collections::HashMap",
+        }
+
+        for name, path in expected.items():
+            assert name in actual_imports, f"Missing import: {name}"
+            assert actual_imports[name] == path, (
+                f"Wrong path for {name}: expected {path}, got {actual_imports[name]}"
+            )
+
+
+def test_rust_complex_import_patterns() -> None:
+    """Test complex Rust import patterns that were previously not supported."""
+    test_code = """
+// Nested groups
+use std::{io::{Read, Write}, fs::{self, File}};
+
+// Aliases within groups
+use std::io::{self as Sio, Read as ReadTrait};
+
+// Complex nested paths
+use super::super::module;
+use crate::{module1, module2::{submod1, submod2}};
+
+// Self imports
+use self::local_module;
+use super::{self, parent_module};
+
+fn main() {
+    let mut file = File::open("test.txt").unwrap();
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer).unwrap();
+
+    Sio::stdout().write_all(&buffer).unwrap();
+    ReadTrait::read_exact(&mut file, &mut buffer).unwrap();
+}
+"""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        test_file = Path(temp_dir) / "test.rs"
+        test_file.write_text(encoding="utf-8", data=test_code)
+
+        parsers, queries = load_parsers()
+        if "rust" not in parsers:
+            return
+
+        mock_ingestor = MagicMock()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=Path(temp_dir),
+            parsers=parsers,
+            queries=queries,
+        )
+
+        updater.run()
+
+        project_name = Path(temp_dir).name
+        test_module = f"{project_name}.test"
+
+        assert test_module in updater.factory.import_processor.import_mapping, (
+            f"No import mapping for {test_module}"
+        )
+        actual_imports = updater.factory.import_processor.import_mapping[test_module]
+
+        # External targets keep their raw `::` path; crate::/super::/self::
+        # targets are rewritten to project qns at parse time (issue #1007).
+        # The file module is <project>.test, so one super:: reaches the
+        # project root and further supers floor there.
+        expected = {
+            "Read": "std::io::Read",
+            "Write": "std::io::Write",
+            "File": "std::fs::File",
+            "Sio": "std::io",
+            "ReadTrait": "std::io::Read",
+            "module": f"{project_name}.module",
+            "module1": f"{project_name}.module1",
+            "submod1": f"{project_name}.module2.submod1",
+            "submod2": f"{project_name}.module2.submod2",
+            "local_module": f"{project_name}.test.local_module",
+            "parent_module": f"{project_name}.parent_module",
+        }
+        # `use super::{self, parent_module}` binds the parent module under a
+        # name only its resolved path knows, so the `self` part contributes no
+        # entry; keyed on the keyword it was unreachable anyway (issue #1054).
+        assert "self" not in actual_imports
+
+        for name, path in expected.items():
+            assert name in actual_imports, f"Missing import: {name}"
+            assert actual_imports[name] == path, (
+                f"Wrong path for {name}: expected {path}, got {actual_imports[name]}"
+            )
+
+
+def test_go_import_parsing() -> None:
+    """Test Go import parsing."""
+    test_code = """
+package main
+
+import "fmt"
+import (
+    "os"
+    f "fmt"
+)
+
+func main() {
+    fmt.Println("Hello")
+    os.Exit(0)
+    f.Printf("Test")
+}
+"""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        test_file = Path(temp_dir) / "test.go"
+        test_file.write_text(encoding="utf-8", data=test_code)
+
+        parsers, queries = load_parsers()
+        if "go" not in parsers:
+            return
+
+        mock_ingestor = MagicMock()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=Path(temp_dir),
+            parsers=parsers,
+            queries=queries,
+        )
+
+        updater.run()
+
+        project_name = Path(temp_dir).name
+        test_module = f"{project_name}.test"
+
+        assert test_module in updater.factory.import_processor.import_mapping, (
+            f"No import mapping for {test_module}"
+        )
+        actual_imports = updater.factory.import_processor.import_mapping[test_module]
+
+        expected = {"fmt": "fmt", "os": "os", "f": "fmt"}
+
+        for name, path in expected.items():
+            assert name in actual_imports, f"Missing import: {name}"
+            assert actual_imports[name] == path, (
+                f"Wrong path for {name}: expected {path}, got {actual_imports[name]}"
+            )
+
+
+def test_go_dot_import_binds_sentinel_not_package_name() -> None:
+    # `import . "fmt"` exposes the package's exported names, NOT the `fmt`
+    # identifier, so only the `.`-prefixed sentinel may be recorded.
+    test_code = 'package main\n\nimport . "fmt"\n\nfunc main() {\n\tPrintln("x")\n}\n'
+    with tempfile.TemporaryDirectory() as temp_dir:
+        test_file = Path(temp_dir) / "test.go"
+        test_file.write_text(encoding="utf-8", data=test_code)
+
+        parsers, queries = load_parsers()
+        if "go" not in parsers:
+            return
+
+        updater = GraphUpdater(
+            ingestor=MagicMock(),
+            repo_path=Path(temp_dir),
+            parsers=parsers,
+            queries=queries,
+        )
+        updater.run()
+
+        module = f"{Path(temp_dir).name}.test"
+        actual = updater.factory.import_processor.import_mapping.get(module, {})
+        assert actual.get(".fmt") == "fmt", actual
+        assert "fmt" not in actual, actual

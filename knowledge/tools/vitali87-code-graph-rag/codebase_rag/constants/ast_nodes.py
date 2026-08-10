@@ -1,0 +1,290 @@
+# Shared tree-sitter node types, field names, and query captures.
+
+from .languages import SupportedLanguage
+
+FUNCTION_NODES_BASIC = ("function_declaration", "function_definition")
+FUNCTION_NODES_LAMBDA = (
+    "lambda_expression",
+    "arrow_function",
+    "anonymous_function",
+    "closure_expression",
+)
+FUNCTION_NODES_METHOD = (
+    "method_declaration",
+    "constructor_declaration",
+    "destructor_declaration",
+)
+FUNCTION_NODES_TEMPLATE = (
+    "template_declaration",
+    "function_signature_item",
+    "function_signature",
+)
+FUNCTION_NODES_GENERATOR = ("generator_function_declaration", "function_expression")
+
+CLASS_NODES_BASIC = ("class_declaration", "class_definition")
+CLASS_NODES_STRUCT = ("struct_declaration", "struct_specifier", "struct_item")
+CLASS_NODES_INTERFACE = ("interface_declaration", "trait_declaration", "trait_item")
+CLASS_NODES_ENUM = ("enum_declaration", "enum_item", "enum_specifier")
+CLASS_NODES_TYPE_ALIAS = ("type_alias_declaration", "type_item")
+CLASS_NODES_UNION = ("union_specifier", "union_item")
+
+CALL_NODES_BASIC = ("call_expression", "function_call")
+CALL_NODES_METHOD = (
+    "method_invocation",
+    "member_call_expression",
+    "field_expression",
+)
+CALL_NODES_OPERATOR = ("binary_expression", "unary_expression", "update_expression")
+CALL_NODES_SPECIAL = ("new_expression", "delete_expression", "macro_invocation")
+
+IMPORT_NODES_STANDARD = ("import_declaration", "import_statement")
+IMPORT_NODES_FROM = ("import_from_statement",)
+# variable_declaration: CommonJS `var X = require(...)` (express) binds
+# imports like const/let lexical_declarations.
+IMPORT_NODES_MODULE = (
+    "lexical_declaration",
+    "variable_declaration",
+    "export_statement",
+)
+IMPORT_NODES_INCLUDE = ("preproc_include",)
+
+JS_TS_FUNCTION_NODES = (
+    "function_declaration",
+    "generator_function_declaration",
+    # The generator EXPRESSION (`const g = function* () {}`) is a function
+    # value like function_expression; omitting it left such nodes
+    # unregistered and unreferencable (issue #994).
+    "generator_function",
+    "function_expression",
+    "arrow_function",
+    "method_definition",
+)
+# The anonymous class-expression node type (`const X = class {...}`); the named
+# form is `class_declaration`.
+TS_CLASS_EXPRESSION = "class"
+JS_TS_CLASS_NODES = ("class_declaration", TS_CLASS_EXPRESSION)
+JS_TS_IMPORT_NODES = (
+    "import_statement",
+    "lexical_declaration",
+    "variable_declaration",
+    "export_statement",
+)
+JS_TS_LANGUAGES = frozenset(
+    {SupportedLanguage.JS, SupportedLanguage.TS, SupportedLanguage.TSX}
+)
+
+CPP_IMPORT_NODES = ("preproc_include", "template_function", "declaration")
+
+# AST field names for name extraction
+NAME_FIELDS = ("identifier", "name", "id")
+
+# Tree-sitter field name constants for child_by_field_name
+FIELD_OBJECT = "object"
+FIELD_PROPERTY = "property"
+FIELD_NAME = "name"
+FIELD_ALIAS = "alias"
+FIELD_MODULE_NAME = "module_name"
+FIELD_ARGUMENTS = "arguments"
+FIELD_BODY = "body"
+FIELD_RETURN_TYPE = "return_type"
+FIELD_CONSTRUCTOR = "constructor"
+FIELD_DECLARATOR = "declarator"
+FIELD_PARAMETERS = "parameters"
+# A JS/TS arrow with a single bare-identifier parameter (`x => ...`) carries it
+# in the singular `parameter` field, with no formal_parameters wrapper.
+FIELD_PARAMETER = "parameter"
+FIELD_KIND = "kind"
+FIELD_RECEIVER = "receiver"
+FIELD_TYPE = "type"
+# The wrapped function/class inside a Python decorated_definition node.
+FIELD_DEFINITION = "definition"
+FIELD_RESULT = "result"
+# Rust impl `trait`/`type` fields and a trait's supertrait `bounds`.
+FIELD_TRAIT = "trait"
+FIELD_BOUNDS = "bounds"
+TS_RS_TRAIT_BOUNDS = "trait_bounds"
+FIELD_VALUE = "value"
+FIELD_LEFT = "left"
+FIELD_RIGHT = "right"
+# A C-style for's post-iteration clause: Java/C++ hold it in an `update`
+# field on the loop node, Go inside its `for_clause`.
+FIELD_UPDATE = "update"
+FIELD_FIELD = "field"
+FIELD_SCOPE = "scope"
+FIELD_SUPERCLASS = "superclass"
+FIELD_SUPERCLASSES = "superclasses"
+FIELD_INTERFACES = "interfaces"
+
+QUERY_FUNCTIONS = "functions"
+QUERY_CLASSES = "classes"
+QUERY_CALLS = "calls"
+QUERY_IMPORTS = "imports"
+QUERY_LOCALS = "locals"
+QUERY_CONFIG = "config"
+QUERY_LANGUAGE = "language"
+QUERY_HIGHLIGHTS = "highlights"
+
+CAPTURE_FUNCTION = "function"
+CAPTURE_CLASS = "class"
+CAPTURE_CALL = "call"
+CAPTURE_IMPORT = "import"
+CAPTURE_IMPORT_FROM = "import_from"
+CAPTURE_KEYWORD_MODIFIER = "keyword.modifier"
+CAPTURE_KEYWORD = "keyword"
+CAPTURE_ATTRIBUTE = "attribute"
+CAPTURE_FUNCTION_DECORATOR = "function.decorator"
+
+EXCLUDED_KEYWORDS = frozenset(
+    {
+        "def",
+        "class",
+        "fn",
+        "struct",
+        "impl",
+        "interface",
+        "enum",
+        "function",
+        "trait",
+        "type",
+        "void",
+        "None",
+        "True",
+        "False",
+        "null",
+        "true",
+        "false",
+        "return",
+        "import",
+        "from",
+        "as",
+        "where",
+    }
+)
+
+TS_IMPORT_STATEMENT = "import_statement"
+TS_IMPORT_FROM_STATEMENT = "import_from_statement"
+TS_DOTTED_NAME = "dotted_name"
+TS_ALIASED_IMPORT = "aliased_import"
+TS_RELATIVE_IMPORT = "relative_import"
+TS_IMPORT_PREFIX = "import_prefix"
+TS_WILDCARD_IMPORT = "wildcard_import"
+
+TS_STRING = "string"
+# JS/TS string literals hold their text in a string_fragment child (like
+# Python's string_content), used for I/O target extraction.
+TS_STRING_FRAGMENT = "string_fragment"
+# The node type for an escaped char, spelled the same in every grammar we load
+# but placed differently, so check the shape before reusing this anywhere new:
+# JS/TS, Go, Rust, C/C++, C# and Java make it a SIBLING that splits the
+# surrounding content into separate fragments, and a reader joining content
+# children alone drops it and fuses the fragments either side (issue #944);
+# Python and Lua nest it inside their content node, which needs no handling;
+# Dart and Scala expose the escape as the only named child, with the plain
+# text in hidden tokens, so a content-plus-escape join would return the escape
+# ALONE (neither has an io_access descriptor today).
+TS_ESCAPE_SEQUENCE = "escape_sequence"
+# Modern Node builtin imports carry a node: scheme (`import fs from 'node:fs'`);
+# stripped when checking whether an imported name is the builtin module.
+NODE_BUILTIN_PREFIX = "node:"
+# `return_statement` node type (shared by Python and JS/TS grammars); used by
+# the language-agnostic flow walk.
+TS_RETURN_STATEMENT = "return_statement"
+# `await fetch(...)` wraps the call in an await_expression; the flow walk
+# unwraps it to see the inner source expression.
+TS_AWAIT_EXPRESSION = "await_expression"
+# tree-sitter parses comments as named children, so the flow walk filters them
+# out before indexing arguments or reading a single sub-expression.
+TS_COMMENT = "comment"
+# `(expr)` wraps its value in a parenthesized_expression; the flow walk unwraps
+# it (like await) to reach the inner source/tainted expression.
+TS_PARENTHESIZED_EXPRESSION = "parenthesized_expression"
+TS_IMPORT_CLAUSE = "import_clause"
+TS_LEXICAL_DECLARATION = "lexical_declaration"
+TS_VARIABLE_DECLARATION = "variable_declaration"
+TS_EXPORT_STATEMENT = "export_statement"
+TS_NAMED_IMPORTS = "named_imports"
+TS_IMPORT_SPECIFIER = "import_specifier"
+TS_NAMESPACE_IMPORT = "namespace_import"
+TS_IDENTIFIER = "identifier"
+TS_VARIABLE_DECLARATOR = "variable_declarator"
+TS_CALL_EXPRESSION = "call_expression"
+TS_EXPORT_CLAUSE = "export_clause"
+TS_EXPORT_SPECIFIER = "export_specifier"
+TS_EXPORT_DEFAULT = "default"
+TS_ACCESSIBILITY_MODIFIER = "accessibility_modifier"
+TS_PRIVATE = "private"
+TS_PRIVATE_PROPERTY_IDENTIFIER = "private_property_identifier"
+
+TS_IMPORT_DECLARATION = "import_declaration"
+TS_STATIC = "static"
+TS_SCOPED_IDENTIFIER = "scoped_identifier"
+TS_ASTERISK = "asterisk"
+
+TS_USE_DECLARATION = "use_declaration"
+
+TS_IMPORT_SPEC = "import_spec"
+TS_IMPORT_SPEC_LIST = "import_spec_list"
+TS_PACKAGE_IDENTIFIER = "package_identifier"
+TS_INTERPRETED_STRING_LITERAL = "interpreted_string_literal"
+
+TS_PREPROC_INCLUDE = "preproc_include"
+TS_TEMPLATE_FUNCTION = "template_function"
+TS_DECLARATION = "declaration"
+TS_STRING_LITERAL = "string_literal"
+TS_SYSTEM_LIB_STRING = "system_lib_string"
+TS_TEMPLATE_ARGUMENT_LIST = "template_argument_list"
+# Plain call/constructor argument list (C++ `in("x.txt")` init_declarator
+# value, Java `new FileWriter("x")` arguments).
+TS_ARGUMENT_LIST = "argument_list"
+# `do { .. } while (cond)`: same node type in the Java and C++ grammars.
+TS_DO_STATEMENT = "do_statement"
+# Shared verbatim by the JS/TS, Java, and C++ grammars.
+TS_BREAK_STATEMENT = "break_statement"
+TS_TYPE_DESCRIPTOR = "type_descriptor"
+TS_TYPE_IDENTIFIER = "type_identifier"
+
+TS_RETURN_STATEMENT = "return_statement"
+TS_RETURN = "return"
+TS_NEW_EXPRESSION = "new_expression"
+
+# Tree-sitter class/module node types for class_ingest
+TS_MODULE_DECLARATION = "module_declaration"
+TS_IMPL_ITEM = "impl_item"
+TS_INTERFACE_DECLARATION = "interface_declaration"
+TS_ENUM_DECLARATION = "enum_declaration"
+TS_ENUM_SPECIFIER = "enum_specifier"
+TS_ENUM_CLASS_SPECIFIER = "enum_class_specifier"
+TS_TYPE_ALIAS_DECLARATION = "type_alias_declaration"
+TS_STRUCT_SPECIFIER = "struct_specifier"
+TS_UNION_SPECIFIER = "union_specifier"
+TS_CLASS_DECLARATION = "class_declaration"
+TS_NAMESPACE_DEFINITION = "namespace_definition"
+TS_ABSTRACT_CLASS_DECLARATION = "abstract_class_declaration"
+TS_INTERNAL_MODULE = "internal_module"
+
+TS_BASE_CLASS_CLAUSE = "base_class_clause"
+TS_TEMPLATE_TYPE = "template_type"
+TS_ACCESS_SPECIFIER = "access_specifier"
+TS_VIRTUAL = "virtual"
+TS_TYPE_LIST = "type_list"
+TS_CLASS_HERITAGE = "class_heritage"
+# TS class `implements I, J` clause (a child of class_heritage).
+TS_IMPLEMENTS_CLAUSE = "implements_clause"
+TS_EXTENDS_CLAUSE = "extends_clause"
+TS_MEMBER_EXPRESSION = "member_expression"
+TS_SELECTOR_EXPRESSION = "selector_expression"
+TS_EXTENDS = "extends"
+TS_ARGUMENTS = "arguments"
+TS_EXTENDS_TYPE_CLAUSE = "extends_type_clause"
+
+TS_METHOD_DEFINITION = "method_definition"
+TS_DECORATOR = "decorator"
+TS_ERROR = "ERROR"
+TS_EXPRESSION_STATEMENT = "expression_statement"
+TS_STATEMENT_BLOCK = "statement_block"
+TS_PARENTHESIZED_EXPRESSION = "parenthesized_expression"
+TS_BINARY_EXPRESSION = "binary_expression"
+
+TS_ATTRIBUTE = "attribute"
+
+TS_FUNCTION_SIGNATURE = "function_signature"

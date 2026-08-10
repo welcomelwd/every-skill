@@ -1,0 +1,1784 @@
+"""Interactive agent loop: turn natural-language questions into graph queries."""
+
+from __future__ import annotations
+
+import asyncio
+import difflib
+import json
+import mimetypes
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+import uuid
+from collections import deque
+from collections.abc import Callable, Coroutine
+from contextlib import contextmanager
+from dataclasses import replace
+from decimal import Decimal
+from html import escape as html_escape
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from loguru import logger
+from prompt_toolkit import PromptSession, prompt
+from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.shortcuts import print_formatted_text
+from pydantic_ai import (
+    BinaryContent,
+    DeferredToolRequests,
+    DeferredToolResults,
+    ToolDenied,
+)
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+    UserContent,
+)
+from rich.console import Group
+from rich.live import Live
+from rich.panel import Panel
+from rich.prompt import Prompt
+from rich.spinner import Spinner
+from rich.table import Table
+from rich.text import Text
+
+from . import constants as cs
+from . import exceptions as ex
+from . import logs as ls
+from .config import ModelConfig, load_ignore_patterns, settings
+from .models import AppContext
+from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
+from .providers.base import get_provider_from_config
+from .services import QueryProtocol
+from .services.graph_service import MemgraphIngestor
+from .services.llm import CypherGenerator, create_rag_orchestrator
+from .tools.ast_grep_service import AstGrepService
+from .tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
+from .tools.codebase_query import create_query_tool
+from .tools.directory_lister import DirectoryLister, create_directory_lister_tool
+from .tools.file_editor import FileEditor, create_file_editor_tool
+from .tools.file_reader import FileReader, create_file_reader_tool
+from .tools.file_writer import FileWriter, create_file_writer_tool
+from .tools.semantic_search import (
+    create_get_function_source_tool,
+    create_semantic_search_tool,
+)
+from .tools.shell_command import ShellCommander, create_shell_command_tool
+from .tools.structural_editor import create_structural_editor_tool
+from .tools.structural_search import create_structural_search_tool
+from .tools.web_search import create_web_search_tool, make_web_searcher
+from .types_defs import (
+    CHAT_LOOP_UI,
+    OPTIMIZATION_LOOP_UI,
+    ORANGE_STYLE,
+    AgentLoopUI,
+    CancelledResult,
+    ConfirmationToolNames,
+    CreateFileArgs,
+    GraphData,
+    QueryJsonOutput,
+    RawToolArgs,
+    ReplaceCodeArgs,
+    ShellCommandArgs,
+    StructuralReplaceArgs,
+    ToolArgs,
+)
+from .utils.rich_markdown import LeftAlignedMarkdown
+
+if TYPE_CHECKING:
+    from prompt_toolkit.key_binding import KeyPressEvent
+    from pydantic_ai import Agent
+    from pydantic_ai.messages import ModelMessage
+    from pydantic_ai.models import Model
+    from pydantic_ai.usage import RunUsage
+
+
+def style(
+    text: str, color: cs.Color, modifier: cs.StyleModifier = cs.StyleModifier.BOLD
+) -> str:
+    if modifier == cs.StyleModifier.NONE:
+        return f"[{color}]{text}[/{color}]"
+    return f"[{modifier} {color}]{text}[/{modifier} {color}]"
+
+
+def dim(text: str) -> str:
+    return f"[{cs.StyleModifier.DIM}]{text}[/{cs.StyleModifier.DIM}]"
+
+
+app_context = AppContext()
+
+
+def init_session_log(project_root: Path) -> Path:
+    log_dir = project_root / cs.TMP_DIR
+    log_dir.mkdir(exist_ok=True)
+    app_context.session.log_file = (
+        log_dir / f"{cs.SESSION_LOG_PREFIX}{uuid.uuid4().hex[:8]}{cs.SESSION_LOG_EXT}"
+    )
+    with open(app_context.session.log_file, "w") as f:
+        f.write(cs.SESSION_LOG_HEADER)
+    return app_context.session.log_file
+
+
+def log_session_event(event: str) -> None:
+    if app_context.session.log_file:
+        with open(app_context.session.log_file, "a") as f:
+            f.write(f"{event}\n")
+
+
+def get_session_context() -> str:
+    if app_context.session.log_file and app_context.session.log_file.exists():
+        content = app_context.session.log_file.read_text(encoding="utf-8")
+        return f"{cs.SESSION_CONTEXT_START}{content}{cs.SESSION_CONTEXT_END}"
+    return ""
+
+
+def _autowrap_diff_blocks(text: str) -> str:
+    if cs.DIFF_GIT_HEADER not in text:
+        return text
+    lines = text.split("\n")
+    out: list[str] = []
+    in_fence = False
+    in_diff = False
+
+    def is_diff_continuation(line: str) -> bool:
+        if line == "":
+            return True
+        return line.startswith(cs.DIFF_CONTINUATION_PREFIXES)
+
+    for line in lines:
+        if line.startswith(cs.MARKDOWN_FENCE):
+            if in_diff:
+                out.append(cs.MARKDOWN_FENCE)
+                in_diff = False
+            in_fence = not in_fence
+            out.append(line)
+            continue
+        if in_fence:
+            out.append(line)
+            continue
+        if not in_diff and line.startswith(cs.DIFF_GIT_HEADER):
+            out.append(cs.MARKDOWN_FENCE_DIFF)
+            in_diff = True
+            out.append(line)
+            continue
+        if in_diff:
+            if is_diff_continuation(line):
+                out.append(line)
+            else:
+                out.append(cs.MARKDOWN_FENCE)
+                in_diff = False
+                out.append(line)
+            continue
+        out.append(line)
+
+    if in_diff:
+        out.append(cs.MARKDOWN_FENCE)
+    return "\n".join(out)
+
+
+def _print_unified_diff(target: str, replacement: str, path: str) -> None:
+    separator = dim(cs.HORIZONTAL_SEPARATOR)
+    app_context.console.print(f"\n{cs.UI_DIFF_FILE_HEADER.format(path=path)}")
+    app_context.console.print(separator)
+
+    diff = difflib.unified_diff(
+        target.splitlines(keepends=True),
+        replacement.splitlines(keepends=True),
+        fromfile=cs.DIFF_LABEL_BEFORE,
+        tofile=cs.DIFF_LABEL_AFTER,
+        lineterm="",
+    )
+
+    for line in diff:
+        line = line.rstrip("\n")
+        match line[:1]:
+            case cs.DiffMarker.ADD | cs.DiffMarker.DEL if line.startswith(
+                cs.DiffMarker.HEADER_ADD
+            ) or line.startswith(cs.DiffMarker.HEADER_DEL):
+                app_context.console.print(dim(line))
+            case cs.DiffMarker.HUNK:
+                app_context.console.print(
+                    style(line, cs.Color.CYAN, cs.StyleModifier.NONE)
+                )
+            case cs.DiffMarker.ADD:
+                app_context.console.print(
+                    style(line, cs.Color.GREEN, cs.StyleModifier.NONE)
+                )
+            case cs.DiffMarker.DEL:
+                app_context.console.print(
+                    style(line, cs.Color.RED, cs.StyleModifier.NONE)
+                )
+            case _:
+                app_context.console.print(line)
+
+    app_context.console.print(separator)
+
+
+def _print_new_file_content(path: str, content: str) -> None:
+    separator = dim(cs.HORIZONTAL_SEPARATOR)
+    app_context.console.print(f"\n{cs.UI_NEW_FILE_HEADER.format(path=path)}")
+    app_context.console.print(separator)
+
+    for line in content.splitlines():
+        app_context.console.print(
+            style(f"{cs.DiffMarker.ADD} {line}", cs.Color.GREEN, cs.StyleModifier.NONE)
+        )
+
+    app_context.console.print(separator)
+
+
+def _to_tool_args(
+    tool_name: str, raw_args: RawToolArgs, tool_names: ConfirmationToolNames
+) -> ToolArgs:
+    match tool_name:
+        case tool_names.replace_code:
+            return ReplaceCodeArgs(
+                file_path=raw_args.file_path,
+                target_code=raw_args.target_code,
+                replacement_code=raw_args.replacement_code,
+            )
+        case tool_names.create_file:
+            return CreateFileArgs(
+                file_path=raw_args.file_path,
+                content=raw_args.content,
+            )
+        case tool_names.shell_command:
+            return ShellCommandArgs(command=raw_args.command)
+        case tool_names.structural_replace:
+            return StructuralReplaceArgs(
+                pattern=raw_args.pattern,
+                rewrite=raw_args.rewrite,
+                language=raw_args.language,
+                dry_run=raw_args.dry_run,
+            )
+        case _:
+            return ShellCommandArgs()
+
+
+def _display_tool_call_diff(
+    tool_name: str,
+    tool_args: ToolArgs,
+    tool_names: ConfirmationToolNames,
+    file_path: str | None = None,
+) -> None:
+    match tool_name:
+        case tool_names.replace_code:
+            target = str(tool_args.get(cs.ARG_TARGET_CODE, ""))
+            replacement = str(tool_args.get(cs.ARG_REPLACEMENT_CODE, ""))
+            path = str(
+                tool_args.get(cs.ARG_FILE_PATH, file_path or cs.DIFF_FALLBACK_PATH)
+            )
+            _print_unified_diff(target, replacement, path)
+
+        case tool_names.create_file:
+            path = str(tool_args.get(cs.ARG_FILE_PATH, ""))
+            content = str(tool_args.get(cs.ARG_CONTENT, ""))
+            _print_new_file_content(path, content)
+
+        case tool_names.shell_command:
+            command = tool_args.get(cs.ARG_COMMAND, "")
+            app_context.console.print(f"\n{cs.UI_SHELL_COMMAND_HEADER}")
+            app_context.console.print(
+                style(f"$ {command}", cs.Color.YELLOW, cs.StyleModifier.NONE)
+            )
+
+        case tool_names.structural_replace:
+            pattern = str(tool_args.get(cs.ARG_PATTERN, ""))
+            rewrite = str(tool_args.get(cs.ARG_REWRITE, ""))
+            dry_run = tool_args.get(cs.ARG_DRY_RUN, True)
+            app_context.console.print(f"\n{cs.AST_GREP_APPROVAL_HEADER}")
+            app_context.console.print(
+                style(
+                    cs.AST_GREP_APPROVAL_PATTERN.format(pattern=pattern),
+                    cs.Color.YELLOW,
+                    cs.StyleModifier.NONE,
+                )
+            )
+            app_context.console.print(
+                style(
+                    cs.AST_GREP_APPROVAL_REWRITE.format(rewrite=rewrite),
+                    cs.Color.YELLOW,
+                    cs.StyleModifier.NONE,
+                )
+            )
+            app_context.console.print(
+                style(
+                    cs.AST_GREP_APPROVAL_DRY_RUN.format(dry_run=dry_run),
+                    cs.Color.YELLOW,
+                    cs.StyleModifier.NONE,
+                )
+            )
+
+        case _:
+            app_context.console.print(
+                cs.UI_TOOL_ARGS_FORMAT.format(
+                    args=json.dumps(tool_args, indent=cs.JSON_INDENT)
+                )
+            )
+
+
+async def _process_tool_approvals(
+    requests: DeferredToolRequests,
+    approval_prompt: str,
+    denial_default: str,
+    tool_names: ConfirmationToolNames,
+) -> DeferredToolResults:
+    deferred_results = DeferredToolResults()
+
+    for call in requests.approvals:
+        tool_args = _to_tool_args(
+            call.tool_name, RawToolArgs(**call.args_as_dict()), tool_names
+        )
+        will_prompt = (
+            app_context.session.confirm_edits and not app_context.session.is_yolo()
+        )
+
+        if will_prompt:
+            app_context.console.print(
+                f"\n{cs.UI_TOOL_APPROVAL.format(tool_name=call.tool_name)}"
+            )
+        _display_tool_call_diff(call.tool_name, tool_args, tool_names)
+
+        if not will_prompt:
+            deferred_results.approvals[call.tool_call_id] = True
+            continue
+
+        if await _confirm_with_toggle(approval_prompt):
+            deferred_results.approvals[call.tool_call_id] = True
+        elif app_context.session.is_yolo():
+            deferred_results.approvals[call.tool_call_id] = True
+        else:
+            feedback = await _prompt_with_toggle(cs.UI_FEEDBACK_PROMPT)
+            denial_msg = feedback.strip() or denial_default
+            deferred_results.approvals[call.tool_call_id] = ToolDenied(denial_msg)
+
+    return deferred_results
+
+
+def _approval_keybindings() -> KeyBindings:
+    bindings = KeyBindings()
+
+    @bindings.add(cs.KeyBinding.SHIFT_TAB)
+    def _toggle(event: KeyPressEvent) -> None:
+        app_context.session.cycle_permission_mode()
+        if app_context.session.is_yolo():
+            event.app.exit(result=cs.YES_ANSWER)
+        else:
+            event.app.invalidate()
+
+    @bindings.add(cs.KeyBinding.CTRL_C)
+    def _interrupt(event: KeyPressEvent) -> None:
+        event.app.exit(exception=KeyboardInterrupt)
+
+    return bindings
+
+
+async def _confirm_with_toggle(question: str) -> bool:
+    bindings = _approval_keybindings()
+    prompt_text = HTML(
+        f'<style fg="ansicyan">{html_escape(question)}</style> [y/n] (Y): '
+    )
+    session: PromptSession[str] = PromptSession()
+    while True:
+        try:
+            answer = await session.prompt_async(
+                prompt_text,
+                key_bindings=bindings,
+                style=ORANGE_STYLE,
+                bottom_toolbar=_status_bar_label,
+                refresh_interval=0.5,
+            )
+        except (KeyboardInterrupt, EOFError):
+            return False
+        if app_context.session.is_yolo():
+            return True
+        normalized = (answer or "").strip().lower()
+        if normalized in cs.YES_ANSWERS:
+            return True
+        if normalized in cs.NO_ANSWERS:
+            return False
+
+
+async def _prompt_with_toggle(question: str) -> str:
+    bindings = _approval_keybindings()
+    prompt_text = HTML(
+        f'<style fg="ansiyellow"><b>{html_escape(question)}</b></style>: '
+    )
+    session: PromptSession[str] = PromptSession()
+    try:
+        answer = await session.prompt_async(
+            prompt_text,
+            key_bindings=bindings,
+            style=ORANGE_STYLE,
+            bottom_toolbar=_status_bar_label,
+            refresh_interval=0.5,
+        )
+    except (KeyboardInterrupt, EOFError):
+        return ""
+    return answer or ""
+
+
+def _rich_log_sink(message: object) -> None:
+    app_context.console.print(str(message), end="", markup=False, highlight=False)
+
+
+def _setup_common_initialization(repo_path: str) -> Path:
+    logger.remove()
+    logger.add(_rich_log_sink, format=cs.LOG_FORMAT, colorize=False)
+
+    project_root = Path(repo_path).resolve()
+    tmp_dir = project_root / cs.TMP_DIR
+    if tmp_dir.exists():
+        if tmp_dir.is_dir():
+            shutil.rmtree(tmp_dir)
+        else:
+            tmp_dir.unlink()
+    tmp_dir.mkdir()
+
+    app_context.session.target_repo = project_root
+    return project_root
+
+
+def _create_configuration_table(
+    repo_path: str,
+    title: str = cs.DEFAULT_TABLE_TITLE,
+    language: str | None = None,
+) -> Table:
+    table = Table(title=style(title, cs.Color.GREEN))
+    table.add_column(cs.TABLE_COL_CONFIGURATION, style=cs.Color.CYAN)
+    table.add_column(cs.TABLE_COL_VALUE, style=cs.Color.MAGENTA)
+
+    if language:
+        table.add_row(cs.TABLE_ROW_TARGET_LANGUAGE, language)
+
+    orchestrator_config = settings.active_orchestrator_config
+    table.add_row(
+        cs.TABLE_ROW_ORCHESTRATOR_MODEL,
+        f"{orchestrator_config.model_id} ({orchestrator_config.provider})",
+    )
+
+    cypher_config = settings.active_cypher_config
+    table.add_row(
+        cs.TABLE_ROW_CYPHER_MODEL,
+        f"{cypher_config.model_id} ({cypher_config.provider})",
+    )
+
+    orch_endpoint = (
+        orchestrator_config.endpoint
+        if orchestrator_config.provider == cs.Provider.OLLAMA
+        else None
+    )
+    cypher_endpoint = (
+        cypher_config.endpoint if cypher_config.provider == cs.Provider.OLLAMA else None
+    )
+
+    if orch_endpoint and cypher_endpoint and orch_endpoint == cypher_endpoint:
+        table.add_row(cs.TABLE_ROW_OLLAMA_ENDPOINT, orch_endpoint)
+    else:
+        if orch_endpoint:
+            table.add_row(cs.TABLE_ROW_OLLAMA_ORCHESTRATOR, orch_endpoint)
+        if cypher_endpoint:
+            table.add_row(cs.TABLE_ROW_OLLAMA_CYPHER, cypher_endpoint)
+
+    confirmation_status = (
+        cs.CONFIRM_ENABLED if app_context.session.confirm_edits else cs.CONFIRM_DISABLED
+    )
+    table.add_row(cs.TABLE_ROW_EDIT_CONFIRMATION, confirmation_status)
+    table.add_row(cs.TABLE_ROW_TARGET_REPOSITORY, repo_path)
+
+    return table
+
+
+async def run_optimization_loop(
+    rag_agent: Agent[None, str | DeferredToolRequests],
+    message_history: list[ModelMessage],
+    project_root: Path,
+    language: str,
+    tool_names: ConfirmationToolNames,
+    reference_document: str | None = None,
+) -> None:
+    app_context.console.print(cs.UI_OPTIMIZATION_START.format(language=language))
+    document_info = (
+        cs.UI_REFERENCE_DOC_INFO.format(reference_document=reference_document)
+        if reference_document
+        else ""
+    )
+    app_context.console.print(
+        Panel(
+            cs.UI_OPTIMIZATION_PANEL.format(document_info=document_info),
+            border_style=cs.Color.YELLOW,
+        )
+    )
+
+    initial_question = (
+        OPTIMIZATION_PROMPT_WITH_REFERENCE.format(
+            language=language, reference_document=reference_document
+        )
+        if reference_document
+        else OPTIMIZATION_PROMPT.format(language=language)
+    )
+
+    await _run_interactive_loop(
+        rag_agent,
+        message_history,
+        project_root,
+        OPTIMIZATION_LOOP_UI,
+        style(cs.PROMPT_YOUR_RESPONSE, cs.Color.CYAN),
+        tool_names,
+        initial_question,
+    )
+
+
+async def run_with_cancellation[T](
+    coro: Coroutine[None, None, T], timeout: float | None = None
+) -> T | CancelledResult:
+    task = asyncio.create_task(coro)
+
+    try:
+        return await asyncio.wait_for(task, timeout=timeout) if timeout else await task
+    except TimeoutError:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        app_context.console.print(
+            f"\n{style(cs.MSG_TIMEOUT_FORMAT.format(timeout=timeout), cs.Color.YELLOW)}"
+        )
+        return CancelledResult(cancelled=True)
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        app_context.console.print(
+            f"\n{style(cs.MSG_THINKING_CANCELLED, cs.Color.YELLOW)}"
+        )
+        return CancelledResult(cancelled=True)
+
+
+def _cancel_orphaned_tool_calls(message_history: list[ModelMessage]) -> None:
+    if not message_history:
+        return
+    last = message_history[-1]
+    if not isinstance(last, ModelResponse):
+        return
+    tool_calls = [p for p in last.parts if isinstance(p, ToolCallPart)]
+    if not tool_calls:
+        return
+    message_history.append(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name=p.tool_name,
+                    content=cs.MSG_TOOL_CALL_CANCELLED,
+                    tool_call_id=p.tool_call_id,
+                )
+                for p in tool_calls
+            ]
+        )
+    )
+
+
+def _price_current_run(
+    usage: RunUsage, model_config: ModelConfig | None
+) -> Decimal | None:
+    if model_config is None:
+        try:
+            model_config = settings.active_orchestrator_config
+        except Exception:  # noqa: BLE001 - pricing is display-only, never fatal
+            return None
+    from .services.usage_cost import price_run
+
+    return price_run(usage, model_config.provider, model_config.model_id)
+
+
+def _record_and_print_turn_usage(
+    turn_input: int, turn_output: int, turn_cost: Decimal, turn_priced: bool
+) -> None:
+    session = app_context.session
+    session.total_input_tokens += turn_input
+    session.total_output_tokens += turn_output
+    session.total_cost_usd += turn_cost
+    if not turn_priced:
+        session.cost_incomplete = True
+    line = cs.UI_TURN_USAGE_TOKENS.format(
+        ti=turn_input,
+        to=turn_output,
+        si=session.total_input_tokens,
+        so=session.total_output_tokens,
+    )
+    if turn_priced:
+        template = (
+            cs.UI_TURN_USAGE_COST_PARTIAL
+            if session.cost_incomplete
+            else cs.UI_TURN_USAGE_COST
+        )
+        line += template.format(tc=turn_cost, sc=session.total_cost_usd)
+    app_context.console.print(dim(line))
+
+
+async def _run_agent_response_loop(
+    rag_agent: Agent[None, str | DeferredToolRequests],
+    message_history: list[ModelMessage],
+    question_with_context: str | list[UserContent],
+    config: AgentLoopUI,
+    tool_names: ConfirmationToolNames,
+    model_override: Model | None = None,
+    model_override_config: ModelConfig | None = None,
+) -> None:
+    deferred_results: DeferredToolResults | None = None
+    pending_prompt: str | list[UserContent] | None = question_with_context
+    turn_input = turn_output = 0
+    turn_cost = Decimal(0)
+    turn_priced = False
+
+    while True:
+        with _thinking_with_status_bar(config.status_message):
+            response = await run_with_cancellation(
+                rag_agent.run(
+                    pending_prompt,
+                    message_history=message_history,
+                    deferred_tool_results=deferred_results,
+                    model=model_override,
+                ),
+            )
+        pending_prompt = None
+
+        if isinstance(response, CancelledResult):
+            log_session_event(config.cancelled_log)
+            app_context.session.cancelled = True
+            _cancel_orphaned_tool_calls(message_history)
+            break
+
+        message_history.extend(response.new_messages())
+
+        run_usage = response.usage
+        turn_input += run_usage.input_tokens
+        turn_output += run_usage.output_tokens
+        run_cost = _price_current_run(run_usage, model_override_config)
+        if run_cost is not None:
+            turn_cost += run_cost
+            turn_priced = True
+
+        if isinstance(response.output, DeferredToolRequests):
+            deferred_results = await _process_tool_approvals(
+                response.output,
+                config.approval_prompt,
+                config.denial_default,
+                tool_names,
+            )
+            continue
+
+        _spawn_background(_refresh_context_tokens(list(message_history)))
+
+        output_text = response.output
+        if not isinstance(output_text, str):
+            continue
+        markdown_response = LeftAlignedMarkdown(_autowrap_diff_blocks(output_text))
+        app_context.console.print(
+            Panel(
+                markdown_response,
+                title=config.panel_title,
+                border_style=cs.Color.GREEN,
+            )
+        )
+
+        log_session_event(f"{cs.SESSION_PREFIX_ASSISTANT}{output_text}")
+        _record_and_print_turn_usage(turn_input, turn_output, turn_cost, turn_priced)
+        break
+
+
+def _find_multimodal_paths(question: str) -> list[Path]:
+    try:
+        if os.name == "nt":
+            tokens = shlex.split(question, posix=False)
+        else:
+            tokens = shlex.split(question)
+    except ValueError:
+        tokens = question.split()
+
+    paths: list[Path] = []
+    for token in tokens:
+        token = token.strip("'\"")
+        if token.lower().endswith(cs.MULTIMODAL_EXTENSIONS):
+            p = Path(token)
+            if p.is_absolute() or token.startswith("/") or token.startswith("\\"):
+                paths.append(p)
+    return paths
+
+
+def _path_variants(path_str: str) -> tuple[str, ...]:
+    return (
+        f"'{path_str}'",
+        f'"{path_str}"',
+        path_str.replace(" ", r"\ "),
+        path_str,
+    )
+
+
+def _guess_media_type(path: Path) -> str:
+    mime, _ = mimetypes.guess_type(str(path))
+    return mime or cs.MIME_TYPE_FALLBACK
+
+
+def _build_user_prompt(question: str) -> str | list[UserContent]:
+    paths = _find_multimodal_paths(question)
+    if not paths:
+        return question
+
+    content: list[UserContent] = []
+    remaining = question
+    for path in paths:
+        if not path.exists() or not path.is_file():
+            logger.warning(ls.MULTIMODAL_NOT_FOUND.format(path=path))
+            continue
+        match_token = next(
+            (v for v in _path_variants(str(path)) if v in remaining), None
+        )
+        if match_token is None:
+            logger.warning(ls.PATH_NOT_IN_QUESTION.format(path=path))
+            continue
+        before, _, after = remaining.partition(match_token)
+        if before.strip():
+            content.append(before.strip())
+        try:
+            content.append(
+                BinaryContent(
+                    data=path.read_bytes(), media_type=_guess_media_type(path)
+                )
+            )
+            logger.info(ls.MULTIMODAL_ATTACHED.format(path=path))
+        except Exception as e:
+            logger.error(ls.MULTIMODAL_READ_FAILED.format(path=path, error=e))
+            content.append(match_token)
+        remaining = after
+
+    if remaining.strip():
+        content.append(remaining.lstrip())
+
+    return content or question
+
+
+def _permission_mode_label() -> str:
+    return (
+        cs.PERMISSION_MODE_YOLO_LABEL
+        if app_context.session.is_yolo()
+        else cs.PERMISSION_MODE_NORMAL_LABEL
+    )
+
+
+def _git_state() -> tuple[str, bool] | None:
+    repo = app_context.session.target_repo
+    if repo is None or not repo.exists():
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain", "--branch"],
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+            check=True,
+            cwd=repo,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    lines = result.stdout.splitlines()
+    if not lines or not lines[0].startswith("## "):
+        return None
+    header = lines[0][3:].split("...", 1)[0].split(" ", 1)[0]
+    if header in ("HEAD", "No"):
+        return None
+    is_dirty = any(line for line in lines[1:])
+    return header, is_dirty
+
+
+def _terminal_columns() -> int:
+    return shutil.get_terminal_size((80, 24)).columns
+
+
+def _format_tokens(n: int) -> str:
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}k"
+    return str(n)
+
+
+def _token_color(pct: float) -> str:
+    if pct >= cs.TOKEN_THRESHOLD_CRITICAL:
+        return cs.TOKEN_COLOR_CRITICAL
+    if pct >= cs.TOKEN_THRESHOLD_WARNING:
+        return cs.TOKEN_COLOR_WARNING
+    return cs.TOKEN_COLOR_OK
+
+
+def _token_usage() -> tuple[int, int, float]:
+    try:
+        used = int(app_context.session.context_tokens)
+    except (TypeError, ValueError):
+        used = 0
+    try:
+        model_id = settings.active_orchestrator_config.model_id or ""
+    except Exception:
+        model_id = ""
+    bare = model_id.split(":", 1)[-1]
+    max_ctx = cs.MODEL_CONTEXT_WINDOWS.get(bare, cs.DEFAULT_CONTEXT_WINDOW)
+    pct = (used / max_ctx * 100) if max_ctx > 0 else 0.0
+    return used, max_ctx, pct
+
+
+_background_tasks: set[asyncio.Task[None]] = set()
+
+
+def _spawn_background(coro: Coroutine[None, None, None]) -> None:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+async def _refresh_context_tokens(messages: list[ModelMessage]) -> None:
+    try:
+        config = settings.active_orchestrator_config
+    except Exception:
+        return
+    if config.provider != cs.Provider.ANTHROPIC or not config.api_key:
+        return
+    try:
+        from .services.anthropic_token_counter import count_anthropic_context
+
+        count = await count_anthropic_context(config.api_key, config.model_id, messages)
+        app_context.session.context_tokens = count
+    except Exception as e:
+        logger.debug(ls.CONTEXT_TOKEN_COUNT_FAILED.format(error=e))
+
+
+def _prime_context_token_counter(system_prompt: str) -> None:
+    if not system_prompt:
+        return
+    from pydantic_ai.messages import ModelRequest, SystemPromptPart
+
+    baseline_messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content=system_prompt)])
+    ]
+    _spawn_background(_refresh_context_tokens(baseline_messages))
+
+
+def _short_model_id() -> tuple[str, str]:
+    try:
+        orch = settings.active_orchestrator_config.model_id or ""
+    except Exception:
+        orch = ""
+    try:
+        cyph = settings.active_cypher_config.model_id or ""
+    except Exception:
+        cyph = ""
+    return orch.split(":", 1)[-1], cyph.split(":", 1)[-1]
+
+
+def _abbreviated_repo(p: Path | None) -> str:
+    if p is None:
+        return ""
+    try:
+        home = Path.home()
+        return (
+            f"~/{p.relative_to(home).as_posix()}"
+            if p.is_relative_to(home)
+            else p.as_posix()
+        )
+    except (ValueError, OSError, RuntimeError):
+        return p.as_posix()
+
+
+def _config_segments() -> list[tuple[str, str]]:
+    orch, cyph = _short_model_id()
+    segments: list[tuple[str, str]] = []
+    if orch:
+        segments.append((cs.STATUS_BAR_CONFIG_LABEL_O, orch))
+    if cyph:
+        segments.append((cs.STATUS_BAR_CONFIG_LABEL_C, cyph))
+    segments.append(
+        (
+            cs.STATUS_BAR_CONFIG_LABEL_EDIT,
+            cs.STATUS_BAR_EDIT_ON
+            if app_context.session.confirm_edits
+            else cs.STATUS_BAR_EDIT_OFF,
+        )
+    )
+    segments.append(
+        (
+            cs.STATUS_BAR_CONFIG_LABEL_INSTRUCTIONS,
+            cs.STATUS_BAR_EDIT_ON
+            if app_context.session.load_cgr_instructions
+            else cs.STATUS_BAR_EDIT_OFF,
+        )
+    )
+    repo = _abbreviated_repo(app_context.session.target_repo)
+    if repo:
+        segments.append((cs.STATUS_BAR_CONFIG_LABEL_REPO, repo))
+    return segments
+
+
+def _config_status_html() -> str:
+    parts = [
+        f'<style fg="{cs.STATUS_BAR_CONFIG_LABEL_COLOR}">{html_escape(label)}:</style>'
+        f'<style fg="{cs.STATUS_BAR_CONFIG_COLOR}">{html_escape(value)}</style>'
+        for label, value in _config_segments()
+    ]
+    return cs.STATUS_BAR_CONFIG_SEPARATOR.join(parts)
+
+
+def _config_status_plain() -> str:
+    parts = [f"{label}:{value}" for label, value in _config_segments()]
+    return cs.STATUS_BAR_CONFIG_SEPARATOR.join(parts)
+
+
+def _config_status_rich() -> Text:
+    line = Text()
+    segments = _config_segments()
+    for i, (label, value) in enumerate(segments):
+        if i > 0:
+            line.append(cs.STATUS_BAR_CONFIG_SEPARATOR, style="dim")
+        line.append(f"{label}:", style=f"bold {cs.STATUS_BAR_CONFIG_LABEL_COLOR}")
+        line.append(value, style=cs.STATUS_BAR_CONFIG_COLOR)
+    return line
+
+
+def _branch_chip_html_and_plain(state: tuple[str, bool] | None) -> tuple[str, str]:
+    if state is None:
+        return "", ""
+    branch, is_dirty = state
+    html_template = (
+        cs.STATUS_BAR_BRANCH_DIRTY_HTML if is_dirty else cs.STATUS_BAR_BRANCH_CLEAN_HTML
+    )
+    plain_template = (
+        cs.STATUS_BAR_BRANCH_DIRTY_PLAIN
+        if is_dirty
+        else cs.STATUS_BAR_BRANCH_CLEAN_PLAIN
+    )
+    return (
+        html_template.format(branch=html_escape(branch)),
+        plain_template.format(branch=branch),
+    )
+
+
+def _branch_chip_rich(state: tuple[str, bool] | None) -> Text:
+    if state is None:
+        return Text()
+    branch, is_dirty = state
+    marker = cs.STATUS_BAR_DIRTY_MARKER if is_dirty else ""
+    chip_style = cs.STATUS_BAR_DIRTY_STYLE if is_dirty else cs.STATUS_BAR_CLEAN_STYLE
+    chip = Text()
+    chip.append(
+        cs.STATUS_BAR_BRANCH_RICH_TEXT.format(branch=branch, marker=marker),
+        style=chip_style,
+    )
+    return chip
+
+
+def _status_bar_label() -> HTML | str:
+    mode = _permission_mode_label()
+    state = _git_state()
+    columns = _terminal_columns()
+    sep_html = (
+        f'<style fg="{cs.STATUS_BAR_SEPARATOR_COLOR}">'
+        f"{cs.STATUS_BAR_SEPARATOR_CHAR * columns}"
+        f"</style>"
+    )
+
+    used, max_ctx, pct = _token_usage()
+    used_str = _format_tokens(used)
+    max_str = _format_tokens(max_ctx)
+    pct_str = f"{pct:.1f}%"
+    token_html = cs.STATUS_BAR_TOKEN_HTML.format(
+        color=_token_color(pct),
+        used=used_str,
+        max_ctx=max_str,
+        pct=pct_str,
+    )
+    token_plain = f"  {used_str} / {max_str} ({pct_str})"
+    body_html = html_escape(mode) + token_html
+    body_plain = mode + token_plain
+
+    config_html = _config_status_html()
+    config_plain = _config_status_plain()
+    branch_html, branch_plain = _branch_chip_html_and_plain(state)
+
+    config_with_branch_html = config_html
+    config_with_branch_plain = config_plain
+    if branch_html:
+        if config_html:
+            config_with_branch_html = f"{config_html}  {branch_html}"
+            config_with_branch_plain = f"{config_plain}  {branch_plain}"
+        else:
+            config_with_branch_html = branch_html
+            config_with_branch_plain = branch_plain
+
+    if not config_with_branch_plain:
+        return HTML(f"{sep_html}\n{body_html}")
+    inline_sep = "  "
+    if len(body_plain) + len(inline_sep) + len(config_with_branch_plain) <= columns:
+        return HTML(f"{sep_html}\n{body_html}{inline_sep}{config_with_branch_html}")
+    return HTML(f"{sep_html}\n{config_with_branch_html}\n{body_html}")
+
+
+def _rich_status_bar() -> Text:
+    body = Text()
+    body.append(_permission_mode_label(), style="dim")
+    used, max_ctx, pct = _token_usage()
+    body.append("  ")
+    body.append(
+        f"{_format_tokens(used)} / {_format_tokens(max_ctx)} ({pct:.1f}%)",
+        style=_token_color(pct),
+    )
+
+    config_line = _config_status_rich()
+    branch_chip = _branch_chip_rich(_git_state())
+    if config_line.plain and branch_chip.plain:
+        config_line.append("  ")
+        config_line.append_text(branch_chip)
+    elif branch_chip.plain:
+        config_line = branch_chip
+
+    if not config_line.plain:
+        return body
+
+    inline_sep = "  "
+    if (
+        len(body.plain) + len(inline_sep) + len(config_line.plain)
+        <= _terminal_columns()
+    ):
+        body.append(inline_sep)
+        body.append_text(config_line)
+        return body
+    return Text("\n").join([config_line, body])
+
+
+@contextmanager
+def _shift_tab_listener():
+    if sys.platform == "win32" or not sys.stdin.isatty():
+        yield
+        return
+    try:
+        import termios
+    except ImportError:
+        yield
+        return
+    fd = sys.stdin.fileno()
+    try:
+        original = termios.tcgetattr(fd)
+    except (termios.error, OSError):
+        yield
+        return
+    try:
+        new_attrs = termios.tcgetattr(fd)
+        new_attrs[3] &= ~(termios.ICANON | termios.ECHO)
+        new_attrs[6][termios.VMIN] = 0
+        new_attrs[6][termios.VTIME] = 0
+        termios.tcsetattr(fd, termios.TCSANOW, new_attrs)
+        loop = asyncio.get_running_loop()
+        buffer = bytearray()
+
+        def on_input() -> None:
+            try:
+                data = os.read(fd, 1024)
+            except OSError:
+                return
+            if not data:
+                return
+            buffer.extend(data)
+            while cs.SHIFT_TAB_ESCAPE in buffer:
+                idx = buffer.index(cs.SHIFT_TAB_ESCAPE)
+                del buffer[idx : idx + len(cs.SHIFT_TAB_ESCAPE)]
+                app_context.session.cycle_permission_mode()
+
+        loop.add_reader(fd, on_input)
+        try:
+            yield
+        finally:
+            try:
+                loop.remove_reader(fd)
+            except Exception:
+                pass
+    finally:
+        try:
+            termios.tcsetattr(fd, termios.TCSADRAIN, original)
+        except (termios.error, OSError):
+            pass
+
+
+@contextmanager
+def _thinking_with_status_bar(message: str):
+    spinner = Spinner(cs.STATUS_BAR_SPINNER, text=Text.from_markup(message))
+    separator = Text(
+        cs.STATUS_BAR_SEPARATOR_CHAR * _terminal_columns(),
+        style=cs.STATUS_BAR_SEPARATOR_COLOR,
+    )
+
+    def render() -> Group:
+        return Group(separator, spinner, _rich_status_bar())
+
+    with (
+        Live(
+            render(),
+            console=app_context.console,
+            refresh_per_second=4,
+            transient=True,
+        ) as live,
+        _shift_tab_listener(),
+    ):
+
+        async def _refresh_bar() -> None:
+            while True:
+                live.update(render())
+                await asyncio.sleep(0.25)
+
+        refresh_task = asyncio.get_running_loop().create_task(_refresh_bar())
+        try:
+            yield live
+        finally:
+            refresh_task.cancel()
+
+
+def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
+    bindings = KeyBindings()
+
+    @bindings.add(cs.KeyBinding.CTRL_J)
+    def submit(event: KeyPressEvent) -> None:
+        event.app.exit(result=event.app.current_buffer.text)
+
+    @bindings.add(cs.KeyBinding.CTRL_E)
+    def submit_ctrl_e(event: KeyPressEvent) -> None:
+        event.app.exit(result=event.app.current_buffer.text)
+
+    @bindings.add(cs.KeyBinding.ENTER)
+    def new_line(event: KeyPressEvent) -> None:
+        event.current_buffer.insert_text("\n")
+
+    @bindings.add(cs.KeyBinding.CTRL_C)
+    def keyboard_interrupt(event: KeyPressEvent) -> None:
+        event.app.exit(exception=KeyboardInterrupt)
+
+    @bindings.add(cs.KeyBinding.SHIFT_TAB)
+    def toggle_permission_mode(event: KeyPressEvent) -> None:
+        app_context.session.cycle_permission_mode()
+        event.app.invalidate()
+
+    clean_prompt = Text.from_markup(prompt_text).plain
+
+    print_formatted_text(
+        HTML(
+            cs.UI_INPUT_PROMPT_HTML.format(
+                prompt=clean_prompt, hint=cs.MULTILINE_INPUT_HINT
+            )
+        )
+    )
+
+    result = prompt(
+        "",
+        multiline=True,
+        key_bindings=bindings,
+        wrap_lines=True,
+        style=ORANGE_STYLE,
+        bottom_toolbar=_status_bar_label,
+        refresh_interval=0.5,
+    )
+    if result is None:
+        raise EOFError
+    stripped: str = result.strip()
+    return stripped
+
+
+def _create_model_from_string(
+    model_string: str, current_override_config: ModelConfig | None = None
+) -> tuple[Model, str, ModelConfig]:
+    base_config = current_override_config or settings.active_orchestrator_config
+
+    if cs.CHAR_COLON not in model_string:
+        raise ValueError(ex.MODEL_FORMAT_INVALID)
+    provider_name, model_id = (
+        p.strip() for p in settings.parse_model_string(model_string)
+    )
+    if not model_id:
+        raise ValueError(ex.MODEL_ID_EMPTY)
+    if not provider_name:
+        raise ValueError(ex.PROVIDER_EMPTY)
+
+    if provider_name == base_config.provider:
+        config = replace(base_config, model_id=model_id)
+    elif provider_name == cs.Provider.OLLAMA:
+        config = ModelConfig(
+            provider=provider_name,
+            model_id=model_id,
+            endpoint=settings.ollama_endpoint,
+            api_key=cs.DEFAULT_API_KEY,
+        )
+    else:
+        config = ModelConfig(provider=provider_name, model_id=model_id)
+
+    canonical_string = f"{provider_name}{cs.CHAR_COLON}{model_id}"
+    provider = get_provider_from_config(config)
+    return provider.create_model(model_id), canonical_string, config
+
+
+def _handle_model_command(
+    command: str,
+    current_model: Model | None,
+    current_model_string: str | None,
+    current_config: ModelConfig | None,
+) -> tuple[Model | None, str | None, ModelConfig | None]:
+    parts = command.strip().split(maxsplit=1)
+    arg = parts[1].strip() if len(parts) > 1 else None
+
+    if not arg:
+        if current_model_string:
+            display_model = current_model_string
+        else:
+            config = settings.active_orchestrator_config
+            display_model = f"{config.provider}{cs.CHAR_COLON}{config.model_id}"
+        app_context.console.print(cs.UI_MODEL_CURRENT.format(model=display_model))
+        return current_model, current_model_string, current_config
+
+    if arg.lower() == cs.HELP_ARG:
+        app_context.console.print(cs.UI_MODEL_USAGE)
+        return current_model, current_model_string, current_config
+
+    try:
+        new_model, canonical_model_string, new_config = _create_model_from_string(
+            arg, current_config
+        )
+        logger.info(ls.MODEL_SWITCHED.format(model=canonical_model_string))
+        app_context.console.print(
+            cs.UI_MODEL_SWITCHED.format(model=canonical_model_string)
+        )
+        return new_model, canonical_model_string, new_config
+    except (ValueError, AssertionError) as e:
+        logger.error(ls.MODEL_SWITCH_FAILED.format(error=e))
+        app_context.console.print(cs.UI_MODEL_SWITCH_ERROR.format(error=e))
+        return current_model, current_model_string, current_config
+
+
+async def _run_interactive_loop(
+    rag_agent: Agent[None, str | DeferredToolRequests],
+    message_history: list[ModelMessage],
+    project_root: Path,
+    config: AgentLoopUI,
+    input_prompt: str,
+    tool_names: ConfirmationToolNames,
+    initial_question: str | None = None,
+) -> None:
+    init_session_log(project_root)
+    question = initial_question or ""
+    model_override: Model | None = None
+    model_override_string: str | None = None
+    model_override_config: ModelConfig | None = None
+
+    while True:
+        try:
+            if not initial_question or question != initial_question:
+                question = await asyncio.to_thread(get_multiline_input, input_prompt)
+
+            stripped_question = question.strip()
+            stripped_lower = stripped_question.lower()
+
+            if stripped_lower in cs.EXIT_COMMANDS:
+                break
+
+            if not stripped_question:
+                initial_question = None
+                continue
+
+            command_parts = stripped_lower.split(maxsplit=1)
+            if command_parts[0] == cs.MODEL_COMMAND_PREFIX:
+                model_override, model_override_string, model_override_config = (
+                    _handle_model_command(
+                        stripped_question,
+                        model_override,
+                        model_override_string,
+                        model_override_config,
+                    )
+                )
+                initial_question = None
+                continue
+            if command_parts[0] == cs.HELP_COMMAND:
+                app_context.console.print(cs.UI_HELP_COMMANDS)
+                initial_question = None
+                continue
+
+            log_session_event(f"{cs.SESSION_PREFIX_USER}{question}")
+
+            if app_context.session.cancelled:
+                question_text = question + get_session_context()
+                app_context.session.reset_cancelled()
+            else:
+                question_text = question
+
+            user_prompt: str | list[UserContent] = _build_user_prompt(question_text)
+
+            await _run_agent_response_loop(
+                rag_agent,
+                message_history,
+                user_prompt,
+                config,
+                tool_names,
+                model_override,
+                model_override_config,
+            )
+
+            initial_question = None
+
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            logger.exception(ls.UNEXPECTED.format(error=e))
+            app_context.console.print(cs.UI_ERR_UNEXPECTED.format(error=e))
+
+
+async def run_chat_loop(
+    rag_agent: Agent[None, str | DeferredToolRequests],
+    message_history: list[ModelMessage],
+    project_root: Path,
+    tool_names: ConfirmationToolNames,
+) -> None:
+    await _run_interactive_loop(
+        rag_agent,
+        message_history,
+        project_root,
+        CHAT_LOOP_UI,
+        style(cs.PROMPT_ASK_QUESTION, cs.Color.CYAN),
+        tool_names,
+    )
+
+
+def _update_single_model_setting(role: cs.ModelRole, model_string: str) -> None:
+    provider, model = settings.parse_model_string(model_string)
+
+    match role:
+        case cs.ModelRole.ORCHESTRATOR:
+            current_config = settings.active_orchestrator_config
+            set_method = settings.set_orchestrator
+        case cs.ModelRole.CYPHER:
+            current_config = settings.active_cypher_config
+            set_method = settings.set_cypher
+
+    kwargs = current_config.to_update_kwargs()
+
+    if provider == cs.Provider.OLLAMA and not kwargs[cs.FIELD_ENDPOINT]:
+        kwargs[cs.FIELD_ENDPOINT] = settings.ollama_endpoint
+        kwargs[cs.FIELD_API_KEY] = cs.DEFAULT_API_KEY
+
+    set_method(provider, model, **kwargs)
+
+
+def update_model_settings(
+    orchestrator: str | None,
+    cypher: str | None,
+) -> None:
+    if orchestrator:
+        _update_single_model_setting(cs.ModelRole.ORCHESTRATOR, orchestrator)
+    if cypher:
+        _update_single_model_setting(cs.ModelRole.CYPHER, cypher)
+
+
+def _write_graph_json(ingestor: MemgraphIngestor, output_path: Path) -> GraphData:
+    graph_data: GraphData = ingestor.export_graph_to_dict()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(output_path, "w", encoding=cs.ENCODING_UTF8) as f:
+        json.dump(graph_data, f, indent=cs.JSON_INDENT, ensure_ascii=False)
+
+    return graph_data
+
+
+def connect_memgraph(batch_size: int) -> MemgraphIngestor:
+    return MemgraphIngestor(
+        host=settings.MEMGRAPH_HOST,
+        port=settings.MEMGRAPH_PORT,
+        batch_size=batch_size,
+        username=settings.MEMGRAPH_USERNAME,
+        password=settings.MEMGRAPH_PASSWORD,
+    )
+
+
+def export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
+    output_path = Path(output)
+
+    try:
+        graph_data = _write_graph_json(ingestor, output_path)
+        metadata = graph_data[cs.KEY_METADATA]
+        app_context.console.print(
+            cs.UI_GRAPH_EXPORT_SUCCESS.format(path=output_path.absolute())
+        )
+        app_context.console.print(
+            cs.UI_GRAPH_EXPORT_STATS.format(
+                nodes=metadata[cs.KEY_TOTAL_NODES],
+                relationships=metadata[cs.KEY_TOTAL_RELATIONSHIPS],
+            )
+        )
+        return True
+
+    except Exception as e:
+        app_context.console.print(cs.UI_ERR_EXPORT_FAILED.format(error=e))
+        logger.exception(ls.EXPORT_ERROR.format(error=e))
+        return False
+
+
+def detect_excludable_directories(repo_path: Path) -> set[str]:
+    detected: set[str] = set()
+    queue: deque[tuple[Path, int]] = deque([(repo_path, 0)])
+    while queue:
+        current, depth = queue.popleft()
+        if depth > cs.INTERACTIVE_BFS_MAX_DEPTH:
+            continue
+        try:
+            entries = list(current.iterdir())
+        except PermissionError:
+            continue
+        for path in entries:
+            if not path.is_dir():
+                continue
+            if path.name in cs.IGNORE_PATTERNS:
+                detected.add(path.relative_to(repo_path).as_posix())
+            else:
+                queue.append((path, depth + 1))
+    return detected
+
+
+def _get_grouping_key(path: str) -> str:
+    parts = Path(path).parts
+    if not parts:
+        return cs.INTERACTIVE_DEFAULT_GROUP
+    for part in parts:
+        if part in cs.IGNORE_PATTERNS:
+            return part
+    return parts[0]
+
+
+def _group_paths_by_pattern(paths: set[str]) -> dict[str, list[str]]:
+    groups: dict[str, list[str]] = {}
+    for path in paths:
+        key = _get_grouping_key(path)
+        if key not in groups:
+            groups[key] = []
+        groups[key].append(path)
+    for group_paths in groups.values():
+        group_paths.sort()
+    return groups
+
+
+def _format_nested_count(count: int) -> str:
+    template = (
+        cs.INTERACTIVE_NESTED_SINGULAR if count == 1 else cs.INTERACTIVE_NESTED_PLURAL
+    )
+    return template.format(count=count)
+
+
+def _display_grouped_table(groups: dict[str, list[str]]) -> list[str]:
+    sorted_roots = sorted(groups.keys())
+    table = Table(title=style(cs.INTERACTIVE_TITLE_GROUPED, cs.Color.CYAN))
+    table.add_column(cs.INTERACTIVE_COL_NUM, style=cs.Color.YELLOW, width=4)
+    table.add_column(cs.INTERACTIVE_COL_PATTERN)
+    table.add_column(cs.INTERACTIVE_COL_NESTED, style=cs.INTERACTIVE_STYLE_DIM)
+
+    for i, root in enumerate(sorted_roots, 1):
+        nested_count = len(groups[root])
+        table.add_row(str(i), root, _format_nested_count(nested_count))
+
+    app_context.console.print(table)
+    app_context.console.print(
+        style(
+            cs.INTERACTIVE_INSTRUCTIONS_GROUPED, cs.Color.YELLOW, cs.StyleModifier.NONE
+        )
+    )
+    return sorted_roots
+
+
+def _display_nested_table(pattern: str, paths: list[str]) -> None:
+    title = cs.INTERACTIVE_TITLE_NESTED.format(pattern=pattern)
+    table = Table(title=style(title, cs.Color.CYAN))
+    table.add_column(cs.INTERACTIVE_COL_NUM, style=cs.Color.YELLOW, width=4)
+    table.add_column(cs.INTERACTIVE_COL_PATH)
+
+    for i, path in enumerate(paths, 1):
+        table.add_row(str(i), path)
+
+    app_context.console.print(table)
+    app_context.console.print(
+        style(
+            cs.INTERACTIVE_INSTRUCTIONS_NESTED.format(pattern=pattern),
+            cs.Color.YELLOW,
+            cs.StyleModifier.NONE,
+        )
+    )
+
+
+def _prompt_nested_selection(pattern: str, paths: list[str]) -> set[str]:
+    _display_nested_table(pattern, paths)
+
+    response = Prompt.ask(
+        style(cs.INTERACTIVE_PROMPT_KEEP, cs.Color.CYAN),
+        default=cs.INTERACTIVE_KEEP_NONE,
+    )
+
+    if response.lower() == cs.INTERACTIVE_KEEP_ALL:
+        return set(paths)
+    if response.lower() == cs.INTERACTIVE_KEEP_NONE:
+        return set()
+
+    selected: set[str] = set()
+    for part in response.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if part.isdigit():
+            idx = int(part) - 1
+            if 0 <= idx < len(paths):
+                selected.add(paths[idx])
+            else:
+                logger.warning(ls.EXCLUDE_INVALID_INDEX.format(index=part))
+        else:
+            logger.warning(ls.EXCLUDE_INVALID_INPUT.format(input=part))
+
+    return selected
+
+
+def prompt_for_unignored_directories(
+    repo_path: Path,
+    cli_excludes: list[str] | None = None,
+) -> frozenset[str]:
+    detected = detect_excludable_directories(repo_path)
+    cgrignore = load_ignore_patterns(repo_path)
+    cli_patterns = frozenset(cli_excludes) if cli_excludes else frozenset()
+    pre_excluded = cli_patterns | cgrignore.exclude
+
+    if not detected and not pre_excluded:
+        return cgrignore.unignore
+
+    all_candidates = detected | pre_excluded
+    groups = _group_paths_by_pattern(all_candidates)
+    sorted_roots = _display_grouped_table(groups)
+
+    response = Prompt.ask(
+        style(cs.INTERACTIVE_PROMPT_KEEP, cs.Color.CYAN),
+        default=cs.INTERACTIVE_KEEP_NONE,
+    )
+
+    if response.lower() == cs.INTERACTIVE_KEEP_ALL:
+        return frozenset(all_candidates) | cgrignore.unignore
+
+    if response.lower() == cs.INTERACTIVE_KEEP_NONE:
+        return cgrignore.unignore
+
+    selected: set[str] = set()
+    expand_requests: list[int] = []
+    regular_selections: list[int] = []
+
+    for part in response.split(","):
+        part = part.strip().lower()
+        if not part:
+            continue
+
+        if part.endswith(cs.INTERACTIVE_EXPAND_SUFFIX) and part[:-1].isdigit():
+            expand_requests.append(int(part[:-1]) - 1)
+        elif part.isdigit():
+            regular_selections.append(int(part) - 1)
+        else:
+            logger.warning(ls.EXCLUDE_INVALID_INPUT.format(input=part))
+
+    for idx in expand_requests:
+        if 0 <= idx < len(sorted_roots):
+            root = sorted_roots[idx]
+            nested_selected = _prompt_nested_selection(root, groups[root])
+            selected.update(nested_selected)
+        else:
+            logger.warning(ls.EXCLUDE_INVALID_INDEX.format(index=idx + 1))
+
+    for idx in regular_selections:
+        if 0 <= idx < len(sorted_roots):
+            root = sorted_roots[idx]
+            selected.update(groups[root])
+        else:
+            logger.warning(ls.EXCLUDE_INVALID_INDEX.format(index=idx + 1))
+
+    return frozenset(selected) | cgrignore.unignore
+
+
+def _validate_provider_config(role: cs.ModelRole, config: ModelConfig) -> None:
+    from .providers.base import get_provider_from_config
+
+    try:
+        provider = get_provider_from_config(config)
+        provider.validate_config()
+    except Exception as e:
+        raise ValueError(ex.CONFIG.format(role=role.value.title(), error=e)) from e
+
+
+def _initialize_services_and_agent(
+    repo_path: str,
+    ingestor: QueryProtocol,
+    active_projects: list[str] | None = None,
+) -> tuple[Agent[None, str | DeferredToolRequests], ConfirmationToolNames, str]:
+    _validate_provider_config(
+        cs.ModelRole.ORCHESTRATOR, settings.active_orchestrator_config
+    )
+    _validate_provider_config(cs.ModelRole.CYPHER, settings.active_cypher_config)
+
+    cypher_generator = CypherGenerator(active_projects=active_projects)
+    code_retriever = CodeRetriever(project_root=repo_path, ingestor=ingestor)
+    file_reader = FileReader(project_root=repo_path)
+    file_writer = FileWriter(project_root=repo_path)
+    file_editor = FileEditor(project_root=repo_path)
+    shell_commander = ShellCommander(
+        project_root=repo_path,
+        timeout=settings.SHELL_COMMAND_TIMEOUT,
+        is_yolo=app_context.session.is_yolo,
+    )
+    directory_lister = DirectoryLister(project_root=repo_path)
+    ast_grep_service = AstGrepService(project_root=repo_path)
+
+    query_tool = create_query_tool(ingestor, cypher_generator, app_context.console)
+    code_tool = create_code_retrieval_tool(code_retriever)
+    file_reader_tool = create_file_reader_tool(file_reader)
+    file_writer_tool = create_file_writer_tool(file_writer)
+    file_editor_tool = create_file_editor_tool(file_editor)
+    shell_command_tool = create_shell_command_tool(shell_commander)
+    directory_lister_tool = create_directory_lister_tool(directory_lister)
+    semantic_search_tool = create_semantic_search_tool(ingestor)
+    function_source_tool = create_get_function_source_tool(ingestor)
+    structural_search_tool = create_structural_search_tool(ast_grep_service)
+    structural_editor_tool = create_structural_editor_tool(ast_grep_service)
+
+    # Web search always registers: the default DuckDuckGo backend needs no key,
+    # and WEB_SEARCH_PROVIDER=serpdive (with SERPDIVE_API_KEY) swaps in the
+    # free-tier SERPdive backend behind the same tool.
+    agentic_tools = [
+        query_tool,
+        code_tool,
+        file_reader_tool,
+        file_writer_tool,
+        file_editor_tool,
+        shell_command_tool,
+        directory_lister_tool,
+        semantic_search_tool,
+        function_source_tool,
+        structural_search_tool,
+        structural_editor_tool,
+    ]
+    agentic_tools.append(create_web_search_tool(make_web_searcher()))
+
+    confirmation_tool_names = ConfirmationToolNames(
+        replace_code=file_editor_tool.name,
+        create_file=file_writer_tool.name,
+        shell_command=shell_command_tool.name,
+        structural_replace=structural_editor_tool.name,
+    )
+
+    rag_agent, system_prompt = create_rag_orchestrator(
+        tools=agentic_tools,
+        project_root=Path(repo_path),
+        load_instructions=app_context.session.load_cgr_instructions,
+        active_projects=active_projects,
+    )
+    return rag_agent, confirmation_tool_names, system_prompt
+
+
+def main_single_query(
+    repo_path: str,
+    batch_size: int,
+    question: str,
+    active_projects: list[str] | None = None,
+    output_format: cs.QueryFormat = cs.QueryFormat.TABLE,
+) -> None:
+    _setup_common_initialization(repo_path)
+    # Override logger to stderr so stdout is clean for scripted output
+    logger.remove()
+    logger.add(sys.stderr, level=cs.LOG_LEVEL_ERROR, format=cs.LOG_FORMAT)
+
+    with connect_memgraph(batch_size) as ingestor:
+        rag_agent, _, _ = _initialize_services_and_agent(
+            repo_path, ingestor, active_projects=active_projects
+        )
+        response = asyncio.run(rag_agent.run(question, message_history=[]))
+        if output_format == cs.QueryFormat.JSON:
+            payload = QueryJsonOutput(query=question, response=str(response.output))
+            print(json.dumps(payload, ensure_ascii=False))  # noqa: T201
+        else:
+            print(response.output)  # noqa: T201
+
+
+async def main_async(
+    repo_path: str,
+    batch_size: int,
+    active_projects: list[str] | None = None,
+    show_config_table: bool = True,
+    pre_chat_sync: Callable[[], None] | None = None,
+    pre_chat_sync_message: str = cs.MSG_SYNCING_KNOWLEDGE_GRAPH,
+) -> None:
+    project_root = _setup_common_initialization(repo_path)
+
+    if show_config_table:
+        table = _create_configuration_table(repo_path)
+        app_context.console.print(table)
+
+    async with connect_memgraph(batch_size) as ingestor:
+        app_context.console.print(style(cs.MSG_CONNECTED_MEMGRAPH, cs.Color.GREEN))
+        app_context.console.print(
+            Panel(
+                style(cs.MSG_CHAT_INSTRUCTIONS, cs.Color.YELLOW),
+                border_style=cs.Color.YELLOW,
+            )
+        )
+
+        rag_agent, tool_names, system_prompt = _initialize_services_and_agent(
+            repo_path, ingestor, active_projects=active_projects
+        )
+        _prime_context_token_counter(system_prompt)
+
+        if pre_chat_sync is not None:
+            await _run_pre_chat_sync(pre_chat_sync, pre_chat_sync_message)
+
+        await run_chat_loop(rag_agent, [], project_root, tool_names)
+
+
+async def _run_pre_chat_sync(task: Callable[[], None], message: str) -> None:
+    logger.disable("codebase_rag")
+    try:
+        with _thinking_with_status_bar(message):
+            await asyncio.to_thread(task)
+    finally:
+        logger.enable("codebase_rag")
+
+
+async def main_optimize_async(
+    language: str,
+    target_repo_path: str,
+    reference_document: str | None = None,
+    orchestrator: str | None = None,
+    cypher: str | None = None,
+    batch_size: int | None = None,
+) -> None:
+    project_root = _setup_common_initialization(target_repo_path)
+
+    update_model_settings(orchestrator, cypher)
+
+    app_context.console.print(
+        cs.UI_OPTIMIZATION_INIT.format(language=language, path=project_root)
+    )
+
+    table = _create_configuration_table(
+        str(project_root), cs.OPTIMIZATION_TABLE_TITLE, language
+    )
+    app_context.console.print(table)
+
+    effective_batch_size = settings.resolve_batch_size(batch_size)
+
+    async with connect_memgraph(effective_batch_size) as ingestor:
+        app_context.console.print(style(cs.MSG_CONNECTED_MEMGRAPH, cs.Color.GREEN))
+
+        rag_agent, tool_names, system_prompt = _initialize_services_and_agent(
+            target_repo_path, ingestor
+        )
+        _prime_context_token_counter(system_prompt)
+        await run_optimization_loop(
+            rag_agent, [], project_root, language, tool_names, reference_document
+        )

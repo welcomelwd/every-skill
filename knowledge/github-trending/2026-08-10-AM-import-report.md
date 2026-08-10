@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | `trailofbits/skills` | up-to-date | `skill/security/trailofbits-skills @ 7b9bd5f950f89a9ba71b249b9801c1a95be3928e` |
 | `tech-leads-club/agent-skills` | up-to-date | `skill/development/tech-leads-club-agent-skills @ fe318be656b315d5b6f45cf7ea23946b2d0241b0` |
-| `mcpbeat/best-mcp-servers` | updated | `mcp/resources/mcpbeat-best-mcp-servers @ fb9bb1edc6de4d7fd028b28ee7858c7d07f59eca (4 files, 108173 bytes)` |
+| `mcpbeat/best-mcp-servers` | up-to-date | `mcp/resources/mcpbeat-best-mcp-servers @ fb9bb1edc6de4d7fd028b28ee7858c7d07f59eca` |
 | `apify/mcpc` | up-to-date | `mcp/clients/apify-mcpc @ 096e7705b49e4c9753a18148be7f3fed55f6eb0c` |
 | `msitarzewski/agency-agents` | up-to-date | `agent/roles/msitarzewski-agency-agents @ ebe9c99acb5c96f9468de368d8bead775387d1a7` |
 | `harveyai/harvey-labs` | up-to-date | `agent/evaluations/harveyai-harvey-labs @ 55510f0e609ffa5cf6f5df17d9a813ce4bb33d0c` |

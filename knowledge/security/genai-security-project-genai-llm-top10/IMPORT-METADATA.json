@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "repository": "GenAI-Security-Project/GenAI-LLM-Top10",
+  "source_url": "https://github.com/GenAI-Security-Project/GenAI-LLM-Top10",
+  "ref": "default branch",
+  "resolved_commit": "7bbe0f06f468cdcc61fa73e1752183c6cfd23987",
+  "category": "knowledge",
+  "subcategory": "security",
+  "slug": "genai-security-project-genai-llm-top10",
+  "license": "to verify",
+  "source_date": "2026-08-09",
+  "imported_at": "2026-08-10T06:20:37+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 91,
+  "copied_bytes": 1039495,
+  "excluded_files": [
+    "2025/artifacts/OWASP Top 10 for LLM Applications and Generative AI 2025 v0.1 - LLM Application Architecture and Threat Modeling.png: file exceeds 2097152 bytes",
+    "2025/artifacts/OWASP_Top_10_LLM_Applications_Architecture_2025.pdf: file exceeds 2097152 bytes",
+    "2026/final/report/images/LLM Supply Chain Threat Model.png: binary content",
+    "2026/final/report/images/OWASP GenAI Top 10 2026.png: binary content",
+    "2026/final/report/images/OWASP LLM Threat Model 2026.png: binary content",
+    "2026/final/report/images/OWASP LLM Top10 2025-2026 Bump Chart.png: binary content",
+    "2026/final/report/images/uploads/OWASP Top 10 for LLM Applications and Generative AI 2025 v0.1 - LLM Application Architecture and Threat Modeling.png: file exceeds 2097152 bytes",
+    "2026/working/artifacts/OWASP Top 10 for LLM Applications and Generative AI 2025 v0.1 - LLM Application Architecture and Threat Modeling.png: file exceeds 2097152 bytes",
+    "2026/working/artifacts/OWASP_Top_10_LLM_Applications_Architecture_2025.pdf: file exceeds 2097152 bytes",
+    "assets/owasp_top10_wasp.jpeg: binary, archive, media, or generated artifact"
+  ],
+  "execution": "never run by this importer"
+}

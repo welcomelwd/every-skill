@@ -1,0 +1,343 @@
+// Authoritative TypeScript structure oracle for the cgr eval harness.
+//
+// Parses every .ts/.tsx file under a directory with the TypeScript compiler API
+// and emits one JSON record per declaration, in cgr's NodeLabel vocabulary, so
+// records join cgr's graph on (kind, file, line).
+//
+// Mapping (TS construct -> cgr NodeLabel), matching how cgr models TypeScript:
+//
+//   class                         -> Class
+//   interface                     -> Interface
+//   enum                          -> Enum
+//   type alias                    -> Type
+//   namespace / module            -> Class   (cgr treats it as a class container)
+//   function (top-level/in-fn)    -> Function
+//   function (in namespace/class) -> Method
+//   const x = () => ... / fn expr -> Function (or Method inside a namespace)
+//   method / constructor          -> Method
+//
+// Containment edges (matching how cgr models TypeScript containment):
+//
+//   DEFINES        : the file module -> every named type (class/interface/enum/
+//                    namespace, even when nested) and every Function
+//   DEFINES_METHOD : the enclosing class/namespace -> Method
+//
+// cgr keeps type containment flat (all types DEFINEd by the file module, keyed
+// at line 0); a Method binds to its enclosing class/namespace; a Function binds
+// to its nearest enclosing function, else the module. Output is a {nodes, edges}
+// payload joining cgr on (kind, file, line).
+//
+// Run: node ts_ast.js <dir>
+
+const ts = require("typescript");
+const fs = require("fs");
+const path = require("path");
+
+const IGNORED = new Set([".git", "node_modules", "vendor", "dist", "build", "out"]);
+const MODULE_LINE = 0;
+const nodes = [];
+const edges = [];
+const nameEdges = [];
+const calls = [];
+
+function emit(kind, file, line, name, endLine) {
+  nodes.push({ kind, file, line, end_line: endLine, name });
+}
+
+function emitEdge(rel, file, pkind, pline, ckind, cline) {
+  edges.push({
+    rel,
+    parent: { kind: pkind, file, line: pline },
+    child: { kind: ckind, file, line: cline },
+  });
+}
+
+function emitNameEdge(rel, file, skind, sline, targetName) {
+  nameEdges.push({
+    rel,
+    source: { kind: skind, file, line: sline },
+    target_name: targetName,
+  });
+}
+
+// Simple name of an extends/implements entry: the base expression's last
+// identifier (type arguments live separately, so they're already excluded).
+function heritageSimpleName(typeNode) {
+  let expr = typeNode.expression || typeNode;
+  while (expr && expr.name && expr.expression) {
+    expr = expr.name; // a.b.Base -> Base
+  }
+  return expr && expr.text ? expr.text : expr.getText();
+}
+
+// A class's extends -> INHERITS, implements -> IMPLEMENTS; an interface's
+// extends -> INHERITS (cgr models superinterfaces as inheritance).
+function emitHeritage(node, sf, file, kind, line) {
+  if (!node.heritageClauses) return;
+  for (const clause of node.heritageClauses) {
+    const isExtends = clause.token === ts.SyntaxKind.ExtendsKeyword;
+    const rel = isExtends ? "INHERITS" : "IMPLEMENTS";
+    for (const t of clause.types) {
+      emitNameEdge(rel, file, kind, line, heritageSimpleName(t));
+    }
+  }
+}
+
+function lineOf(sf, node) {
+  return sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
+}
+
+// Last line of a node's full span (its end position), for span/end_line
+// grading against cgr's end_line.
+function endLineOf(sf, node) {
+  return sf.getLineAndCharacterOfPosition(node.getEnd()).line + 1;
+}
+
+function methodKind(container) {
+  return container === "namespace" || container === "class" ? "Method" : "Function";
+}
+
+// The binding name of an arrow/function expression (`const foo = () => ...`,
+// `foo = () => ...` class property, `{ foo: () => ... }`), matching how cgr
+// names such a Function. Used so the call oracle's declared-name universe
+// includes these (cgr resolves `foo()` to them); falls back to "anonymous".
+function bindingName(node) {
+  const p = node.parent;
+  if (
+    p &&
+    (ts.isVariableDeclaration(p) ||
+      ts.isPropertyDeclaration(p) ||
+      ts.isPropertyAssignment(p)) &&
+    p.name &&
+    ts.isIdentifier(p.name)
+  ) {
+    return p.name.text;
+  }
+  return "anonymous";
+}
+
+// cgr models `X.prototype.m = function` as the CONSTRUCTOR node DEFINES the
+// method (the prototype pass registers `module.X.m` under the constructor,
+// resolved by module-flat name), so the oracle mirrors it: the file's
+// declared functions (declarations and var-assigned expressions) are the
+// constructor candidates. First declaration wins, matching cgr's registry.
+let declaredFns = new Map();
+
+// Unwrap `( ... )` and `lhs = ...` chains so `var X = (exports.X =
+// function ...)` resolves to the function expression, matching cgr's
+// nameless-binding registration of X at the function node.
+function unwrapInitializer(node) {
+  while (node) {
+    if (ts.isParenthesizedExpression(node)) {
+      node = node.expression;
+    } else if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ) {
+      node = node.right;
+    } else {
+      return node;
+    }
+  }
+  return node;
+}
+
+function collectDeclaredFunctions(sf) {
+  const decls = new Map();
+  function scan(node) {
+    // cgr resolves prototype constructors MODULE-FLAT (module.X); a
+    // function declared inside another function registers nested and
+    // never matches, so the scan must not descend past function or
+    // class boundaries.
+    if (
+      ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isMethodDeclaration(node) ||
+      ts.isClassDeclaration(node)
+    ) {
+      if (ts.isFunctionDeclaration(node) && node.name && !decls.has(node.name.text)) {
+        decls.set(node.name.text, lineOf(sf, node));
+      }
+      return;
+    }
+    if (
+      ts.isVariableDeclaration(node) &&
+      node.name &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      !decls.has(node.name.text)
+    ) {
+      const init = unwrapInitializer(node.initializer);
+      if (init && (ts.isFunctionExpression(init) || ts.isArrowFunction(init))) {
+        decls.set(node.name.text, lineOf(sf, init));
+        return;
+      }
+    }
+    node.forEachChild(scan);
+  }
+  sf.forEachChild(scan);
+  return decls;
+}
+
+// `X.prototype.m = <fn expr>`: the shape cgr's prototype-method pass owns.
+function prototypeAssignment(node) {
+  if (!ts.isBinaryExpression(node)) return null;
+  if (node.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return null;
+  const lhs = node.left;
+  if (!ts.isPropertyAccessExpression(lhs) || !ts.isIdentifier(lhs.name)) return null;
+  const obj = lhs.expression;
+  if (!ts.isPropertyAccessExpression(obj) || !ts.isIdentifier(obj.name)) return null;
+  if (obj.name.text !== "prototype" || !ts.isIdentifier(obj.expression)) return null;
+  const rhs = node.right;
+  if (!ts.isFunctionExpression(rhs) && !ts.isArrowFunction(rhs)) return null;
+  return { ctorName: obj.expression.text, methodName: lhs.name.text, fn: rhs };
+}
+
+// ctx carries the file, the enclosing class/namespace ref (for Methods) and the
+// enclosing function ref (for nested Functions).
+function defineFunction(node, sf, file, container, ctx, kind, line) {
+  if (kind === "Method") {
+    if (ctx.typeRef) {
+      emitEdge("DEFINES_METHOD", file, ctx.typeRef.kind, ctx.typeRef.line, "Method", line);
+    }
+  } else {
+    const parent = ctx.funcRef || { kind: "Module", line: MODULE_LINE };
+    emitEdge("DEFINES", file, parent.kind, parent.line, "Function", line);
+  }
+}
+
+// container: "module" | "class" | "namespace" | "function"
+function walk(node, sf, file, container, ctx) {
+  if (ts.isClassDeclaration(node) && node.name) {
+    const line = lineOf(sf, node);
+    emit("Class", file, line, node.name.text, endLineOf(sf, node));
+    emitEdge("DEFINES", file, "Module", MODULE_LINE, "Class", line);
+    emitHeritage(node, sf, file, "Class", line);
+    const sub = { typeRef: { kind: "Class", line }, funcRef: null };
+    node.members.forEach((m) => walk(m, sf, file, "class", sub));
+    return;
+  }
+  if (ts.isInterfaceDeclaration(node) && node.name) {
+    const line = lineOf(sf, node);
+    emit("Interface", file, line, node.name.text, endLineOf(sf, node));
+    emitEdge("DEFINES", file, "Module", MODULE_LINE, "Interface", line);
+    emitHeritage(node, sf, file, "Interface", line);
+    return;
+  }
+  if (ts.isEnumDeclaration(node) && node.name) {
+    const line = lineOf(sf, node);
+    emit("Enum", file, line, node.name.text, endLineOf(sf, node));
+    emitEdge("DEFINES", file, "Module", MODULE_LINE, "Enum", line);
+    return;
+  }
+  if (ts.isTypeAliasDeclaration(node) && node.name) {
+    const line = lineOf(sf, node);
+    emit("Type", file, line, node.name.text, endLineOf(sf, node));
+    emitEdge("DEFINES", file, "Module", MODULE_LINE, "Type", line);
+    return;
+  }
+  if (ts.isModuleDeclaration(node) && node.name) {
+    const line = lineOf(sf, node);
+    emit("Class", file, line, node.name.text || "", endLineOf(sf, node));
+    emitEdge("DEFINES", file, "Module", MODULE_LINE, "Class", line);
+    const sub = { typeRef: { kind: "Class", line }, funcRef: null };
+    if (node.body) node.body.forEachChild((c) => walk(c, sf, file, "namespace", sub));
+    return;
+  }
+  if (ts.isFunctionDeclaration(node) && node.name) {
+    const kind = methodKind(container);
+    const line = lineOf(sf, node);
+    emit(kind, file, line, node.name.text, endLineOf(sf, node));
+    defineFunction(node, sf, file, container, ctx, kind, line);
+    const sub = { typeRef: null, funcRef: { kind, line } };
+    if (node.body) node.body.forEachChild((c) => walk(c, sf, file, "function", sub));
+    return;
+  }
+  if (ts.isMethodDeclaration(node) || ts.isConstructorDeclaration(node)) {
+    const nm = ts.isConstructorDeclaration(node)
+      ? "constructor"
+      : node.name && ts.isIdentifier(node.name)
+        ? node.name.text
+        : node.name && node.name.text;
+    // Class members are Methods; object-literal shorthand methods are modelled
+    // by cgr as standalone Functions.
+    const kind = container === "class" ? "Method" : "Function";
+    const line = lineOf(sf, node);
+    if (nm) {
+      emit(kind, file, line, nm, endLineOf(sf, node));
+      defineFunction(node, sf, file, container, ctx, kind, line);
+    }
+    const sub = { typeRef: null, funcRef: { kind, line } };
+    if (node.body) node.body.forEachChild((c) => walk(c, sf, file, "function", sub));
+    return;
+  }
+  const proto = prototypeAssignment(node);
+  if (proto) {
+    const line = lineOf(sf, proto.fn);
+    emit("Function", file, line, proto.methodName, endLineOf(sf, proto.fn));
+    const ctorLine = declaredFns.get(proto.ctorName);
+    if (ctorLine !== undefined) {
+      emitEdge("DEFINES", file, "Function", ctorLine, "Function", line);
+    } else {
+      // Unregistered constructor: cgr's deferred parent falls back to the
+      // lexical enclosing function, then the module.
+      const parent = ctx.funcRef || { kind: "Module", line: MODULE_LINE };
+      emitEdge("DEFINES", file, parent.kind, parent.line, "Function", line);
+    }
+    const sub = { typeRef: null, funcRef: { kind: "Function", line } };
+    proto.fn.forEachChild((c) => walk(c, sf, file, "function", sub));
+    return;
+  }
+  if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
+    // cgr captures every arrow/function expression as a Function node (named
+    // by its variable when assigned, else anonymous), at the expression's own
+    // line. The name is irrelevant to the (kind, file, line) join.
+    const kind = methodKind(container);
+    const line = lineOf(sf, node);
+    emit(kind, file, line, bindingName(node), endLineOf(sf, node));
+    defineFunction(node, sf, file, container, ctx, kind, line);
+    const sub = { typeRef: null, funcRef: { kind, line } };
+    node.forEachChild((c) => walk(c, sf, file, "function", sub));
+    return;
+  }
+  // A call site: the callee simple name is a bare identifier (`foo()`,
+  // same-scope or imported) or the trailing identifier of a property access
+  // (`obj.foo()`, `Type.bar()`). The Python side keeps only callees whose
+  // name is a declared first-party Function/Method, mirroring the Go/Rust/Java
+  // call oracles. Do not return -- recurse so nested calls (`f(g())`) emit too.
+  if (ts.isCallExpression(node)) {
+    const callee = node.expression;
+    if (ts.isIdentifier(callee)) {
+      calls.push({ file, name: callee.text });
+    } else if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.name)) {
+      calls.push({ file, name: callee.name.text });
+    }
+  }
+  node.forEachChild((c) => walk(c, sf, file, container, ctx));
+}
+
+function hasExt(name, exts) {
+  return exts.some((e) => name.endsWith(e)) && !name.endsWith(".d.ts");
+}
+
+function visitDir(dir, root, exts) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (!IGNORED.has(entry.name)) visitDir(p, root, exts);
+    } else if (hasExt(entry.name, exts)) {
+      const src = fs.readFileSync(p, "utf8");
+      const sf = ts.createSourceFile(p, src, ts.ScriptTarget.Latest, true);
+      const rel = path.relative(root, p).split(path.sep).join("/");
+      declaredFns = collectDeclaredFunctions(sf);
+      const ctx = { typeRef: null, funcRef: null };
+      sf.forEachChild((c) => walk(c, sf, rel, "module", ctx));
+    }
+  }
+}
+
+const root = process.argv[2] || ".";
+const exts = process.argv.slice(3);
+visitDir(root, root, exts.length ? exts : [".ts", ".tsx"]);
+process.stdout.write(JSON.stringify({ nodes, edges, name_edges: nameEdges, calls }));

@@ -1,0 +1,48 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+.env
+.tmp
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.claude/
+.qdrant_code_embeddings/
+CLAUDE.md
+AGENTS.md
+PROJECT.md
+.coverage
+.envrc
+.DS_Store
+.pypi_cache.json
+.omc
+site/
+
+# Eval harness scratch workspace (regenerated each run); result files are committed
+evals/results/l3_workspace/
+# Rust oracle build artifacts (the source + Cargo.lock are committed)
+evals/oracles/rs_oracle/target/
+evals/oracles/rs_oracle/.build.lock
+# TypeScript oracle deps (the source + package-lock.json are committed)
+evals/oracles/ts_oracle/node_modules/
+# Java oracle compiled classes (the source is committed)
+evals/oracles/java_oracle/*.class
+# Lua oracle deps (the source + package-lock.json are committed)
+evals/oracles/lua_oracle/node_modules/
+# PHP oracle deps (the source + package-lock.json are committed)
+evals/oracles/php_oracle/node_modules/
+# Node oracle install bookkeeping (completion marker + concurrent-install lock)
+evals/oracles/*/.node-deps-installed
+evals/oracles/*/.node-deps-lock/
+# Scala oracle build artifacts (the source is committed; scala-cli fetches deps)
+evals/oracles/scala_oracle/.scala-build/
+evals/oracles/scala_oracle/.bsp/
+.cgr-hash-cache.json
+.cgr-dir-mtimes.json

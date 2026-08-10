@@ -1,0 +1,166 @@
+# Cross-cutting kernel constants: separators, chars, paths, misc keys.
+
+from enum import StrEnum
+
+INIT_PY = "__init__.py"
+
+ENCODING_UTF8 = "utf-8"
+
+ARG_TARGET_CODE = "target_code"
+ARG_REPLACEMENT_CODE = "replacement_code"
+ARG_FILE_PATH = "file_path"
+ARG_CONTENT = "content"
+ARG_COMMAND = "command"
+ARG_PATTERN = "pattern"
+ARG_REWRITE = "rewrite"
+ARG_LANGUAGE = "language"
+ARG_DRY_RUN = "dry_run"
+
+SEPARATOR_DOT = "."
+SEPARATOR_SLASH = "/"
+# Disambiguates definitions that share one qualified name (if/else import
+# fallbacks, typing.overload, try/except fallbacks): "<qn>@<start_line>".
+DUP_QN_MARKER = "@"
+# Joined after the line when a same-named definition already holds that line,
+# so same-line twins stay distinct (issue #1071). Every consumer splits on
+# DUP_QN_MARKER and keeps the base, so nothing reads the suffix back.
+DUP_QN_COLUMN_MARKER = "_"
+
+PATH_CURRENT_DIR = "."
+PATH_PARENT_DIR = ".."
+GLOB_ALL = "*"
+
+TRIE_TYPE_KEY = "__type__"
+TRIE_QN_KEY = "__qn__"
+TRIE_INTERNAL_PREFIX = "__"
+
+BYTES_PER_MB = 1024 * 1024
+
+EMPTY_PARENS = "()"
+DOCSTRING_STRIP_CHARS = "'\" \n"
+
+INLINE_MODULE_PATH_PREFIX = "inline_module_"
+
+# Method name constants for getattr/hasattr
+METHOD_FIND_WITH_PREFIX = "find_with_prefix"
+METHOD_ITEMS = "items"
+
+JSON_INDENT = 2
+
+
+class EventType(StrEnum):
+    MODIFIED = "modified"
+    CREATED = "created"
+    DELETED = "deleted"
+
+
+REALTIME_LOGGER_FORMAT = (
+    "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+    "<level>{level: <8}</level> | "
+    "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+    "<level>{message}</level>"
+)
+
+WATCHER_SLEEP_INTERVAL = 1
+LOG_LEVEL_INFO = "INFO"
+LOG_LEVEL_ERROR = "ERROR"
+
+# Debounce settings for realtime watcher
+DEFAULT_DEBOUNCE_SECONDS = 5
+DEFAULT_MAX_WAIT_SECONDS = 30
+
+CHAR_HYPHEN = "-"
+CHAR_UNDERSCORE = "_"
+
+CHAR_SEMICOLON = ";"
+CHAR_COMMA = ","
+CHAR_COLON = ":"
+CHAR_ANGLE_OPEN = "<"
+CHAR_ANGLE_CLOSE = ">"
+CHAR_PAREN_OPEN = "("
+CHAR_PAREN_CLOSE = ")"
+CHAR_QUESTION_MARK = "?"
+
+CHAR_SPACE = " "
+SEPARATOR_COMMA_SPACE = ", "
+PUNCTUATION_TYPES = (CHAR_PAREN_OPEN, CHAR_PAREN_CLOSE, CHAR_COMMA)
+
+REGEX_METHOD_CHAIN_SUFFIX = r"\)\.[^)]*$"
+REGEX_FINAL_METHOD_CAPTURE = r"\.([^.()]+)$"
+
+DEFAULT_NAME = "Unknown"
+TEXT_UNKNOWN = "unknown"
+
+TMP_EXTENSION = ".tmp"
+
+MOD_RS = "mod.rs"
+LIB_RS = "lib.rs"
+MAIN_RS = "main.rs"
+SEPARATOR_DOUBLE_COLON = "::"
+SEPARATOR_PROTOTYPE = ".prototype."
+RUST_CRATE_KEYWORD = "crate"
+BUILTIN_PREFIX = "builtin"
+IIFE_FUNC_PREFIX = "iife_func_"
+IIFE_ARROW_PREFIX = "iife_arrow_"
+OPERATOR_PREFIX = "operator"
+KEYWORD_SUPER = "super"
+KEYWORD_SELF = "self"
+KEYWORD_CONSTRUCTOR = "constructor"
+
+# Incremental update hash cache
+HASH_CACHE_FILENAME = ".cgr-hash-cache.json"
+DIR_MTIMES_FILENAME = ".cgr-dir-mtimes.json"
+PARSER_FINGERPRINT_FILENAME = ".cgr-parser-fingerprint"
+CGR_STATE_FILENAMES: frozenset[str] = frozenset(
+    {HASH_CACHE_FILENAME, DIR_MTIMES_FILENAME, PARSER_FINGERPRINT_FILENAME}
+)
+
+# Inputs to the parser fingerprint: everything that changes how source files
+# become graph nodes and edges, plus the installed grammar wheels. Paths are
+# relative to the codebase_rag package root.
+PARSER_FINGERPRINT_SOURCE_DIRS: tuple[str, ...] = ("parsers", "constants")
+PARSER_FINGERPRINT_SOURCE_FILES: tuple[str, ...] = (
+    "graph_updater.py",
+    "function_registry.py",
+    "ast_cache.py",
+    "language_spec.py",
+    "parser_loader.py",
+)
+PY_SOURCE_GLOB = "*.py"
+# The bundled Roslyn C# frontend tool is parser code too, though .cs/.csproj
+# rather than Python: an edit changes the semantic edges it produces, so its
+# sources are folded into the parser fingerprint.
+PARSER_FINGERPRINT_TOOL_DIR = "parsers/csharp_frontend/roslyn"
+PARSER_FINGERPRINT_TOOL_GLOBS: tuple[str, ...] = ("*.cs", "*.csproj")
+GRAMMAR_DIST_PREFIX = "tree-sitter"
+GRAMMAR_VERSION_FMT = "{name}=={version}"
+GIT_DIR_NAME = ".git"
+ROOT_DIR_KEY = "."
+JSON_EMPTY_OBJECT = "{}"
+
+STR_NONE = "None"
+
+ENTITY_CLASS = "Class"
+ENTITY_FUNCTION = "Function"
+ENTITY_METHOD = "Method"
+
+PREFIX_LAMBDA = "lambda_"
+PREFIX_ANONYMOUS = "anonymous_"
+PREFIX_IIFE = "iife_"
+PREFIX_IIFE_DIRECT = "iife_direct_"
+PREFIX_ARROW = "arrow"
+PREFIX_FUNC = "func"
+
+# JSON keys for stdlib introspection subprocess responses
+JSON_KEY_HAS_ENTITY = "hasEntity"
+JSON_KEY_ENTITY_TYPE = "entityType"
+
+IMPORT_DEFAULT_SUFFIX = ".default"
+IMPORT_STD_PREFIX = "std."
+CPP_STD_PREFIX = "std"
+IMPORT_MODULE_LABEL = "Module"
+IMPORT_QUALIFIED_NAME = "qualified_name"
+IMPORT_RELATIONSHIP = "IMPORTS"
+
+# Delimiter tokens for argument parsing
+DELIMITER_TOKENS = frozenset({"(", ")", ","})

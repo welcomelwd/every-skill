@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "repository": "vitali87/code-graph-rag",
+  "source_url": "https://github.com/vitali87/code-graph-rag",
+  "ref": "default branch",
+  "resolved_commit": "234816efbe6c21a4245eff30e107187c98b2656b",
+  "category": "knowledge",
+  "subcategory": "tools",
+  "slug": "vitali87-code-graph-rag",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-10T06:20:37+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 1164,
+  "copied_bytes": 14619753,
+  "excluded_files": [
+    ".env.example: sensitive filename",
+    "assets/demo.gif: file exceeds 2097152 bytes",
+    "assets/logo-dark-any.png: binary content",
+    "assets/logo-light-any.png: binary content",
+    "docs/assets/demo.gif: file exceeds 2097152 bytes",
+    "docs/assets/favicon.png: binary content",
+    "docs/assets/logo-dark-any.png: binary content",
+    "docs/assets/logo-icon.png: binary content",
+    "docs/assets/logo-light-any.png: binary content",
+    "optimize/EXPERT_PYTHON_PROGRAMMING_FOURTH_EDITION.pdf: file exceeds 2097152 bytes",
+    "optimize/tree-sitter.txt: file exceeds 2097152 bytes"
+  ],
+  "execution": "never run by this importer"
+}

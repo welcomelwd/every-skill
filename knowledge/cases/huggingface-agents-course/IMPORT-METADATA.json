@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "repository": "huggingface/agents-course",
+  "source_url": "https://github.com/huggingface/agents-course",
+  "ref": "default branch",
+  "resolved_commit": "8c0832eae634ebb34541c65265caa6da4c5d2c57",
+  "category": "knowledge",
+  "subcategory": "cases",
+  "slug": "huggingface-agents-course",
+  "license": "Apache-2.0",
+  "source_date": "2026-08-08",
+  "imported_at": "2026-08-10T06:20:37+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 441,
+  "copied_bytes": 2906022,
+  "excluded_files": [],
+  "execution": "never run by this importer"
+}

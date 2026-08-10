@@ -1,0 +1,803 @@
+from __future__ import annotations
+
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from codebase_rag.constants import NODE_UNIQUE_CONSTRAINTS
+from codebase_rag.cypher_queries import (
+    build_create_node_query,
+    build_create_relationship_query,
+    build_merge_node_query,
+    build_merge_relationship_query,
+    wrap_with_unwind,
+)
+from codebase_rag.services.graph_service import MemgraphIngestor
+
+
+class TestMemgraphIngestorInit:
+    def test_init_sets_host_and_port(self) -> None:
+        ingestor = MemgraphIngestor(host="testhost", port=1234)
+
+        assert ingestor._host == "testhost"
+        assert ingestor._port == 1234
+
+    def test_init_sets_default_batch_size(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+
+        assert ingestor.batch_size == 1000
+
+    def test_init_sets_custom_batch_size(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=500)
+
+        assert ingestor.batch_size == 500
+
+    def test_init_raises_for_zero_batch_size(self) -> None:
+        with pytest.raises(ValueError, match="batch_size must be a positive integer"):
+            MemgraphIngestor(host="localhost", port=7687, batch_size=0)
+
+    def test_init_raises_for_negative_batch_size(self) -> None:
+        with pytest.raises(ValueError, match="batch_size must be a positive integer"):
+            MemgraphIngestor(host="localhost", port=7687, batch_size=-1)
+
+    def test_init_creates_empty_buffers(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+
+        assert ingestor.node_buffer == []
+        assert ingestor._rel_count == 0
+
+    def test_init_conn_is_none(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+
+        assert ingestor.conn is None
+
+    def test_init_stores_auth_credentials(self) -> None:
+        ingestor = MemgraphIngestor(
+            host="localhost", port=7687, username="user", password="pass"
+        )
+
+        assert ingestor._username == "user"
+        assert ingestor._password == "pass"
+
+    def test_init_defaults_auth_to_none(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+
+        assert ingestor._username is None
+        assert ingestor._password is None
+
+    def test_init_raises_for_username_without_password(self) -> None:
+        with pytest.raises(ValueError, match="Both username and password"):
+            MemgraphIngestor(host="localhost", port=7687, username="user")
+
+    def test_init_raises_for_password_without_username(self) -> None:
+        with pytest.raises(ValueError, match="Both username and password"):
+            MemgraphIngestor(host="localhost", port=7687, password="pass")
+
+    def test_init_normalizes_empty_strings_to_none(self) -> None:
+        ingestor = MemgraphIngestor(
+            host="localhost", port=7687, username="", password=""
+        )
+
+        assert ingestor._username is None
+        assert ingestor._password is None
+
+    def test_init_normalizes_whitespace_only_to_none(self) -> None:
+        ingestor = MemgraphIngestor(
+            host="localhost", port=7687, username="  ", password="  "
+        )
+
+        assert ingestor._username is None
+        assert ingestor._password is None
+
+    def test_init_strips_whitespace_from_credentials(self) -> None:
+        ingestor = MemgraphIngestor(
+            host="localhost", port=7687, username=" user ", password=" pass "
+        )
+
+        assert ingestor._username == "user"
+        assert ingestor._password == "pass"
+
+    def test_init_raises_for_empty_password_with_valid_username(self) -> None:
+        with pytest.raises(ValueError, match="Both username and password"):
+            MemgraphIngestor(host="localhost", port=7687, username="user", password="")
+
+
+class TestContextManager:
+    def test_enter_connects_to_memgraph(self) -> None:
+        with patch("codebase_rag.services.graph_service.mgclient") as mock_mgclient:
+            mock_conn = MagicMock()
+            mock_mgclient.connect.return_value = mock_conn
+
+            ingestor = MemgraphIngestor(host="testhost", port=1234)
+            result = ingestor.__enter__()
+
+            mock_mgclient.connect.assert_called_once_with(host="testhost", port=1234)
+            assert ingestor.conn == mock_conn
+            assert mock_conn.autocommit is True
+            assert result is ingestor
+
+    def test_enter_passes_auth_when_provided(self) -> None:
+        with patch("codebase_rag.services.graph_service.mgclient") as mock_mgclient:
+            mock_conn = MagicMock()
+            mock_mgclient.connect.return_value = mock_conn
+
+            ingestor = MemgraphIngestor(
+                host="testhost", port=1234, username="user", password="pass"
+            )
+            ingestor.__enter__()
+
+            mock_mgclient.connect.assert_called_once_with(
+                host="testhost", port=1234, username="user", password="pass"
+            )
+
+    def test_enter_omits_auth_when_not_provided(self) -> None:
+        with patch("codebase_rag.services.graph_service.mgclient") as mock_mgclient:
+            mock_conn = MagicMock()
+            mock_mgclient.connect.return_value = mock_conn
+
+            ingestor = MemgraphIngestor(host="testhost", port=1234)
+            ingestor.__enter__()
+
+            mock_mgclient.connect.assert_called_once_with(host="testhost", port=1234)
+
+    def test_exit_flushes_and_closes_connection(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        mock_conn = MagicMock()
+        ingestor.conn = mock_conn
+
+        with patch.object(MemgraphIngestor, "flush_all") as mock_flush:
+            ingestor.__exit__(None, None, None)
+
+            mock_flush.assert_called_once()
+            mock_conn.close.assert_called_once()
+
+    def test_exit_logs_error_on_exception(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        mock_conn = MagicMock()
+        ingestor.conn = mock_conn
+
+        with patch.object(MemgraphIngestor, "flush_all"):
+            ingestor.__exit__(ValueError, ValueError("test error"), None)
+
+            mock_conn.close.assert_called_once()
+
+    def test_exit_handles_none_connection(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor.conn = None
+
+        with patch.object(MemgraphIngestor, "flush_all"):
+            ingestor.__exit__(None, None, None)
+
+
+class TestCursorToResults:
+    def test_returns_empty_list_when_no_description(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        mock_cursor = MagicMock()
+        mock_cursor.description = None
+
+        result = ingestor._cursor_to_results(mock_cursor)
+
+        assert result == []
+
+    def test_converts_rows_to_dicts(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        mock_cursor = MagicMock()
+
+        col1 = MagicMock()
+        col1.name = "id"
+        col2 = MagicMock()
+        col2.name = "name"
+        mock_cursor.description = [col1, col2]
+        mock_cursor.fetchall.return_value = [(1, "test"), (2, "other")]
+
+        result = ingestor._cursor_to_results(mock_cursor)
+
+        assert result == [{"id": 1, "name": "test"}, {"id": 2, "name": "other"}]
+
+    def test_handles_single_row(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        mock_cursor = MagicMock()
+
+        col = MagicMock()
+        col.name = "count"
+        mock_cursor.description = [col]
+        mock_cursor.fetchall.return_value = [(42,)]
+
+        result = ingestor._cursor_to_results(mock_cursor)
+
+        assert result == [{"count": 42}]
+
+    def test_handles_empty_result_set(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        mock_cursor = MagicMock()
+
+        col = MagicMock()
+        col.name = "value"
+        mock_cursor.description = [col]
+        mock_cursor.fetchall.return_value = []
+
+        result = ingestor._cursor_to_results(mock_cursor)
+
+        assert result == []
+
+
+class TestExecuteQuery:
+    def test_raises_when_not_connected(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor.conn = None
+
+        with pytest.raises(ConnectionError, match="Not connected to Memgraph"):
+            ingestor._execute_query("MATCH (n) RETURN n")
+
+    def test_executes_query_and_returns_results(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+
+        col = MagicMock()
+        col.name = "n"
+        mock_cursor.description = [col]
+        mock_cursor.fetchall.return_value = [("node1",), ("node2",)]
+        ingestor.conn = mock_conn
+
+        result = ingestor._execute_query("MATCH (n) RETURN n")
+
+        mock_cursor.execute.assert_called_once_with("MATCH (n) RETURN n", {})
+        mock_cursor.close.assert_called_once()
+        assert result == [{"n": "node1"}, {"n": "node2"}]
+
+    def test_passes_params_to_query(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_cursor.description = None
+        ingestor.conn = mock_conn
+
+        ingestor._execute_query("MATCH (n {id: $id}) RETURN n", {"id": 123})
+
+        mock_cursor.execute.assert_called_once_with(
+            "MATCH (n {id: $id}) RETURN n", {"id": 123}
+        )
+
+    def test_closes_cursor_on_exception(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_cursor.execute.side_effect = RuntimeError("Database error")
+        ingestor.conn = mock_conn
+
+        with pytest.raises(RuntimeError):
+            ingestor._execute_query("INVALID QUERY")
+
+        mock_cursor.close.assert_called_once()
+
+    def test_suppresses_already_exists_errors_in_logs(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_cursor.execute.side_effect = RuntimeError("Constraint already exists")
+        ingestor.conn = mock_conn
+
+        with pytest.raises(RuntimeError):
+            ingestor._execute_query("CREATE CONSTRAINT")
+
+
+class TestExecuteBatchOn:
+    def test_returns_early_when_params_empty(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        mock_conn = MagicMock()
+        ingestor.conn = mock_conn
+
+        ingestor._execute_batch_on(mock_conn, "MERGE (n:Test)", [])
+
+        mock_conn.cursor.assert_not_called()
+
+    def test_wraps_query_with_unwind(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        ingestor.conn = mock_conn
+
+        ingestor._execute_batch_on(
+            mock_conn, "MERGE (n:Test {id: row.id})", [{"id": 1}, {"id": 2}]
+        )
+
+        call_args = mock_cursor.execute.call_args[0]
+        assert call_args[0] == wrap_with_unwind("MERGE (n:Test {id: row.id})")
+        assert call_args[1] == {"batch": [{"id": 1}, {"id": 2}]}
+
+    def test_closes_cursor_on_success(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        ingestor.conn = mock_conn
+
+        ingestor._execute_batch_on(mock_conn, "MERGE (n:Test)", [{"id": 1}])
+
+        mock_cursor.close.assert_called_once()
+
+
+class TestCleanDatabase:
+    def test_executes_delete_query(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+
+        with patch.object(MemgraphIngestor, "_execute_query") as mock_execute:
+            ingestor.clean_database()
+
+            mock_execute.assert_called_once_with("MATCH (n) DETACH DELETE n;")
+
+
+class TestEnsureConstraints:
+    def test_creates_constraint_for_each_node_type(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        executed_queries: list[str] = []
+
+        def capture_query(query: str) -> list[dict]:
+            executed_queries.append(query)
+            return []
+
+        with patch.object(
+            MemgraphIngestor, "_execute_query", side_effect=capture_query
+        ):
+            ingestor.ensure_constraints()
+
+        for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
+            expected = f"CREATE CONSTRAINT ON (n:{label}) ASSERT n.{prop} IS UNIQUE;"
+            assert expected in executed_queries
+
+    def test_continues_on_constraint_error(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        call_count = 0
+
+        def fail_first_create(query: str) -> list[dict]:
+            nonlocal call_count
+            call_count += 1
+            if query.startswith("CREATE CONSTRAINT") and call_count == 4:
+                raise RuntimeError("Constraint already exists")
+            return []
+
+        with patch.object(
+            MemgraphIngestor, "_execute_query", side_effect=fail_first_create
+        ):
+            ingestor.ensure_constraints()
+
+        # One SHOW, two damage probes, then a create-constraint and a
+        # create-index per label.
+        expected_queries = 3 + len(NODE_UNIQUE_CONSTRAINTS) * 2
+        assert call_count == expected_queries
+
+
+class TestLegacyPathKeyMigration:
+    """Superseded Folder/File relative-path keys must migrate safely (#897)."""
+
+    LEGACY_ROWS = [
+        {"constraint type": "unique", "label": "Folder", "properties": ["path"]},
+        {"constraint type": "unique", "label": "File", "properties": ["path"]},
+    ]
+    CLEAN_ROWS = [
+        {
+            "constraint type": "unique",
+            "label": "Folder",
+            "properties": ["absolute_path"],
+        },
+        {"constraint type": "unique", "label": "File", "properties": ["absolute_path"]},
+    ]
+
+    def _run_capture(self, show_rows: list[dict], damaged: bool = False) -> list[str]:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        executed: list[str] = []
+
+        def capture(query: str, params: dict | None = None) -> list[dict]:
+            executed.append(query)
+            if query.startswith("SHOW CONSTRAINT"):
+                return show_rows
+            if "damaged" in query:
+                return [{"damaged": 1}] if damaged else []
+            if "purged" in query:
+                return [{"purged": 2}]
+            return []
+
+        with patch.object(MemgraphIngestor, "_execute_query", side_effect=capture):
+            ingestor.ensure_constraints()
+        return executed
+
+    def test_drops_exact_legacy_constraints_when_present(self) -> None:
+        executed = self._run_capture(self.LEGACY_ROWS)
+
+        assert "DROP CONSTRAINT ON (n:Folder) ASSERT n.path IS UNIQUE;" in executed
+        assert "DROP CONSTRAINT ON (n:File) ASSERT n.path IS UNIQUE;" in executed
+
+    def test_purges_merged_and_keyless_nodes_when_legacy_present(self) -> None:
+        executed = self._run_capture(self.LEGACY_ROWS, damaged=True)
+
+        purge_queries = [q for q in executed if "DETACH DELETE" in q]
+        assert any("count(DISTINCT p)" in q for q in purge_queries)
+        assert any("absolute_path IS NULL" in q for q in purge_queries)
+
+    def test_purges_when_damage_outlives_constraints(self) -> None:
+        # An earlier partial upgrade may have dropped the legacy constraints
+        # while leaving the merged nodes behind: repair keys off the data.
+        executed = self._run_capture(self.CLEAN_ROWS, damaged=True)
+
+        purge_queries = [q for q in executed if "DETACH DELETE" in q]
+        assert any("count(DISTINCT p)" in q for q in purge_queries)
+        assert any("absolute_path IS NULL" in q for q in purge_queries)
+
+    def test_clean_database_issues_no_drops_or_purges(self) -> None:
+        executed = self._run_capture(self.CLEAN_ROWS)
+
+        assert not any(q.startswith("DROP CONSTRAINT") for q in executed)
+        assert not any("DETACH DELETE" in q for q in executed)
+
+    def test_show_constraint_failure_propagates(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+
+        def refuse(query: str, params: dict | None = None) -> list[dict]:
+            if query.startswith("SHOW CONSTRAINT"):
+                raise ConnectionError("connection refused")
+            return []
+
+        with (
+            patch.object(MemgraphIngestor, "_execute_query", side_effect=refuse),
+            pytest.raises(ConnectionError),
+        ):
+            ingestor.ensure_constraints()
+
+
+class TestFlushNodesEdgeCases:
+    def test_skips_nodes_with_unknown_label(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=10)
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        ingestor.conn = mock_conn
+
+        ingestor.node_buffer.append(("UnknownLabel", {"some_prop": "value"}))
+
+        ingestor.flush_nodes()
+
+        mock_cursor.execute.assert_not_called()
+        assert ingestor.node_buffer == []
+
+    def test_skips_nodes_missing_id_property(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=10)
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        ingestor.conn = mock_conn
+
+        ingestor.node_buffer.append(("File", {"name": "test.txt"}))
+
+        ingestor.flush_nodes()
+
+        mock_cursor.execute.assert_not_called()
+        assert ingestor.node_buffer == []
+
+    def test_processes_valid_nodes_and_skips_invalid(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=10)
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        ingestor.conn = mock_conn
+
+        ingestor.node_buffer.append(
+            ("File", {"absolute_path": "/valid.txt", "name": "valid"})
+        )
+        ingestor.node_buffer.append(("File", {"name": "missing_path"}))
+        ingestor.node_buffer.append(("UnknownLabel", {"id": "unknown"}))
+
+        ingestor.flush_nodes()
+
+        mock_cursor.execute.assert_called_once()
+        batch = mock_cursor.execute.call_args[0][1]["batch"]
+        assert len(batch) == 1
+        assert batch[0]["id"] == "/valid.txt"
+
+    def test_handles_empty_buffer(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        mock_conn = MagicMock()
+        ingestor.conn = mock_conn
+
+        ingestor.flush_nodes()
+
+        mock_conn.cursor.assert_not_called()
+
+
+class TestExportGraphToDict:
+    def test_returns_graph_data_structure(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        ingestor.conn = mock_conn
+
+        mock_cursor.description = [
+            MagicMock(name="node_id"),
+            MagicMock(name="labels"),
+            MagicMock(name="properties"),
+        ]
+        mock_cursor.description[0].name = "node_id"
+        mock_cursor.description[1].name = "labels"
+        mock_cursor.description[2].name = "properties"
+        mock_cursor.fetchall.return_value = []
+
+        result = ingestor.export_graph_to_dict()
+
+        assert "nodes" in result
+        assert "relationships" in result
+        assert "metadata" in result
+        assert "total_nodes" in result["metadata"]
+        assert "total_relationships" in result["metadata"]
+        assert "exported_at" in result["metadata"]
+
+    def test_counts_nodes_and_relationships(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        call_count = 0
+
+        def mock_fetch_all(query: str, params: dict | None = None) -> list[dict]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return [{"node_id": 1}, {"node_id": 2}, {"node_id": 3}]
+            return [{"from_id": 1, "to_id": 2}]
+
+        with patch.object(MemgraphIngestor, "fetch_all", side_effect=mock_fetch_all):
+            result = ingestor.export_graph_to_dict()
+
+        assert result["metadata"]["total_nodes"] == 3
+        assert result["metadata"]["total_relationships"] == 1
+
+
+class TestFlushAll:
+    def test_calls_flush_nodes_and_flush_relationships(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+
+        with (
+            patch.object(MemgraphIngestor, "flush_nodes") as mock_nodes,
+            patch.object(MemgraphIngestor, "flush_relationships") as mock_rels,
+        ):
+            ingestor.flush_all()
+
+            mock_nodes.assert_called_once()
+            mock_rels.assert_called_once()
+
+
+class TestFetchAllAndExecuteWrite:
+    def test_fetch_all_delegates_to_execute_query(self) -> None:
+        from codebase_rag.config import settings
+
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+
+        with patch.object(
+            MemgraphIngestor, "_execute_query", return_value=[{"n": "result"}]
+        ) as mock_exec:
+            result = ingestor.fetch_all("MATCH (n) RETURN n", {"limit": 10})
+
+            expected_query = (
+                f"MATCH (n) RETURN n QUERY MEMORY LIMIT "
+                f"{settings.QUERY_MEMORY_LIMIT_MB} MB;"
+            )
+            mock_exec.assert_called_once_with(expected_query, {"limit": 10})
+            assert result == [{"n": "result"}]
+
+    def test_fetch_all_preserves_existing_memory_limit(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        query_with_hint = "MATCH (n) RETURN n QUERY MEMORY LIMIT 512 MB;"
+
+        with patch.object(
+            MemgraphIngestor, "_execute_query", return_value=[]
+        ) as mock_exec:
+            ingestor.fetch_all(query_with_hint)
+            mock_exec.assert_called_once_with(query_with_hint, None)
+
+    def test_execute_write_delegates_to_execute_query(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+
+        with patch.object(MemgraphIngestor, "_execute_query") as mock_exec:
+            ingestor.execute_write("CREATE (n:Test)", {"name": "test"})
+
+            mock_exec.assert_called_once_with("CREATE (n:Test)", {"name": "test"})
+
+
+class TestGetCurrentTimestamp:
+    def test_returns_iso_format_timestamp(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+
+        result = ingestor._get_current_timestamp()
+
+        assert "T" in result
+        assert len(result) > 10
+
+
+class TestCreateMode:
+    def test_default_use_merge_is_true(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        assert ingestor._use_merge is True
+
+    def test_use_merge_false(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687, use_merge=False)
+        assert ingestor._use_merge is False
+
+    def test_flush_nodes_uses_merge_query_by_default(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=10)
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        ingestor.conn = mock_conn
+
+        ingestor.node_buffer.append(
+            ("File", {"absolute_path": "/test.py", "name": "test"})
+        )
+        ingestor.flush_nodes()
+
+        call_args = mock_cursor.execute.call_args[0][0]
+        assert "MERGE" in call_args
+        assert "CREATE" not in call_args.split("MERGE")[0]
+
+    def test_flush_nodes_uses_create_query_when_merge_disabled(self) -> None:
+        ingestor = MemgraphIngestor(
+            host="localhost", port=7687, batch_size=10, use_merge=False
+        )
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        ingestor.conn = mock_conn
+
+        ingestor.node_buffer.append(
+            ("File", {"absolute_path": "/test.py", "name": "test"})
+        )
+        ingestor.flush_nodes()
+
+        call_args = mock_cursor.execute.call_args[0][0]
+        assert "CREATE" in call_args
+        assert "MERGE" not in call_args
+
+    def test_flush_relationships_uses_merge_query_by_default(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687, batch_size=10)
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_cursor.description = [MagicMock(name="created")]
+        mock_cursor.description[0].name = "created"
+        mock_cursor.fetchall.return_value = [(1,)]
+        ingestor.conn = mock_conn
+
+        ingestor.ensure_relationship_batch(
+            ("File", "path", "/a.py"), "IMPORTS", ("File", "path", "/b.py")
+        )
+        ingestor.flush_relationships()
+
+        call_args = mock_cursor.execute.call_args[0][0]
+        assert "MERGE" in call_args
+
+    def test_flush_relationships_uses_create_query_when_merge_disabled(self) -> None:
+        ingestor = MemgraphIngestor(
+            host="localhost", port=7687, batch_size=10, use_merge=False
+        )
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_cursor.description = [MagicMock(name="created")]
+        mock_cursor.description[0].name = "created"
+        mock_cursor.fetchall.return_value = [(1,)]
+        ingestor.conn = mock_conn
+
+        ingestor.ensure_relationship_batch(
+            ("File", "path", "/a.py"), "IMPORTS", ("File", "path", "/b.py")
+        )
+        ingestor.flush_relationships()
+
+        call_args = mock_cursor.execute.call_args[0][0]
+        assert "CREATE" in call_args
+        assert "MERGE" not in call_args
+
+
+class TestPreGroupedRelBuffer:
+    def test_rel_groups_populated_on_ensure(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor.ensure_relationship_batch(
+            ("File", "path", "/a.py"), "IMPORTS", ("File", "path", "/b.py")
+        )
+        assert len(ingestor._rel_groups) == 1
+
+    def test_rel_groups_groups_by_pattern(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor.ensure_relationship_batch(
+            ("File", "path", "/a.py"), "IMPORTS", ("File", "path", "/b.py")
+        )
+        ingestor.ensure_relationship_batch(
+            ("File", "path", "/a.py"), "IMPORTS", ("File", "path", "/c.py")
+        )
+        ingestor.ensure_relationship_batch(
+            ("Module", "qualified_name", "mod_a"),
+            "DEFINES",
+            ("Function", "qualified_name", "func_b"),
+        )
+        assert len(ingestor._rel_groups) == 2
+        pattern = ("File", "path", "IMPORTS", "File", "path")
+        assert len(ingestor._rel_groups[pattern]) == 2
+
+    def test_rel_groups_cleared_after_flush(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_cursor.description = [MagicMock(name="created")]
+        mock_cursor.description[0].name = "created"
+        mock_cursor.fetchall.return_value = [(1,)]
+        ingestor.conn = mock_conn
+
+        ingestor.ensure_relationship_batch(
+            ("File", "path", "/a.py"), "IMPORTS", ("File", "path", "/b.py")
+        )
+        ingestor.flush_relationships()
+
+        assert len(ingestor._rel_groups) == 0
+
+    def test_rel_groups_empty_on_init(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        assert len(ingestor._rel_groups) == 0
+
+    def test_rel_groups_correct_batch_row_values(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor.ensure_relationship_batch(
+            ("File", "path", "/a.py"),
+            "IMPORTS",
+            ("File", "path", "/b.py"),
+            {"weight": 1},
+        )
+        pattern = ("File", "path", "IMPORTS", "File", "path")
+        rows = ingestor._rel_groups[pattern]
+        assert len(rows) == 1
+        assert rows[0]["from_val"] == "/a.py"
+        assert rows[0]["to_val"] == "/b.py"
+        assert rows[0]["props"] == {"weight": 1}
+
+
+class TestSlots:
+    def test_has_slots(self) -> None:
+        assert hasattr(MemgraphIngestor, "__slots__")
+
+    def test_no_dict(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        assert not hasattr(ingestor, "__dict__")
+
+
+class TestCypherCreateQueries:
+    def test_build_create_node_query(self) -> None:
+        query = build_create_node_query("File", "path")
+        assert "CREATE" in query
+        assert "MERGE" not in query
+        assert "path: row.id" in query
+
+    def test_build_create_relationship_query(self) -> None:
+        query = build_create_relationship_query(
+            "File", "path", "IMPORTS", "File", "path"
+        )
+        assert "CREATE (a)-[r:IMPORTS]->(b)" in query
+        assert "MERGE" not in query
+
+    def test_build_create_relationship_query_with_props(self) -> None:
+        query = build_create_relationship_query(
+            "File", "path", "IMPORTS", "File", "path", has_props=True
+        )
+        assert "SET r += row.props" in query
+        assert "CREATE (a)-[r:IMPORTS]->(b)" in query
+
+    def test_build_merge_node_query_unchanged(self) -> None:
+        query = build_merge_node_query("File", "path")
+        assert "MERGE" in query
+        assert "CREATE" not in query
+
+    def test_build_merge_relationship_query_unchanged(self) -> None:
+        query = build_merge_relationship_query(
+            "File", "path", "IMPORTS", "File", "path"
+        )
+        assert "MERGE" in query
+        assert "CREATE" not in query.replace("MERGE", "")

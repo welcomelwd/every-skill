@@ -1,0 +1,258 @@
+import re
+
+import pytest
+
+from codebase_rag import constants as cs
+from codebase_rag import exceptions as ex
+from codebase_rag.services.llm import (
+    _build_keyword_pattern,
+    _validate_call_procedures,
+    _validate_cypher_read_only,
+    _validate_no_unbounded_paths,
+)
+
+
+class TestBuildKeywordPattern:
+    def test_single_word_uses_word_boundaries(self) -> None:
+        pattern = _build_keyword_pattern("DELETE")
+        assert pattern.search("DELETE n") is not None
+        assert pattern.search("XDELETE") is None
+        assert pattern.search("DELETEX") is None
+
+    def test_multi_word_allows_whitespace_between_parts(self) -> None:
+        pattern = _build_keyword_pattern("LOAD CSV")
+        assert pattern.search("LOAD CSV") is not None
+        assert pattern.search("LOAD  CSV") is not None
+        assert pattern.search("LOAD\nCSV") is not None
+        assert pattern.search("LOAD\t CSV") is not None
+
+    def test_multi_word_allows_block_comment_between_parts(self) -> None:
+        pattern = _build_keyword_pattern("LOAD CSV")
+        assert pattern.search("LOAD/*bypass*/CSV") is not None
+        assert pattern.search("LOAD /* comment */ CSV") is not None
+
+    def test_multi_word_allows_single_line_comment_between_parts(self) -> None:
+        pattern = _build_keyword_pattern("LOAD CSV")
+        assert pattern.search("LOAD //comment\nCSV") is not None
+        assert pattern.search("LOAD //\nCSV") is not None
+
+    def test_multi_word_respects_word_boundaries(self) -> None:
+        pattern = _build_keyword_pattern("LOAD CSV")
+        assert pattern.search("PRELOAD CSV") is None
+        assert pattern.search("LOAD CSVX") is None
+
+    def test_single_word_is_case_sensitive_on_input(self) -> None:
+        pattern = _build_keyword_pattern("DELETE")
+        assert pattern.search("DELETE") is not None
+        assert pattern.search("delete") is None
+
+    def test_returns_compiled_pattern(self) -> None:
+        pattern = _build_keyword_pattern("SET")
+        assert isinstance(pattern, re.Pattern)
+
+    def test_multi_word_has_dotall_flag(self) -> None:
+        pattern = _build_keyword_pattern("CREATE INDEX")
+        assert pattern.flags & re.DOTALL
+
+    def test_all_dangerous_keywords_produce_valid_patterns(self) -> None:
+        for kw in cs.CYPHER_DANGEROUS_KEYWORDS:
+            pattern = _build_keyword_pattern(kw)
+            assert pattern.search(kw) is not None
+
+
+class TestValidateCypherReadOnly:
+    def test_safe_match_query_passes(self) -> None:
+        _validate_cypher_read_only("MATCH (n) RETURN n;")
+
+    def test_safe_match_with_where_passes(self) -> None:
+        _validate_cypher_read_only("MATCH (n:Function) WHERE n.name = 'foo' RETURN n;")
+
+    def test_safe_optional_match_passes(self) -> None:
+        _validate_cypher_read_only(
+            "MATCH (a)-[:CALLS]->(b) OPTIONAL MATCH (b)-[:DEFINES]->(c) RETURN a, b, c;"
+        )
+
+    @pytest.mark.parametrize(
+        "keyword",
+        sorted(cs.CYPHER_DANGEROUS_KEYWORDS),
+    )
+    def test_rejects_all_dangerous_keywords(self, keyword: str) -> None:
+        query = f"MATCH (n) {keyword} n;"
+        with pytest.raises(ex.LLMGenerationError):
+            _validate_cypher_read_only(query)
+
+    def test_rejects_delete(self) -> None:
+        with pytest.raises(ex.LLMGenerationError, match="DELETE"):
+            _validate_cypher_read_only("MATCH (n) DELETE n;")
+
+    def test_rejects_detach_delete(self) -> None:
+        with pytest.raises(ex.LLMGenerationError):
+            _validate_cypher_read_only("MATCH (n) DETACH DELETE n;")
+
+    def test_rejects_drop(self) -> None:
+        with pytest.raises(ex.LLMGenerationError, match="DROP"):
+            _validate_cypher_read_only("MATCH (n) DROP INDEX idx;")
+
+    def test_rejects_set(self) -> None:
+        with pytest.raises(ex.LLMGenerationError, match="SET"):
+            _validate_cypher_read_only("MATCH (n) SET n.name = 'x';")
+
+    def test_rejects_merge(self) -> None:
+        with pytest.raises(ex.LLMGenerationError, match="MERGE"):
+            _validate_cypher_read_only("MERGE (n:Node {id: 1});")
+
+    def test_rejects_create(self) -> None:
+        with pytest.raises(ex.LLMGenerationError, match="CREATE"):
+            _validate_cypher_read_only("CREATE (n:Node {name: 'test'});")
+
+    def test_rejects_load_csv(self) -> None:
+        with pytest.raises(ex.LLMGenerationError, match="LOAD CSV"):
+            _validate_cypher_read_only(
+                "LOAD CSV FROM 'http://evil.com/data.csv' AS row;"
+            )
+
+    def test_rejects_create_index(self) -> None:
+        with pytest.raises(ex.LLMGenerationError, match="CREATE INDEX"):
+            _validate_cypher_read_only("CREATE INDEX ON :Node(name);")
+
+    def test_case_insensitive(self) -> None:
+        with pytest.raises(ex.LLMGenerationError):
+            _validate_cypher_read_only("match (n) delete n;")
+
+    def test_rejects_block_comment_bypass(self) -> None:
+        with pytest.raises(ex.LLMGenerationError):
+            _validate_cypher_read_only("LOAD/*bypass*/CSV FROM 'http://evil.com';")
+
+    def test_rejects_single_line_comment_bypass(self) -> None:
+        with pytest.raises(ex.LLMGenerationError):
+            _validate_cypher_read_only("LOAD //bypass\nCSV FROM 'http://evil.com';")
+
+    def test_does_not_flag_substring_matches(self) -> None:
+        _validate_cypher_read_only("MATCH (n) WHERE n.name = 'DATASET' RETURN n;")
+
+    def test_does_not_flag_reset(self) -> None:
+        _validate_cypher_read_only("MATCH (n) WHERE n.name = 'RESET' RETURN n;")
+
+    def test_does_not_flag_created_at(self) -> None:
+        _validate_cypher_read_only("MATCH (n) WHERE n.created_at > 0 RETURN n;")
+
+    def test_error_includes_keyword_and_query(self) -> None:
+        query = "MATCH (n) DELETE n;"
+        with pytest.raises(ex.LLMGenerationError, match="DELETE") as exc_info:
+            _validate_cypher_read_only(query)
+        assert query in str(exc_info.value)
+
+    def test_rejects_foreach(self) -> None:
+        with pytest.raises(ex.LLMGenerationError, match="FOREACH"):
+            _validate_cypher_read_only(
+                "MATCH p=(a)-[*]->(b) FOREACH (n IN nodes(p) | SET n.marked = true);"
+            )
+
+    def test_rejects_remove(self) -> None:
+        with pytest.raises(ex.LLMGenerationError, match="REMOVE"):
+            _validate_cypher_read_only("MATCH (n) REMOVE n.prop;")
+
+    def test_call_no_longer_in_keyword_blocklist(self) -> None:
+        _validate_cypher_read_only("CALL nxalg.strongly_connected_components();")
+
+    def test_rejects_create_constraint(self) -> None:
+        with pytest.raises(ex.LLMGenerationError, match="CREATE CONSTRAINT"):
+            _validate_cypher_read_only(
+                "CREATE CONSTRAINT ON (n:Node) ASSERT n.id IS UNIQUE;"
+            )
+
+    def test_rejects_multiline_block_comment_bypass(self) -> None:
+        with pytest.raises(ex.LLMGenerationError):
+            _validate_cypher_read_only("LOAD/*\nbypass\n*/CSV FROM 'http://evil.com';")
+
+
+class TestValidateNoUnboundedPaths:
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "MATCH (n) RETURN n;",
+            "MATCH (a)-[:CALLS]->(b) RETURN a, b;",
+            "MATCH (a)-[:CALLS*5]->(b) RETURN a, b;",
+            "MATCH (a)-[:CALLS*1..6]->(b) RETURN a, b;",
+            "MATCH (a)-[:CALLS*..6]->(b) RETURN a, b;",
+            "MATCH (a)-[r:CALLS*1..6]->(b) RETURN r;",
+            "MATCH (a)-[*1..3]->(b) RETURN a, b;",
+            "MATCH (a)-[:CALLS*2..2]->(b) RETURN a, b;",
+            "MATCH (a)-[:CALLS*1..6 {weight: 1}]->(b) RETURN a, b;",
+        ],
+    )
+    def test_bounded_or_no_varlen_passes(self, query: str) -> None:
+        _validate_no_unbounded_paths(query)
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "MATCH path = (a)-[:CALLS*]->(b) RETURN path;",
+            "MATCH (a)-[:CALLS*1..]->(b) RETURN a, b;",
+            "MATCH (a)-[:CALLS*..]->(b) RETURN a, b;",
+            "MATCH (a)-[*]->(b) RETURN a, b;",
+            "MATCH (a)-[r:CALLS*]->(b) RETURN r;",
+            "MATCH (a)-[:CALLS*10..]->(b) RETURN a, b;",
+        ],
+    )
+    def test_unbounded_varlen_rejected(self, query: str) -> None:
+        with pytest.raises(ex.LLMGenerationError, match="unbounded"):
+            _validate_no_unbounded_paths(query)
+
+    def test_error_includes_query(self) -> None:
+        query = "MATCH (a)-[:CALLS*]->(b) RETURN a;"
+        with pytest.raises(ex.LLMGenerationError) as exc_info:
+            _validate_no_unbounded_paths(query)
+        assert query in str(exc_info.value)
+
+
+class TestValidateCallProcedures:
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "MATCH (n) RETURN n;",
+            "CALL nxalg.strongly_connected_components() YIELD components RETURN components;",
+            "CALL nxalg.simple_cycles() YIELD cycles RETURN cycles LIMIT 10;",
+            "CALL nxalg.topological_sort() YIELD nodes RETURN nodes;",
+            "CALL pagerank.get() YIELD node, rank RETURN node, rank ORDER BY rank DESC LIMIT 10;",
+            "CALL betweenness_centrality.get() YIELD node, betweenness_centrality RETURN node;",
+            "CALL community_detection.get() YIELD node, community_id RETURN node, community_id;",
+            "CALL leiden_community_detection.get() YIELD node, community_id RETURN node;",
+            "CALL weakly_connected_components.get() YIELD node, component_id RETURN node;",
+            "CALL graph_util.ancestors(node) YIELD ancestors RETURN ancestors;",
+            "CALL path.expand(start, ['CALLS>'], ['Function'], 1, 6) YIELD path RETURN path;",
+            "CALL algo.all_simple_paths(src, tgt, ['CALLS'], 10) YIELD paths RETURN paths;",
+            "CALL bridges.get() YIELD bridges RETURN bridges;",
+            "CALL biconnected_components.get() YIELD components RETURN components;",
+        ],
+    )
+    def test_allowed_procedure_passes(self, query: str) -> None:
+        _validate_call_procedures(query)
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "CALL db.schema.visualization();",
+            "CALL refactor.merge_nodes([a, b]) YIELD node RETURN node;",
+            "CALL create.node(['Foo'], {x: 1}) YIELD node RETURN node;",
+            "CALL export_util.json('out.json');",
+            "CALL migrate.postgresql('...') YIELD row RETURN row;",
+            "CALL mg.load('mod');",
+            "CALL csv_utils.create_csv_file('a','b');",
+            "CALL link_prediction.train();",
+        ],
+    )
+    def test_disallowed_procedure_rejected(self, query: str) -> None:
+        with pytest.raises(ex.LLMGenerationError, match="outside the read-only"):
+            _validate_call_procedures(query)
+
+    def test_call_is_case_insensitive(self) -> None:
+        _validate_call_procedures(
+            "call nxalg.strongly_connected_components() YIELD components RETURN components;"
+        )
+
+    def test_error_includes_procedure_name(self) -> None:
+        with pytest.raises(ex.LLMGenerationError, match="refactor.merge_nodes"):
+            _validate_call_procedures(
+                "CALL refactor.merge_nodes([a, b]) YIELD n RETURN n;"
+            )
