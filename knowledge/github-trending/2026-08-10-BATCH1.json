@@ -1,0 +1,419 @@
+{
+  "schema_version": 1,
+  "source_date": "2026-08-10",
+  "batch": "STAR-BATCH-1",
+  "source_markdown": "knowledge/github-trending/2026-08-10.md",
+  "selection_note": "All projects marked ★ in the confirmed first-batch candidate list. The table contained 41 marked rows although its summary said 40.",
+  "projects": [
+    {
+      "repository": "affaan-m/ECC",
+      "source_url": "https://github.com/affaan-m/ECC",
+      "category": "skill",
+      "subcategory": "development",
+      "slug": "ecc",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "ComposioHQ/awesome-claude-skills",
+      "source_url": "https://github.com/ComposioHQ/awesome-claude-skills",
+      "category": "skill",
+      "subcategory": "development",
+      "slug": "awesome-claude-skills",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "hesreallyhim/awesome-claude-code",
+      "source_url": "https://github.com/hesreallyhim/awesome-claude-code",
+      "category": "skill",
+      "subcategory": "development",
+      "slug": "awesome-claude-code",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "VoltAgent/awesome-openclaw-skills",
+      "source_url": "https://github.com/VoltAgent/awesome-openclaw-skills",
+      "category": "skill",
+      "subcategory": "development",
+      "slug": "awesome-openclaw-skills",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "wshobson/agents",
+      "source_url": "https://github.com/wshobson/agents",
+      "category": "skill",
+      "subcategory": "development",
+      "slug": "wshobson-agents",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "yusufkaraaslan/Skill_Seekers",
+      "source_url": "https://github.com/yusufkaraaslan/Skill_Seekers",
+      "category": "skill",
+      "subcategory": "development",
+      "slug": "skill-seekers",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "humanlayer/12-factor-agents",
+      "source_url": "https://github.com/humanlayer/12-factor-agents",
+      "category": "skill",
+      "subcategory": "development",
+      "slug": "12-factor-agents",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "utkusen/sast-skills",
+      "source_url": "https://github.com/utkusen/sast-skills",
+      "category": "skill",
+      "subcategory": "security",
+      "slug": "sast-skills",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "mukul975/Anthropic-Cybersecurity-Skills",
+      "source_url": "https://github.com/mukul975/Anthropic-Cybersecurity-Skills",
+      "category": "skill",
+      "subcategory": "security",
+      "slug": "anthropic-cybersecurity-skills",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "dair-ai/Prompt-Engineering-Guide",
+      "source_url": "https://github.com/dair-ai/Prompt-Engineering-Guide",
+      "category": "skill",
+      "subcategory": "research",
+      "slug": "prompt-engineering-guide",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "ChromeDevTools/chrome-devtools-mcp",
+      "source_url": "https://github.com/ChromeDevTools/chrome-devtools-mcp",
+      "category": "mcp",
+      "subcategory": "servers",
+      "slug": "chrome-devtools-mcp",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "DeusData/codebase-memory-mcp",
+      "source_url": "https://github.com/DeusData/codebase-memory-mcp",
+      "category": "mcp",
+      "subcategory": "servers",
+      "slug": "codebase-memory-mcp",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "mrexodia/ida-pro-mcp",
+      "source_url": "https://github.com/mrexodia/ida-pro-mcp",
+      "category": "mcp",
+      "subcategory": "servers",
+      "slug": "ida-pro-mcp",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "0x4m4/hexstrike-ai",
+      "source_url": "https://github.com/0x4m4/hexstrike-ai",
+      "category": "mcp",
+      "subcategory": "servers",
+      "slug": "hexstrike-ai",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "firecrawl/firecrawl-mcp-server",
+      "source_url": "https://github.com/firecrawl/firecrawl-mcp-server",
+      "category": "mcp",
+      "subcategory": "servers",
+      "slug": "firecrawl-mcp-server",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "IBM/mcp-context-forge",
+      "source_url": "https://github.com/IBM/mcp-context-forge",
+      "category": "mcp",
+      "subcategory": "servers",
+      "slug": "mcp-context-forge",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "makenotion/notion-mcp-server",
+      "source_url": "https://github.com/makenotion/notion-mcp-server",
+      "category": "mcp",
+      "subcategory": "servers",
+      "slug": "notion-mcp-server",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "upstash/context7",
+      "source_url": "https://github.com/upstash/context7",
+      "category": "mcp",
+      "subcategory": "tools",
+      "slug": "context7",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "oraios/serena",
+      "source_url": "https://github.com/oraios/serena",
+      "category": "mcp",
+      "subcategory": "tools",
+      "slug": "serena",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "mcp-use/mcp-use",
+      "source_url": "https://github.com/mcp-use/mcp-use",
+      "category": "mcp",
+      "subcategory": "tools",
+      "slug": "mcp-use",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "stacklok/toolhive",
+      "source_url": "https://github.com/stacklok/toolhive",
+      "category": "mcp",
+      "subcategory": "tools",
+      "slug": "toolhive",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "qdrant/mcp-server-qdrant",
+      "source_url": "https://github.com/qdrant/mcp-server-qdrant",
+      "category": "mcp",
+      "subcategory": "resources",
+      "slug": "mcp-server-qdrant",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "langchain-ai/langchain",
+      "source_url": "https://github.com/langchain-ai/langchain",
+      "category": "agent",
+      "subcategory": "frameworks",
+      "slug": "langchain",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "crewAIInc/crewAI",
+      "source_url": "https://github.com/crewAIInc/crewAI",
+      "category": "agent",
+      "subcategory": "frameworks",
+      "slug": "crewai",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "agno-agi/agno",
+      "source_url": "https://github.com/agno-agi/agno",
+      "category": "agent",
+      "subcategory": "frameworks",
+      "slug": "agno",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "browser-use/browser-use",
+      "source_url": "https://github.com/browser-use/browser-use",
+      "category": "agent",
+      "subcategory": "workflows",
+      "slug": "browser-use",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "NousResearch/hermes-agent",
+      "source_url": "https://github.com/NousResearch/hermes-agent",
+      "category": "agent",
+      "subcategory": "workflows",
+      "slug": "hermes-agent",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "aaif-goose/goose",
+      "source_url": "https://github.com/aaif-goose/goose",
+      "category": "agent",
+      "subcategory": "workflows",
+      "slug": "goose",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "SWE-agent/SWE-agent",
+      "source_url": "https://github.com/SWE-agent/SWE-agent",
+      "category": "agent",
+      "subcategory": "workflows",
+      "slug": "swe-agent",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "google-gemini/gemini-cli",
+      "source_url": "https://github.com/google-gemini/gemini-cli",
+      "category": "agent",
+      "subcategory": "runtimes",
+      "slug": "gemini-cli",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "ComposioHQ/composio",
+      "source_url": "https://github.com/ComposioHQ/composio",
+      "category": "agent",
+      "subcategory": "runtimes",
+      "slug": "composio",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "Aider-AI/aider",
+      "source_url": "https://github.com/Aider-AI/aider",
+      "category": "agent",
+      "subcategory": "runtimes",
+      "slug": "aider",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "code-yeongyu/oh-my-openagent",
+      "source_url": "https://github.com/code-yeongyu/oh-my-openagent",
+      "category": "agent",
+      "subcategory": "runtimes",
+      "slug": "oh-my-openagent",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "infiniflow/ragflow",
+      "source_url": "https://github.com/infiniflow/ragflow",
+      "category": "knowledge",
+      "subcategory": "rag",
+      "slug": "ragflow",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "run-llama/llama_index",
+      "source_url": "https://github.com/run-llama/llama_index",
+      "category": "knowledge",
+      "subcategory": "rag",
+      "slug": "llama-index",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "deepset-ai/haystack",
+      "source_url": "https://github.com/deepset-ai/haystack",
+      "category": "knowledge",
+      "subcategory": "rag",
+      "slug": "haystack",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "HKUDS/LightRAG",
+      "source_url": "https://github.com/HKUDS/LightRAG",
+      "category": "knowledge",
+      "subcategory": "rag",
+      "slug": "lightrag",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "VectifyAI/PageIndex",
+      "source_url": "https://github.com/VectifyAI/PageIndex",
+      "category": "knowledge",
+      "subcategory": "rag",
+      "slug": "pageindex",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "vllm-project/vllm",
+      "source_url": "https://github.com/vllm-project/vllm",
+      "category": "knowledge",
+      "subcategory": "tools",
+      "slug": "vllm",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "ggml-org/llama.cpp",
+      "source_url": "https://github.com/ggml-org/llama.cpp",
+      "category": "knowledge",
+      "subcategory": "tools",
+      "slug": "llama-cpp",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    },
+    {
+      "repository": "langfuse/langfuse",
+      "source_url": "https://github.com/langfuse/langfuse",
+      "category": "knowledge",
+      "subcategory": "evaluations",
+      "slug": "langfuse",
+      "license": null,
+      "license_status": "verify from imported LICENSE/NOTICE and upstream metadata",
+      "download": true
+    }
+  ]
+}
