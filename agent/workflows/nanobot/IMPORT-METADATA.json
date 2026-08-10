@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "repository": "HKUDS/nanobot",
+  "source_url": "https://github.com/HKUDS/nanobot",
+  "ref": "main",
+  "resolved_commit": "05d73803e7f68786b611e27d6906ad536fb3888f",
+  "category": "agent",
+  "subcategory": "workflows",
+  "slug": "nanobot",
+  "license": null,
+  "source_date": null,
+  "imported_at": "2026-08-10T08:26:17+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 1154,
+  "copied_bytes": 13469357,
+  "excluded_files": [
+    "images/nanobot_arch.png: binary content",
+    "images/nanobot_logo.png: binary content",
+    "images/nanobot_webui.png: binary content",
+    "webui/public/brand/nanobot_apple_touch.png: binary content",
+    "webui/public/brand/nanobot_favicon_32.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "repository": "daytonaio/daytona",
+  "source_url": "https://github.com/daytonaio/daytona",
+  "ref": "main",
+  "resolved_commit": "ec4c21b2d597091ac09ecc278f3bcc172575a987",
+  "category": "agent",
+  "subcategory": "workflows",
+  "slug": "daytona",
+  "license": null,
+  "source_date": null,
+  "imported_at": "2026-08-10T08:26:17+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 1,
+  "copied_bytes": 11940,
+  "excluded_files": [
+    "assets/images/Daytona-logotype-black.png: binary content",
+    "assets/images/Daytona-logotype-white.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

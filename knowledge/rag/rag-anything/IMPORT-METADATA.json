@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "repository": "HKUDS/RAG-Anything",
+  "source_url": "https://github.com/HKUDS/RAG-Anything",
+  "ref": "main",
+  "resolved_commit": "65b7ffdeb801309d4c87b6accf81bfe5cd9b175d",
+  "category": "knowledge",
+  "subcategory": "rag",
+  "slug": "rag-anything",
+  "license": null,
+  "source_date": null,
+  "imported_at": "2026-08-10T08:26:17+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 88,
+  "copied_bytes": 1092350,
+  "excluded_files": [
+    "assets/LiteWrite.png: binary content",
+    "assets/logo.png: binary content",
+    "assets/rag_anything_framework.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

@@ -1,0 +1,3342 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: Copyright The LanceDB Authors
+
+import * as fs from "fs";
+import * as path from "path";
+import * as tmp from "tmp";
+
+import * as arrow15 from "apache-arrow-15";
+import * as arrow16 from "apache-arrow-16";
+import * as arrow17 from "apache-arrow-17";
+import * as arrow18 from "apache-arrow-18";
+
+import {
+  Connection,
+  MatchQuery,
+  PhraseQuery,
+  Table,
+  connect,
+  tokenize,
+} from "../lancedb";
+import {
+  Table as ArrowTable,
+  Field,
+  FixedSizeList,
+  Float32,
+  Float64,
+  Int32,
+  Int64,
+  List,
+  Schema,
+  SchemaLike,
+  Struct,
+  Type,
+  Uint8,
+  Utf8,
+  makeArrowTable,
+} from "../lancedb/arrow";
+import * as arrow from "../lancedb/arrow";
+import {
+  EmbeddingFunction,
+  LanceSchema,
+  getRegistry,
+  register,
+} from "../lancedb/embedding";
+import { Index } from "../lancedb/indices";
+import {
+  BooleanQuery,
+  Occur,
+  Operator,
+  instanceOfFullTextQuery,
+} from "../lancedb/query";
+
+describe.each([arrow15, arrow16, arrow17, arrow18])(
+  "Given a table",
+  // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+  (arrow: any) => {
+    let tmpDir: tmp.DirResult;
+    let table: Table;
+
+    const schema:
+      | import("apache-arrow-15").Schema
+      | import("apache-arrow-16").Schema
+      | import("apache-arrow-17").Schema
+      | import("apache-arrow-18").Schema = new arrow.Schema([
+      new arrow.Field("id", new arrow.Float64(), true),
+    ]);
+
+    beforeEach(async () => {
+      tmpDir = tmp.dirSync({ unsafeCleanup: true });
+      const conn = await connect(tmpDir.name);
+      table = await conn.createEmptyTable("some_table", schema);
+    });
+    afterEach(() => tmpDir.removeCallback());
+
+    it("be displayable", async () => {
+      expect(table.display()).toMatch(
+        /NativeTable\(some_table, uri=.*, read_consistency_interval=None\)/,
+      );
+      table.close();
+      expect(table.display()).toBe("ClosedTable(some_table)");
+    });
+
+    it("should let me add data", async () => {
+      await table.add([{ id: 1 }, { id: 2 }]);
+      await table.add([{ id: 1 }]);
+      await expect(table.countRows()).resolves.toBe(3);
+    });
+
+    it("should support a foreign Float64 vector schema end to end", async () => {
+      const conn = await connect(tmpDir.name);
+      const schema = new arrow.Schema([
+        new arrow.Field("resource_id", new arrow.Int32(), false),
+        new arrow.Field(
+          "vector",
+          new arrow.FixedSizeList(
+            3,
+            new arrow.Field("value", new arrow.Float64(), true),
+          ),
+          false,
+        ),
+      ]);
+      const data = [
+        {
+          // biome-ignore lint/style/useNamingConvention: matches the reported schema
+          resource_id: 0,
+          vector: [0.1, 0.1, 0.1],
+        },
+      ];
+
+      const resources = await conn.createTable("resources", data, { schema });
+
+      const existing = await resources
+        .query()
+        .where("resource_id = 0")
+        .limit(1)
+        .toArray();
+      expect(existing).toHaveLength(1);
+
+      const matched = await resources
+        .search(Float64Array.from(data[0].vector))
+        .limit(1)
+        .toArray();
+      expect(matched).toHaveLength(1);
+      expect(matched[0]["resource_id"]).toBe(0);
+    });
+
+    it("should support branches", async () => {
+      await table.add([{ id: 1 }]);
+      expect(await table.countRows()).toBe(1);
+
+      expect(table.currentBranch()).toBeNull();
+
+      // fork an isolated, writable branch from main
+      const branch = await (await table.branches()).create("exp");
+      expect(branch.currentBranch()).toBe("exp");
+      expect(await branch.countRows()).toBe(1);
+      await branch.add([{ id: 2 }]);
+      expect(await branch.countRows()).toBe(2);
+      // main is untouched by branch writes
+      expect(await table.countRows()).toBe(1);
+
+      // listed, with main (null) as the parent
+      const list = await (await table.branches()).list();
+      expect(Object.keys(list)).toContain("exp");
+      expect(list["exp"].parentBranch).toBeNull();
+
+      // fromRef="main" is equivalent to the default
+      await (await table.branches()).create("exp2", "main");
+      const list2 = await (await table.branches()).list();
+      expect(list2["exp2"].parentBranch).toBeNull();
+
+      // checkout returns a handle scoped to the branch's latest
+      const checkedOut = await (await table.branches()).checkout("exp");
+      expect(checkedOut.currentBranch()).toBe("exp");
+      expect(await checkedOut.countRows()).toBe(2);
+
+      // delete removes it
+      await (await table.branches()).delete("exp");
+      await (await table.branches()).delete("exp2");
+      const after = await (await table.branches()).list();
+      expect(Object.keys(after)).not.toContain("exp");
+    });
+
+    it("should open a branch via open_table", async () => {
+      const db = await connect(tmpDir.name);
+      await table.add([{ id: 1 }]);
+      const branch = await (await table.branches()).create("exp");
+      await branch.add([{ id: 2 }]);
+
+      // open_table(..., { branch }) returns a handle scoped to the branch
+      const opened = await db.openTable("some_table", undefined, {
+        branch: "exp",
+      });
+      expect(await opened.countRows()).toBe(2);
+      // opening without branch still tracks main
+      expect(await (await db.openTable("some_table")).countRows()).toBe(1);
+    });
+
+    it("should open a branch at a version isolated from main and HEAD", async () => {
+      const db = await connect(tmpDir.name);
+      // main: a single fork-point row
+      const t = await db.createTable("bv_table", [{ id: 0 }]);
+      const mainV1 = await t.version();
+
+      // fork "exp", then advance exp AND main independently past the fork so
+      // they diverge while sharing version numbers
+      const exp = await (await t.branches()).create("exp");
+      await exp.add([{ id: 1 }]); // exp: {0, 1}
+      const expV2 = await exp.version();
+      await exp.add([{ id: 2 }]); // exp HEAD: {0, 1, 2}
+      await t.add([{ id: 100 }, { id: 101 }, { id: 102 }]); // main HEAD: {0,100,101,102}
+      expect(await t.version()).toBe(expV2);
+
+      // open exp at the shared version: the data must be exp's, not main's.
+      // count alone cannot prove this (main@v2 also exists), so assert
+      // provenance by content.
+      const pinned = await db.openTable("bv_table", undefined, {
+        branch: "exp",
+        version: expV2,
+      });
+      expect(await pinned.countRows()).toBe(2); // not exp HEAD (3), not main@v2 (4)
+      expect(await pinned.countRows("id = 1")).toBe(1); // exp's post-fork row
+      expect(await pinned.countRows("id = 100")).toBe(0); // main's rows invisible
+
+      // the same coordinate is reachable directly via branches().checkout(name, version)
+      const pinnedDirect = await (await t.branches()).checkout("exp", expV2);
+      expect(await pinnedDirect.countRows()).toBe(2);
+
+      // the HEADs are unaffected
+      expect(
+        await (
+          await db.openTable("bv_table", undefined, { branch: "exp" })
+        ).countRows(),
+      ).toBe(3);
+      expect(await (await db.openTable("bv_table")).countRows()).toBe(4);
+
+      // version-only (no branch) time-travels main itself: its fork-point
+      // version holds only main's first row, and the shared version number
+      // resolves to main's data, not the branch's ("opens main at the version")
+      const oldMain = await db.openTable("bv_table", undefined, {
+        version: mainV1,
+      });
+      expect(await oldMain.countRows()).toBe(1);
+      const sharedOnMain = await db.openTable("bv_table", undefined, {
+        version: expV2,
+      });
+      expect(await sharedOnMain.countRows()).toBe(4); // main@v2, not exp@v2 (2)
+
+      // detached head: writing to a pinned version is rejected
+      await expect(pinned.add([{ id: 9 }])).rejects.toThrow(
+        /cannot be modified/,
+      );
+
+      // a nonexistent version is rejected -- on main, and on a branch (a
+      // distinct resolution path, on the branch's manifests)
+      await expect(
+        db.openTable("bv_table", undefined, { version: 9999 }),
+      ).rejects.toThrow();
+      await expect(
+        db.openTable("bv_table", undefined, { branch: "exp", version: 9999 }),
+      ).rejects.toThrow();
+
+      // checkoutLatest re-attaches the pinned handle to the BRANCH's HEAD
+      // (writable again), not main's HEAD (4), and not staying pinned (2)
+      await pinned.checkoutLatest();
+      expect(await pinned.countRows()).toBe(3); // exp HEAD
+      await pinned.add([{ id: 3 }]);
+      expect(await pinned.countRows()).toBe(4); // writable again
+    });
+
+    it("rejects invalid branch inputs", async () => {
+      const branches = await table.branches();
+      await expect(branches.create("")).rejects.toThrow("non-empty");
+      await expect(branches.checkout("")).rejects.toThrow("non-empty");
+      await expect(branches.delete("")).rejects.toThrow("non-empty");
+      await expect(branches.create("bad", "main", -1)).rejects.toThrow(
+        "non-negative",
+      );
+    });
+
+    it("should show table stats", async () => {
+      await table.add([{ id: 1 }, { id: 2 }]);
+      await table.add([{ id: 1 }]);
+      await expect(table.stats()).resolves.toEqual({
+        fragmentStats: {
+          lengths: {
+            max: 2,
+            mean: 1,
+            min: 1,
+            p25: 1,
+            p50: 2,
+            p75: 2,
+            p99: 2,
+          },
+          numFragments: 2,
+          numSmallFragments: 2,
+        },
+        numIndices: 0,
+        numRows: 3,
+        // Full on-disk size of the two data files, footers and metadata included.
+        totalBytes: 684,
+      });
+
+      // Index files count toward totalBytes too (only deletion files and
+      // manifests are excluded).
+      await table.createIndex("id", { config: Index.btree() });
+      const statsWithIndex = await table.stats();
+      expect(statsWithIndex.numIndices).toBe(1);
+      expect(statsWithIndex.totalBytes).toBeGreaterThan(684);
+    });
+
+    it("should overwrite data if asked", async () => {
+      const addRes = await table.add([{ id: 1 }, { id: 2 }]);
+      expect(addRes).toHaveProperty("version");
+      expect(addRes.version).toBe(2);
+      await table.add([{ id: 1 }], { mode: "overwrite" });
+      await expect(table.countRows()).resolves.toBe(1);
+    });
+
+    it("should invoke the progress callback", async () => {
+      const events: import("../lancedb").WriteProgress[] = [];
+      await table.add([{ id: 1 }, { id: 2 }, { id: 3 }], {
+        progress: (p) => events.push(p),
+      });
+
+      expect(events.length).toBeGreaterThan(0);
+      const last = events[events.length - 1];
+      expect(last.done).toBe(true);
+      // Earlier callbacks must have done=false.
+      for (const ev of events.slice(0, -1)) {
+        expect(ev.done).toBe(false);
+      }
+      // outputRows reflects the rows added in this call, not table size.
+      expect(last.outputRows).toBe(3);
+      // The input source (an array) reports a row count, so totalRows is set.
+      expect(last.totalRows).toBe(3);
+      // outputRows is monotonic.
+      for (let i = 1; i < events.length; i++) {
+        expect(events[i].outputRows).toBeGreaterThanOrEqual(
+          events[i - 1].outputRows,
+        );
+      }
+    });
+
+    it("should swallow errors thrown from the progress callback", async () => {
+      const warn = jest
+        .spyOn(console, "warn")
+        .mockImplementation(() => undefined);
+      try {
+        const res = await table.add([{ id: 1 }, { id: 2 }], {
+          progress: () => {
+            throw new Error("callback bomb");
+          },
+        });
+        expect(res.version).toBeGreaterThan(0);
+        expect(warn).toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("should let me close the table", async () => {
+      expect(table.isOpen()).toBe(true);
+      table.close();
+      expect(table.isOpen()).toBe(false);
+      expect(table.countRows()).rejects.toThrow("Table some_table is closed");
+    });
+
+    it("should let me update values", async () => {
+      await table.add([{ id: 1 }]);
+      expect(await table.countRows("id == 1")).toBe(1);
+      expect(await table.countRows("id == 7")).toBe(0);
+      const updateRes = await table.update({ id: "7" });
+      expect(updateRes).toHaveProperty("version");
+      expect(updateRes.version).toBe(3);
+      expect(updateRes).toHaveProperty("rowsUpdated");
+      expect(updateRes.rowsUpdated).toBe(1);
+      expect(await table.countRows("id == 1")).toBe(0);
+      expect(await table.countRows("id == 7")).toBe(1);
+      await table.add([{ id: 2 }]);
+      // Test Map as input
+      await table.update(new Map(Object.entries({ id: "10" })), {
+        where: "id % 2 == 0",
+      });
+      expect(await table.countRows("id == 2")).toBe(0);
+      expect(await table.countRows("id == 7")).toBe(1);
+      expect(await table.countRows("id == 10")).toBe(1);
+    });
+
+    it("should let me update values with `values`", async () => {
+      await table.add([{ id: 1 }]);
+      expect(await table.countRows("id == 1")).toBe(1);
+      expect(await table.countRows("id == 7")).toBe(0);
+      await table.update({ values: { id: 7 } });
+      expect(await table.countRows("id == 1")).toBe(0);
+      expect(await table.countRows("id == 7")).toBe(1);
+      await table.add([{ id: 2 }]);
+      // Test Map as input
+      await table.update({
+        values: {
+          id: "10",
+        },
+        where: "id % 2 == 0",
+      });
+      expect(await table.countRows("id == 2")).toBe(0);
+      expect(await table.countRows("id == 7")).toBe(1);
+      expect(await table.countRows("id == 10")).toBe(1);
+    });
+
+    it("should let me update values with `valuesSql`", async () => {
+      await table.add([{ id: 1 }]);
+      expect(await table.countRows("id == 1")).toBe(1);
+      expect(await table.countRows("id == 7")).toBe(0);
+      await table.update({
+        valuesSql: {
+          id: "7",
+        },
+      });
+      expect(await table.countRows("id == 1")).toBe(0);
+      expect(await table.countRows("id == 7")).toBe(1);
+      await table.add([{ id: 2 }]);
+      // Test Map as input
+      await table.update({
+        valuesSql: {
+          id: "10",
+        },
+        where: "id % 2 == 0",
+      });
+      expect(await table.countRows("id == 2")).toBe(0);
+      expect(await table.countRows("id == 7")).toBe(1);
+      expect(await table.countRows("id == 10")).toBe(1);
+    });
+
+    // https://github.com/lancedb/lancedb/issues/1293
+    test.each([new arrow.Float16(), new arrow.Float32(), new arrow.Float64()])(
+      "can create empty table with non default float type: %s",
+      async (floatType) => {
+        const db = await connect(tmpDir.name);
+
+        const data = [
+          { text: "hello", vector: Array(512).fill(1.0) },
+          { text: "hello world", vector: Array(512).fill(1.0) },
+        ];
+        const f64Schema = new arrow.Schema([
+          new arrow.Field("text", new arrow.Utf8(), true),
+          new arrow.Field(
+            "vector",
+            new arrow.FixedSizeList(512, new arrow.Field("item", floatType)),
+            true,
+          ),
+        ]);
+
+        const f64Table = await db.createEmptyTable("f64", f64Schema, {
+          mode: "overwrite",
+        });
+        try {
+          await f64Table.add(data);
+          const res = await f64Table.query().toArray();
+          expect(res.length).toBe(2);
+        } catch (e) {
+          expect(e).toBeUndefined();
+        }
+      },
+    );
+
+    it("should be able to omit nullable fields", async () => {
+      const db = await connect(tmpDir.name);
+      const schema = new arrow.Schema([
+        new arrow.Field(
+          "vector",
+          new arrow.FixedSizeList(
+            2,
+            new arrow.Field("item", new arrow.Float64()),
+          ),
+          true,
+        ),
+        new arrow.Field("item", new arrow.Utf8(), true),
+        new arrow.Field("price", new arrow.Float64(), false),
+      ]);
+      const table = await db.createEmptyTable("test", schema);
+
+      const data1 = { item: "foo", price: 10.0 };
+      await table.add([data1]);
+      const data2 = { vector: [3.1, 4.1], price: 2.0 };
+      await table.add([data2]);
+      const data3 = { vector: [5.9, 26.5], item: "bar", price: 3.0 };
+      await table.add([data3]);
+
+      let res = await table.query().limit(10).toArray();
+      const resVector = res.map((r) =>
+        r.vector ? Array.from(r.vector) : null,
+      );
+      expect(resVector).toEqual([null, data2.vector, data3.vector]);
+      const resItem = res.map((r) => r.item);
+      expect(resItem).toEqual(["foo", null, "bar"]);
+      const resPrice = res.map((r) => r.price);
+      expect(resPrice).toEqual([10.0, 2.0, 3.0]);
+
+      const data4 = { item: "foo" };
+      // We can't omit a column if it's not nullable
+      await expect(table.add([data4])).rejects.toThrow(
+        "Append with different schema",
+      );
+
+      // But we can alter columns to make them nullable
+      await table.alterColumns([{ path: "price", nullable: true }]);
+      await table.add([data4]);
+
+      res = (await table.query().limit(10).toArray()).map((r) => ({
+        ...r.toJSON(),
+        vector: r.vector ? Array.from(r.vector) : null,
+      }));
+      // Rust fills missing nullable fields with null
+      expect(res).toEqual([
+        { ...data1, vector: null },
+        { ...data2, item: null },
+        data3,
+        { ...data4, price: null, vector: null },
+      ]);
+    });
+
+    it("should be able to insert nullable data for non-nullable fields", async () => {
+      const db = await connect(tmpDir.name);
+      const schema = new arrow.Schema([
+        new arrow.Field("x", new arrow.Float64(), false),
+        new arrow.Field("id", new arrow.Utf8(), false),
+      ]);
+      const table = await db.createEmptyTable("test", schema);
+
+      const data1 = { x: 4.1, id: "foo" };
+      await table.add([data1]);
+      const res = (await table.query().toArray())[0];
+      expect(res.x).toEqual(data1.x);
+      expect(res.id).toEqual(data1.id);
+
+      const data2 = { x: null, id: "bar" };
+      await expect(table.add([data2])).rejects.toThrow(
+        "declared as non-nullable but contains null values",
+      );
+
+      // But we can alter columns to make them nullable
+      await table.alterColumns([{ path: "x", nullable: true }]);
+      await table.add([data2]);
+
+      const res2 = await table.query().toArray();
+      expect(res2.length).toBe(2);
+      expect(res2[0].x).toEqual(data1.x);
+      expect(res2[0].id).toEqual(data1.id);
+      expect(res2[1].x).toBeNull();
+      expect(res2[1].id).toEqual(data2.id);
+    });
+
+    it("should support take queries", async () => {
+      await table.add([{ id: 1 }, { id: 2 }, { id: 3 }]);
+      const res = await table.takeOffsets([1, 2]).toArrow();
+      expect(res.getChild("id")?.toJSON()).toEqual([2, 3]);
+    });
+
+    it("should support takeRowIds with bigint array", async () => {
+      await table.add([{ id: 1 }, { id: 2 }, { id: 3 }]);
+      // Get actual row IDs using withRowId()
+      const allRows = await table.query().withRowId().toArray();
+      const rowIds = allRows.map((row) => row._rowid) as bigint[];
+
+      // Verify row IDs are bigint
+      expect(typeof rowIds[0]).toBe("bigint");
+
+      // Use takeRowIds with bigint array (the main use case from issue #2722)
+      const res = await table.takeRowIds([rowIds[0], rowIds[2]]).toArray();
+      expect(res.map((r) => r.id)).toEqual([1, 3]);
+    });
+
+    it("should support takeRowIds with number array for backwards compatibility", async () => {
+      await table.add([{ id: 1 }, { id: 2 }, { id: 3 }]);
+      // Small row IDs can be passed as numbers
+      const res = await table.takeRowIds([0, 2]).toArray();
+      expect(res.map((r) => r.id)).toEqual([1, 3]);
+    });
+
+    it("should support takeRowIds with mixed bigint and number array", async () => {
+      await table.add([{ id: 1 }, { id: 2 }, { id: 3 }]);
+      // Mixed array of bigint and number
+      const res = await table.takeRowIds([0n, 1, 2n]).toArray();
+      expect(res.map((r) => r.id)).toEqual([1, 2, 3]);
+    });
+
+    it("should throw for non-integer number in takeRowIds", () => {
+      expect(() => table.takeRowIds([1.5])).toThrow(
+        "Row id must be an integer (or bigint)",
+      );
+      expect(() => table.takeRowIds([0, 1.1, 2])).toThrow(
+        "Row id must be an integer (or bigint)",
+      );
+    });
+
+    it("should expose useLsm on takeRowIds as the base-only escape hatch", async () => {
+      await table.add([{ id: 1 }, { id: 2 }, { id: 3 }]);
+      // useLsm(false) is reachable on TakeQuery (the escape hatch for MemWAL tables,
+      // where take-by-row-id auto-routes to the LSM scanner and is rejected).
+      const res = await table.takeRowIds([0, 2]).useLsm(false).toArray();
+      expect(res.map((r) => r.id)).toEqual([1, 3]);
+    });
+
+    it("should throw for negative number in takeRowIds", () => {
+      expect(() => table.takeRowIds([-1])).toThrow("Row id cannot be negative");
+      expect(() => table.takeRowIds([0, -5, 2])).toThrow(
+        "Row id cannot be negative",
+      );
+    });
+
+    it("should throw for unsafe large number in takeRowIds", () => {
+      // Number.MAX_SAFE_INTEGER + 1 is not safe
+      const unsafeNumber = Number.MAX_SAFE_INTEGER + 1;
+      expect(() => table.takeRowIds([unsafeNumber])).toThrow(
+        "Row id is too large for number; use bigint instead",
+      );
+    });
+
+    it("should reject negative bigint in takeRowIds", async () => {
+      await table.add([{ id: 1 }]);
+      // Negative bigint should be rejected by the Rust layer
+      expect(() => {
+        table.takeRowIds([-1n]);
+      }).toThrow("Row id cannot be negative");
+    });
+
+    it("should return the table as an instance of an arrow table", async () => {
+      const arrowTbl = await table.toArrow();
+      expect(arrowTbl).toBeInstanceOf(ArrowTable);
+    });
+
+    it("should be able to handle missing fields", async () => {
+      const schema = new arrow.Schema([
+        new arrow.Field("id", new arrow.Int32(), true),
+        new arrow.Field("y", new arrow.Int32(), true),
+        new arrow.Field("z", new arrow.Int64(), true),
+      ]);
+      const db = await connect(tmpDir.name);
+      const table = await db.createEmptyTable("testNull", schema);
+      await table.add([{ id: 1, y: 2 }]);
+      await table.add([{ id: 2 }]);
+
+      await table
+        .mergeInsert("id")
+        .whenNotMatchedInsertAll()
+        .execute([
+          { id: 3, z: 3 },
+          { id: 4, z: 5 },
+        ]);
+
+      const res = await table.query().toArrow();
+      expect(res.getChild("id")?.toJSON()).toEqual([1, 2, 3, 4]);
+      expect(res.getChild("y")?.toJSON()).toEqual([2, null, null, null]);
+      expect(res.getChild("z")?.toJSON()).toEqual([null, null, 3n, 5n]);
+    });
+
+    it("should handle null vectors at end of data", async () => {
+      // https://github.com/lancedb/lancedb/issues/2240
+      const data = [{ vector: [1, 2, 3] }, { vector: null }];
+      const db = await connect("memory://");
+
+      const table = await db.createTable("my_table", data);
+      expect(await table.countRows()).toEqual(2);
+    });
+
+    it("should allow undefined and omitted nullable vector fields", async () => {
+      // Test for the bug: can't pass undefined or omit vector column
+      const db = await connect("memory://");
+      const schema = new arrow.Schema([
+        new arrow.Field("id", new arrow.Int32(), true),
+        new arrow.Field(
+          "vector",
+          new arrow.FixedSizeList(
+            32,
+            new arrow.Field("item", new arrow.Float32(), true),
+          ),
+          true, // nullable = true
+        ),
+      ]);
+      const table = await db.createEmptyTable("test_table", schema);
+
+      // Should not throw error for undefined value
+      await table.add([{ id: 0, vector: undefined }]);
+
+      // Should not throw error for omitted field
+      await table.add([{ id: 1 }]);
+
+      // Should still work for null
+      await table.add([{ id: 2, vector: null }]);
+
+      // Should still work for actual vector
+      const testVector = new Array(32).fill(0.5);
+      await table.add([{ id: 3, vector: testVector }]);
+      expect(await table.countRows()).toEqual(4);
+
+      const res = await table.query().limit(10).toArray();
+      const resVector = res.map((r) =>
+        r.vector ? Array.from(r.vector) : null,
+      );
+      expect(resVector).toEqual([null, null, null, testVector]);
+    });
+  },
+);
+
+describe("merge insert", () => {
+  let tmpDir: tmp.DirResult;
+  let table: Table;
+
+  beforeEach(async () => {
+    tmpDir = tmp.dirSync({ unsafeCleanup: true });
+    const conn = await connect(tmpDir.name);
+
+    table = await conn.createTable("some_table", [
+      { a: 1, b: "a" },
+      { a: 2, b: "b" },
+      { a: 3, b: "c" },
+    ]);
+  });
+  afterEach(() => tmpDir.removeCallback());
+
+  test("upsert", async () => {
+    const newData = [
+      { a: 2, b: "x" },
+      { a: 3, b: "y" },
+      { a: 4, b: "z" },
+    ];
+    const mergeInsertRes = await table
+      .mergeInsert("a")
+      .whenMatchedUpdateAll()
+      .whenNotMatchedInsertAll()
+      .execute(newData, { timeoutMs: 10_000 });
+    expect(mergeInsertRes).toHaveProperty("version");
+    expect(mergeInsertRes.version).toBe(2);
+    expect(mergeInsertRes.numInsertedRows).toBe(1);
+    expect(mergeInsertRes.numUpdatedRows).toBe(2);
+    expect(mergeInsertRes.numDeletedRows).toBe(0);
+
+    const expected = [
+      { a: 1, b: "a" },
+      { a: 2, b: "x" },
+      { a: 3, b: "y" },
+      { a: 4, b: "z" },
+    ];
+
+    const result = (await table.toArrow()).toArray().sort((a, b) => a.a - b.a);
+
+    expect(result.map((row) => ({ ...row }))).toEqual(expected);
+  });
+  test("conditional update", async () => {
+    const newData = [
+      { a: 2, b: "x" },
+      { a: 3, b: "y" },
+      { a: 4, b: "z" },
+    ];
+    const mergeInsertRes = await table
+      .mergeInsert("a")
+      .whenMatchedUpdateAll({ where: "target.b = 'b'" })
+      .execute(newData);
+    expect(mergeInsertRes).toHaveProperty("version");
+    expect(mergeInsertRes.version).toBe(2);
+
+    const expected = [
+      { a: 1, b: "a" },
+      { a: 2, b: "x" },
+      { a: 3, b: "c" },
+    ];
+    // round trip to arrow and back to json to avoid comparing arrow objects to js object
+    // biome-ignore lint/suspicious/noExplicitAny: test
+    let res: any[] = JSON.parse(
+      JSON.stringify((await table.toArrow()).toArray()),
+    );
+    res = res.sort((a, b) => a.a - b.a);
+
+    expect(res).toEqual(expected);
+  });
+
+  test("insert if not exists", async () => {
+    const newData = [
+      { a: 2, b: "x" },
+      { a: 3, b: "y" },
+      { a: 4, b: "z" },
+    ];
+    await table.mergeInsert("a").whenNotMatchedInsertAll().execute(newData);
+    const expected = [
+      { a: 1, b: "a" },
+      { a: 2, b: "b" },
+      { a: 3, b: "c" },
+      { a: 4, b: "z" },
+    ];
+    // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+    let res: any[] = JSON.parse(
+      JSON.stringify((await table.toArrow()).toArray()),
+    );
+    res = res.sort((a, b) => a.a - b.a);
+    expect(res).toEqual(expected);
+  });
+  test("replace range", async () => {
+    const newData = [
+      { a: 2, b: "x" },
+      { a: 4, b: "z" },
+    ];
+    await table
+      .mergeInsert("a")
+      .whenMatchedUpdateAll()
+      .whenNotMatchedInsertAll()
+      .whenNotMatchedBySourceDelete({ where: "a > 2" })
+      .execute(newData);
+
+    const expected = [
+      { a: 1, b: "a" },
+      { a: 2, b: "x" },
+      { a: 4, b: "z" },
+    ];
+    // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+    let res: any[] = JSON.parse(
+      JSON.stringify((await table.toArrow()).toArray()),
+    );
+    res = res.sort((a, b) => a.a - b.a);
+    expect(res).toEqual(expected);
+  });
+  test("replace range no condition", async () => {
+    const newData = [
+      { a: 2, b: "x" },
+      { a: 4, b: "z" },
+    ];
+    await table
+      .mergeInsert("a")
+      .whenMatchedUpdateAll()
+      .whenNotMatchedInsertAll()
+      .whenNotMatchedBySourceDelete()
+      .execute(newData);
+
+    const expected = [
+      { a: 2, b: "x" },
+      { a: 4, b: "z" },
+    ];
+
+    // biome-ignore lint/suspicious/noExplicitAny: test
+    let res: any[] = JSON.parse(
+      JSON.stringify((await table.toArrow()).toArray()),
+    );
+    res = res.sort((a, b) => a.a - b.a);
+    expect(res).toEqual(expected);
+  });
+
+  test("timeout", async () => {
+    const newData = [
+      { a: 2, b: "x" },
+      { a: 4, b: "z" },
+    ];
+    await expect(
+      table
+        .mergeInsert("a")
+        .whenMatchedUpdateAll()
+        .whenNotMatchedInsertAll()
+        .execute(newData, { timeoutMs: 0 }),
+    ).rejects.toThrow("merge insert timed out");
+  });
+
+  test("useIndex", async () => {
+    const newData = [
+      { a: 2, b: "x" },
+      { a: 4, b: "z" },
+    ];
+
+    // Test with useIndex(true) - should work fine
+    const result1 = await table
+      .mergeInsert("a")
+      .whenNotMatchedInsertAll()
+      .useIndex(true)
+      .execute(newData);
+
+    expect(result1.numInsertedRows).toBe(1); // Only a=4 should be inserted
+
+    // Test with useIndex(false) - should also work fine
+    const newData2 = [{ a: 5, b: "w" }];
+    const result2 = await table
+      .mergeInsert("a")
+      .whenNotMatchedInsertAll()
+      .useIndex(false)
+      .execute(newData2);
+
+    expect(result2.numInsertedRows).toBe(1); // a=5 should be inserted
+  });
+});
+
+describe("When creating an index", () => {
+  let tmpDir: tmp.DirResult;
+  const schema = new Schema([
+    new Field("id", new Int32(), true),
+    new Field("vec", new FixedSizeList(32, new Field("item", new Float32()))),
+    new Field("tags", new List(new Field("item", new Utf8(), true))),
+  ]);
+  let tbl: Table;
+  let queryVec: number[];
+
+  beforeEach(async () => {
+    tmpDir = tmp.dirSync({ unsafeCleanup: true });
+    const db = await connect(tmpDir.name);
+    const data = makeArrowTable(
+      Array(300)
+        .fill(1)
+        .map((_, i) => ({
+          id: i,
+          vec: Array(32)
+            .fill(1)
+            .map(() => Math.random()),
+          tags: ["tag1", "tag2", "tag3"],
+        })),
+      {
+        schema,
+      },
+    );
+    queryVec = data.toArray()[5].vec.toJSON();
+    tbl = await db.createTable("test", data);
+  });
+  afterEach(() => tmpDir.removeCallback());
+
+  it("should create a vector index on vector columns", async () => {
+    const job = await tbl.createIndexAsync("vec");
+    expect(job.id).toBeNull();
+    await job.wait();
+    // Cancelling a job that already finished succeeds and does nothing.
+    await job.cancel();
+
+    // check index directory
+    const indexDir = path.join(tmpDir.name, "test.lance", "_indices");
+    expect(fs.readdirSync(indexDir)).toHaveLength(1);
+    const indices = await tbl.listIndices();
+    expect(indices.length).toBe(1);
+    expect(indices[0]).toEqual(
+      expect.objectContaining({
+        name: "vec_idx",
+        indexType: "IvfPq",
+        columns: ["vec"],
+      }),
+    );
+    const stats = await tbl.indexStats("vec_idx");
+    expect(stats).toBeDefined();
+
+    // Search without specifying the column
+    let rst = await tbl
+      .query()
+      .limit(2)
+      .nearestTo(queryVec)
+      .distanceType("dot")
+      .toArrow();
+    expect(rst.numRows).toBe(2);
+
+    // Search using `vectorSearch`
+    rst = await tbl.vectorSearch(queryVec).limit(2).toArrow();
+    expect(rst.numRows).toBe(2);
+
+    // Search with specifying the column
+    const rst2 = await tbl
+      .query()
+      .limit(2)
+      .nearestTo(queryVec)
+      .column("vec")
+      .toArrow();
+    expect(rst2.numRows).toBe(2);
+    expect(rst.toString()).toEqual(rst2.toString());
+
+    // test offset
+    rst = await tbl.query().limit(2).offset(1).nearestTo(queryVec).toArrow();
+    expect(rst.numRows).toBe(2);
+
+    // test nprobes
+    rst = await tbl.query().nearestTo(queryVec).limit(2).nprobes(50).toArrow();
+    expect(rst.numRows).toBe(2);
+    rst = await tbl
+      .query()
+      .nearestTo(queryVec)
+      .limit(2)
+      .minimumNprobes(15)
+      .toArrow();
+    expect(rst.numRows).toBe(2);
+    rst = await tbl
+      .query()
+      .nearestTo(queryVec)
+      .limit(2)
+      .minimumNprobes(10)
+      .maximumNprobes(20)
+      .toArrow();
+    expect(rst.numRows).toBe(2);
+
+    expect(() => tbl.query().nearestTo(queryVec).minimumNprobes(0)).toThrow(
+      "Invalid input, minimum_nprobes must be greater than 0",
+    );
+    expect(() => tbl.query().nearestTo(queryVec).maximumNprobes(5)).toThrow(
+      "Invalid input, maximum_nprobes must be greater than or equal to minimum_nprobes",
+    );
+
+    await tbl.dropIndex("vec_idx");
+    const indices2 = await tbl.listIndices();
+    expect(indices2.length).toBe(0);
+  });
+
+  it("should preserve canonical nested field paths across index lifecycle", async () => {
+    const db = await connect(tmpDir.name);
+    const nestedSchema = new Schema([
+      new Field("rowId", new Int32(), true),
+      new Field("row-id", new Int32(), true),
+      new Field("userId", new Int32(), true),
+      new Field(
+        "metadata",
+        new Struct([new Field("user_id", new Int32(), true)]),
+        true,
+      ),
+      new Field(
+        "MetaData",
+        new Struct([new Field("userId", new Int32(), true)]),
+        true,
+      ),
+      new Field(
+        "image",
+        new Struct([
+          new Field(
+            "embedding",
+            new FixedSizeList(2, new Field("item", new Float32(), true)),
+            true,
+          ),
+        ]),
+        true,
+      ),
+      new Field(
+        "payload",
+        new Struct([new Field("text", new Utf8(), true)]),
+        true,
+      ),
+      new Field(
+        "meta-data",
+        new Struct([new Field("user-id", new Int32(), true)]),
+        true,
+      ),
+      new Field(
+        "literal",
+        new Struct([new Field("a.b", new Int32(), true)]),
+        true,
+      ),
+    ]);
+    const nestedTable = await db.createTable(
+      "nested_field_index_lifecycle",
+      makeArrowTable(
+        Array.from({ length: 300 }, (_, rowId) => ({
+          rowId,
+          "row-id": rowId,
+          userId: rowId,
+          metadata: { ["user_id"]: rowId },
+          ["MetaData"]: { userId: rowId },
+          image: { embedding: [rowId, rowId + 1] },
+          payload: { text: `document ${rowId}` },
+          "meta-data": { "user-id": rowId },
+          literal: { "a.b": rowId },
+        })),
+        { schema: nestedSchema },
+      ),
+    );
+
+    await nestedTable.createIndex("rowId", {
+      config: Index.btree(),
+      name: "row_id_idx",
+    });
+    await nestedTable.createIndex("`row-id`", {
+      config: Index.btree(),
+      name: "row_dash_id_idx",
+    });
+    await nestedTable.createIndex("userId", {
+      config: Index.btree(),
+      name: "top_user_id_idx",
+    });
+    await nestedTable.createIndex("metadata.user_id", {
+      config: Index.btree(),
+      name: "nested_user_id_idx",
+    });
+    await nestedTable.createIndex("MetaData.userId", {
+      config: Index.btree(),
+      name: "mixed_case_metadata_user_id_idx",
+    });
+    await nestedTable.createIndex("`meta-data`.`user-id`", {
+      config: Index.btree(),
+      name: "escaped_names_idx",
+    });
+    await nestedTable.createIndex("literal.`a.b`", {
+      config: Index.btree(),
+      name: "literal_dot_idx",
+    });
+    await nestedTable.createIndex("image.embedding", {
+      name: "image_embedding_idx",
+    });
+    await nestedTable.createIndex("payload.text", {
+      config: Index.fts({ withPosition: false }),
+      name: "payload_text_idx",
+    });
+
+    const indices = await nestedTable.listIndices();
+    expect(indices).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "row_id_idx",
+          indexType: "BTree",
+          columns: ["rowId"],
+        }),
+        expect.objectContaining({
+          name: "row_dash_id_idx",
+          indexType: "BTree",
+          columns: ["`row-id`"],
+        }),
+        expect.objectContaining({
+          name: "top_user_id_idx",
+          indexType: "BTree",
+          columns: ["userId"],
+        }),
+        expect.objectContaining({
+          name: "nested_user_id_idx",
+          indexType: "BTree",
+          columns: ["metadata.user_id"],
+        }),
+        expect.objectContaining({
+          name: "mixed_case_metadata_user_id_idx",
+          indexType: "BTree",
+          columns: ["MetaData.userId"],
+        }),
+        expect.objectContaining({
+          name: "escaped_names_idx",
+          indexType: "BTree",
+          columns: ["`meta-data`.`user-id`"],
+        }),
+        expect.objectContaining({
+          name: "literal_dot_idx",
+          indexType: "BTree",
+          columns: ["literal.`a.b`"],
+        }),
+        expect.objectContaining({
+          name: "image_embedding_idx",
+          indexType: "IvfPq",
+          columns: ["image.embedding"],
+        }),
+        expect.objectContaining({
+          name: "payload_text_idx",
+          indexType: "FTS",
+          columns: ["payload.text"],
+        }),
+      ]),
+    );
+
+    const stats = await nestedTable.indexStats(
+      "mixed_case_metadata_user_id_idx",
+    );
+    expect(stats?.numIndexedRows).toEqual(300);
+    expect(stats?.indexType).toEqual("BTREE");
+
+    const filtered = await nestedTable
+      .query()
+      .where("MetaData.userId = 42")
+      .limit(1)
+      .toArray();
+    expect(filtered[0].MetaData.userId).toEqual(42);
+
+    const escapedFiltered = await nestedTable
+      .query()
+      .where("`row-id` = 43")
+      .limit(1)
+      .toArray();
+    expect(escapedFiltered[0]["row-id"]).toEqual(43);
+
+    const explicit = await nestedTable
+      .query()
+      .nearestTo([0.0, 1.0])
+      .column("image.embedding")
+      .limit(1)
+      .toArray();
+    const inferred = await nestedTable
+      .query()
+      .nearestTo([0.0, 1.0])
+      .limit(1)
+      .toArray();
+    expect(inferred[0].rowId).toEqual(explicit[0].rowId);
+
+    await nestedTable.add([
+      {
+        rowId: 300,
+        "row-id": 300,
+        userId: 300,
+        metadata: { ["user_id"]: 300 },
+        ["MetaData"]: { userId: 300 },
+        image: { embedding: [300.0, 301.0] },
+        payload: { text: "document 300" },
+        "meta-data": { "user-id": 300 },
+        literal: { "a.b": 300 },
+      },
+    ]);
+    await nestedTable.optimize();
+    const indicesAfterOptimize = await nestedTable.listIndices();
+    expect(indicesAfterOptimize).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "mixed_case_metadata_user_id_idx",
+          indexType: "BTree",
+          columns: ["MetaData.userId"],
+        }),
+        expect.objectContaining({
+          name: "image_embedding_idx",
+          indexType: "IvfPq",
+          columns: ["image.embedding"],
+        }),
+      ]),
+    );
+  });
+
+  it("should report multiple nested vector candidates", async () => {
+    const db = await connect(tmpDir.name);
+    const nestedSchema = new Schema([
+      new Field(
+        "image",
+        new Struct([
+          new Field(
+            "embedding",
+            new FixedSizeList(2, new Field("item", new Float32(), true)),
+            true,
+          ),
+        ]),
+        true,
+      ),
+      new Field(
+        "text",
+        new Struct([
+          new Field(
+            "embedding",
+            new FixedSizeList(2, new Field("item", new Float32(), true)),
+            true,
+          ),
+        ]),
+        true,
+      ),
+    ]);
+    const nestedTable = await db.createTable(
+      "multiple_nested_vectors",
+      makeArrowTable(
+        [
+          {
+            image: { embedding: [0.0, 1.0] },
+            text: { embedding: [2.0, 3.0] },
+          },
+        ],
+        { schema: nestedSchema },
+      ),
+    );
+
+    await expect(
+      nestedTable.query().nearestTo([0.0, 1.0]).limit(1).toArray(),
+    ).rejects.toThrow(/image\.embedding.*text\.embedding/);
+  });
+
+  it("should report when no default vector column exists", async () => {
+    const db = await connect(tmpDir.name);
+    const noVectorTable = await db.createTable(
+      "no_vector",
+      makeArrowTable([{ id: 0, label: "cat" }]),
+    );
+
+    await expect(
+      noVectorTable.query().nearestTo([0.0, 1.0]).limit(1).toArray(),
+    ).rejects.toThrow(/No vector column/);
+  });
+
+  it("should wait for index readiness", async () => {
+    // Create an index and then wait for it to be ready
+    await tbl.createIndex("vec");
+    const indices = await tbl.listIndices();
+    expect(indices.length).toBeGreaterThan(0);
+    const idxName = indices[0].name;
+    await expect(tbl.waitForIndex([idxName], 5)).resolves.toBeUndefined();
+  });
+
+  it("should search with distance range", async () => {
+    await tbl.createIndex("vec");
+
+    const rst = await tbl.query().limit(10).nearestTo(queryVec).toArrow();
+    const distanceColumn = rst.getChild("_distance");
+    let minDist = undefined;
+    let maxDist = undefined;
+    if (distanceColumn) {
+      minDist = distanceColumn.get(0);
+      maxDist = distanceColumn.get(9);
+    }
+
+    const rst2 = await tbl
+      .query()
+      .limit(10)
+      .nearestTo(queryVec)
+      .distanceRange(minDist, maxDist)
+      .toArrow();
+    const distanceColumn2 = rst2.getChild("_distance");
+    expect(distanceColumn2).toBeDefined();
+    if (distanceColumn2) {
+      for await (const d of distanceColumn2) {
+        expect(d).toBeGreaterThanOrEqual(minDist);
+        expect(d).toBeLessThan(maxDist);
+      }
+    }
+
+    const rst3 = await tbl
+      .query()
+      .limit(10)
+      .nearestTo(queryVec)
+      .distanceRange(maxDist, undefined)
+      .toArrow();
+    const distanceColumn3 = rst3.getChild("_distance");
+    expect(distanceColumn3).toBeDefined();
+    if (distanceColumn3) {
+      for await (const d of distanceColumn3) {
+        expect(d).toBeGreaterThanOrEqual(maxDist);
+      }
+    }
+
+    const rst4 = await tbl
+      .query()
+      .limit(10)
+      .nearestTo(queryVec)
+      .distanceRange(undefined, minDist)
+      .toArrow();
+    const distanceColumn4 = rst4.getChild("_distance");
+    expect(distanceColumn4).toBeDefined();
+    if (distanceColumn4) {
+      for await (const d of distanceColumn4) {
+        expect(d).toBeLessThan(minDist);
+      }
+    }
+  });
+
+  it("should create and search IVF_HNSW indices", async () => {
+    await tbl.createIndex("vec", {
+      config: Index.hnswSq(),
+    });
+
+    // check index directory
+    const indexDir = path.join(tmpDir.name, "test.lance", "_indices");
+    expect(fs.readdirSync(indexDir)).toHaveLength(1);
+    const indices = await tbl.listIndices();
+    expect(indices.length).toBe(1);
+    expect(indices[0]).toEqual(
+      expect.objectContaining({
+        name: "vec_idx",
+        indexType: "IvfHnswSq",
+        columns: ["vec"],
+      }),
+    );
+
+    // Search without specifying the column
+    let rst = await tbl
+      .query()
+      .limit(2)
+      .nearestTo(queryVec)
+      .distanceType("dot")
+      .toArrow();
+    expect(rst.numRows).toBe(2);
+
+    // Search using `vectorSearch`
+    rst = await tbl.vectorSearch(queryVec).limit(2).toArrow();
+    expect(rst.numRows).toBe(2);
+
+    // Search with specifying the column
+    const rst2 = await tbl
+      .query()
+      .limit(2)
+      .nearestTo(queryVec)
+      .column("vec")
+      .toArrow();
+    expect(rst2.numRows).toBe(2);
+    expect(rst.toString()).toEqual(rst2.toString());
+
+    // test offset
+    rst = await tbl.query().limit(2).offset(1).nearestTo(queryVec).toArrow();
+    expect(rst.numRows).toBe(2);
+
+    // test ef
+    rst = await tbl.query().limit(2).nearestTo(queryVec).ef(100).toArrow();
+    expect(rst.numRows).toBe(2);
+  });
+
+  it("should be able to query unindexed data", async () => {
+    await tbl.createIndex("vec");
+    await tbl.add([
+      {
+        id: 300,
+        vec: Array(32)
+          .fill(1)
+          .map(() => Math.random()),
+        tags: [],
+      },
+    ]);
+
+    const plan1 = await tbl.query().nearestTo(queryVec).explainPlan(true);
+    expect(plan1).toMatch("LanceScan");
+
+    const plan2 = await tbl
+      .query()
+      .nearestTo(queryVec)
+      .fastSearch()
+      .explainPlan(true);
+    expect(plan2).not.toMatch("LanceScan");
+  });
+
+  it("should be able to run analyze plan", async () => {
+    await tbl.createIndex("vec");
+    await tbl.add([
+      {
+        id: 300,
+        vec: Array(32)
+          .fill(1)
+          .map(() => Math.random()),
+        tags: [],
+      },
+    ]);
+
+    const plan = await tbl.query().nearestTo(queryVec).analyzePlan();
+    expect(plan).toMatch("AnalyzeExec");
+    expect(plan).toMatch("metrics=");
+  });
+
+  it("should be able to query with row id", async () => {
+    const results = await tbl
+      .query()
+      .nearestTo(queryVec)
+      .withRowId()
+      .limit(1)
+      .toArray();
+    expect(results.length).toBe(1);
+    expect(results[0]).toHaveProperty("_rowid");
+  });
+
+  it("should allow parameters to be specified", async () => {
+    await tbl.createIndex("vec", {
+      config: Index.ivfPq({
+        numPartitions: 10,
+      }),
+    });
+
+    // TODO: Verify parameters when we can load index config as part of list indices
+  });
+
+  it("should be able to create 4bit IVF_PQ", async () => {
+    await tbl.createIndex("vec", {
+      config: Index.ivfPq({
+        numPartitions: 10,
+        numBits: 4,
+      }),
+    });
+  });
+
+  it("should be able to create IVF_RQ", async () => {
+    await tbl.createIndex("vec", {
+      config: Index.ivfRq({
+        numPartitions: 10,
+        numBits: 1,
+      }),
+    });
+  });
+
+  it("should allow me to replace (or not) an existing index", async () => {
+    await tbl.createIndex("id");
+    // Default is replace=true
+    await tbl.createIndex("id");
+    await expect(tbl.createIndex("id", { replace: false })).rejects.toThrow(
+      "already exists",
+    );
+    await tbl.createIndex("id", { replace: true });
+  });
+
+  test("should create a scalar index on scalar columns", async () => {
+    await tbl.createIndex("id");
+    const indexDir = path.join(tmpDir.name, "test.lance", "_indices");
+    expect(fs.readdirSync(indexDir)).toHaveLength(1);
+
+    for await (const r of tbl.query().where("id > 1").select(["id"])) {
+      expect(r.numRows).toBe(298);
+    }
+    // should also work with 'filter' alias
+    for await (const r of tbl.query().filter("id > 1").select(["id"])) {
+      expect(r.numRows).toBe(298);
+    }
+  });
+
+  test("create a bitmap index", async () => {
+    await tbl.createIndex("id", {
+      config: Index.bitmap(),
+    });
+    const indexDir = path.join(tmpDir.name, "test.lance", "_indices");
+    expect(fs.readdirSync(indexDir)).toHaveLength(1);
+  });
+
+  test("create a hnswPq index", async () => {
+    await tbl.createIndex("vec", {
+      config: Index.hnswPq({
+        numPartitions: 10,
+      }),
+    });
+    const indexDir = path.join(tmpDir.name, "test.lance", "_indices");
+    expect(fs.readdirSync(indexDir)).toHaveLength(1);
+  });
+
+  test("create a HnswSq index", async () => {
+    await tbl.createIndex("vec", {
+      config: Index.hnswSq({
+        numPartitions: 10,
+      }),
+    });
+    const indexDir = path.join(tmpDir.name, "test.lance", "_indices");
+    expect(fs.readdirSync(indexDir)).toHaveLength(1);
+  });
+
+  test("create a label list index", async () => {
+    await tbl.createIndex("tags", {
+      config: Index.labelList(),
+    });
+    const indexDir = path.join(tmpDir.name, "test.lance", "_indices");
+    expect(fs.readdirSync(indexDir)).toHaveLength(1);
+  });
+
+  test("create an FM index", async () => {
+    // FM-Index accelerates substring search on a string/binary column.
+    const db = await connect(tmpDir.name);
+    const fmTbl = await db.createTable("fm_table", [
+      { id: 0, text: "hello world" },
+      { id: 1, text: "foo bar" },
+    ]);
+    await fmTbl.createIndex("text", {
+      config: Index.fm(),
+    });
+    const indexDir = path.join(tmpDir.name, "fm_table.lance", "_indices");
+    expect(fs.readdirSync(indexDir)).toHaveLength(1);
+  });
+
+  test("should be able to get index stats", async () => {
+    await tbl.createIndex("id");
+
+    const stats = await tbl.indexStats("id_idx");
+    expect(stats).toBeDefined();
+    expect(stats?.numIndexedRows).toEqual(300);
+    expect(stats?.numUnindexedRows).toEqual(0);
+    expect(stats?.distanceType).toBeUndefined();
+    expect(stats?.indexType).toEqual("BTREE");
+    expect(stats?.numIndices).toEqual(1);
+  });
+
+  test("when getting stats on non-existent index", async () => {
+    const stats = await tbl.indexStats("some non-existent index");
+    expect(stats).toBeUndefined();
+  });
+
+  test("should support name and train parameters", async () => {
+    // Test with custom name
+    await tbl.createIndex("vec", {
+      config: Index.ivfPq({ numPartitions: 4 }),
+      name: "my_custom_vector_index",
+    });
+
+    const indices = await tbl.listIndices();
+    expect(indices).toHaveLength(1);
+    expect(indices[0].name).toBe("my_custom_vector_index");
+
+    // Test scalar index with train=false
+    await tbl.createIndex("id", {
+      config: Index.btree(),
+      name: "btree_empty",
+      train: false,
+    });
+
+    const allIndices = await tbl.listIndices();
+    expect(allIndices).toHaveLength(2);
+    expect(allIndices.some((idx) => idx.name === "btree_empty")).toBe(true);
+
+    // Test with both name and train=true (use tags column)
+    await tbl.createIndex("tags", {
+      config: Index.labelList(),
+      name: "tags_trained",
+      train: true,
+    });
+
+    const finalIndices = await tbl.listIndices();
+    expect(finalIndices).toHaveLength(3);
+    expect(finalIndices.some((idx) => idx.name === "tags_trained")).toBe(true);
+  });
+
+  test("create ivf_flat with binary vectors", async () => {
+    const db = await connect(tmpDir.name);
+    const binarySchema = new Schema([
+      new Field("id", new Int32(), true),
+      new Field("vec", new FixedSizeList(32, new Field("item", new Uint8()))),
+    ]);
+    const tbl = await db.createTable(
+      "binary",
+      makeArrowTable(
+        Array(300)
+          .fill(1)
+          .map((_, i) => ({
+            id: i,
+            vec: Array(32)
+              .fill(1)
+              .map(() => Math.floor(Math.random() * 255)),
+          })),
+        { schema: binarySchema },
+      ),
+    );
+    await tbl.createIndex("vec", {
+      config: Index.ivfFlat({ numPartitions: 10, distanceType: "hamming" }),
+    });
+
+    // query with binary vectors
+    const queryVec = Array(32)
+      .fill(1)
+      .map(() => Math.floor(Math.random() * 255));
+    const rst = await tbl.query().limit(5).nearestTo(queryVec).toArrow();
+    expect(rst.numRows).toBe(5);
+  });
+
+  // TODO: Move this test to the query API test (making sure we can reject queries
+  // when the dimension is incorrect)
+  test("two columns with different dimensions", async () => {
+    const db = await connect(tmpDir.name);
+    const schema = new Schema([
+      new Field("id", new Int32(), true),
+      new Field("vec", new FixedSizeList(32, new Field("item", new Float32()))),
+      new Field(
+        "vec2",
+        new FixedSizeList(64, new Field("item", new Float32())),
+      ),
+    ]);
+    const tbl = await db.createTable(
+      "two_vectors",
+      makeArrowTable(
+        Array(300)
+          .fill(1)
+          .map((_, i) => ({
+            id: i,
+            vec: Array(32)
+              .fill(1)
+              .map(() => Math.random()),
+            vec2: Array(64) // different dimension
+              .fill(1)
+              .map(() => Math.random()),
+          })),
+        { schema },
+      ),
+    );
+
+    // Only build index over v1
+    await tbl.createIndex("vec", {
+      config: Index.ivfPq({ numPartitions: 2, numSubVectors: 2 }),
+      waitTimeoutSeconds: 30,
+    });
+
+    const rst = await tbl
+      .query()
+      .limit(2)
+      .nearestTo(
+        Array(32)
+          .fill(1)
+          .map(() => Math.random()),
+      )
+      .toArrow();
+    expect(rst.numRows).toBe(2);
+
+    // Search with specifying the column
+    await expect(
+      tbl
+        .query()
+        .limit(2)
+        .nearestTo(
+          Array(64)
+            .fill(1)
+            .map(() => Math.random()),
+        )
+        .column("vec")
+        .toArrow(),
+    ).rejects.toThrow(
+      /.* query dim\(64\) doesn't match the column vec vector dim\(32\).*/,
+    );
+
+    const query64 = Array(64)
+      .fill(1)
+      .map(() => Math.random());
+    const rst64Query = await tbl.query().limit(2).nearestTo(query64).toArrow();
+    const rst64Search = await tbl
+      .query()
+      .limit(2)
+      .nearestTo(query64)
+      .column("vec2")
+      .toArrow();
+    expect(rst64Query.toString()).toEqual(rst64Search.toString());
+    expect(rst64Query.numRows).toBe(2);
+  });
+
+  it("should expose rich metadata fields on IndexConfig", async () => {
+    await tbl.createIndex("id", { config: Index.btree() });
+    await tbl.createIndex("vec");
+
+    const indicesByName = Object.fromEntries(
+      (await tbl.listIndices()).map((idx) => [idx.name, idx]),
+    );
+
+    const scalarIdx = indicesByName["id_idx"];
+    expect(scalarIdx).toBeDefined();
+    expect(typeof scalarIdx.indexUuid).toBe("string");
+    expect(scalarIdx.numIndexedRows).toBe(300);
+    expect(scalarIdx.numUnindexedRows).toBe(0);
+    expect(scalarIdx.numSegments).toBeGreaterThanOrEqual(1);
+    expect(scalarIdx.sizeBytes).toBeGreaterThan(0);
+    // Use toString check to avoid cross-realm instanceof failures with native Date objects
+    expect(Object.prototype.toString.call(scalarIdx.createdAt)).toBe(
+      "[object Date]",
+    );
+    expect((scalarIdx.createdAt as Date).getTime()).toBeGreaterThan(0);
+    expect(typeof scalarIdx.indexDetails).toBe("object");
+
+    const vectorIdx = indicesByName["vec_idx"];
+    expect(vectorIdx).toBeDefined();
+    expect(typeof vectorIdx.indexUuid).toBe("string");
+    expect(vectorIdx.numIndexedRows).toBe(300);
+    expect(typeof vectorIdx.indexDetails).toBe("object");
+  });
+});
+
+describe("When querying a table", () => {
+  let tmpDir: tmp.DirResult;
+  beforeEach(() => {
+    tmpDir = tmp.dirSync({ unsafeCleanup: true });
+  });
+  afterEach(() => tmpDir.removeCallback());
+
+  it("should throw an error when timeout is reached", async () => {
+    const db = await connect(tmpDir.name);
+    const data = makeArrowTable([
+      { text: "a", vector: [0.1, 0.2] },
+      { text: "b", vector: [0.3, 0.4] },
+    ]);
+    const table = await db.createTable("test", data);
+    await table.createIndex("text", { config: Index.fts() });
+
+    await expect(
+      table.query().where("text != 'a'").toArray({ timeoutMs: 0 }),
+    ).rejects.toThrow("Query timeout");
+
+    await expect(
+      table.query().nearestTo([0.0, 0.0]).toArrow({ timeoutMs: 0 }),
+    ).rejects.toThrow("Query timeout");
+
+    await expect(
+      table.search("a", "fts").toArray({ timeoutMs: 0 }),
+    ).rejects.toThrow("Query timeout");
+
+    await expect(
+      table
+        .query()
+        .nearestToText("a")
+        .nearestTo([0.0, 0.0])
+        .toArrow({ timeoutMs: 0 }),
+    ).rejects.toThrow("Query timeout");
+  });
+});
+
+describe("Read consistency interval", () => {
+  let tmpDir: tmp.DirResult;
+  beforeEach(() => {
+    tmpDir = tmp.dirSync({ unsafeCleanup: true });
+  });
+  afterEach(() => tmpDir.removeCallback());
+
+  // const intervals = [undefined, 0, 0.1];
+  const intervals = [0];
+  test.each(intervals)("read consistency interval %p", async (interval) => {
+    const db = await connect(tmpDir.name);
+    const table = await db.createTable("my_table", [{ id: 1 }]);
+
+    const db2 = await connect(tmpDir.name, {
+      readConsistencyInterval: interval,
+    });
+    const table2 = await db2.openTable("my_table");
+    expect(await table2.countRows()).toEqual(await table.countRows());
+
+    await table.add([{ id: 2 }]);
+
+    if (interval === undefined) {
+      expect(await table2.countRows()).toEqual(1);
+      // TODO: once we implement time travel we can uncomment this part of the test.
+      // await table2.checkout_latest();
+      // expect(await table2.countRows()).toEqual(2);
+    } else if (interval === 0) {
+      expect(await table2.countRows()).toEqual(2);
+    } else {
+      // interval == 0.1
+      expect(await table2.countRows()).toEqual(1);
+      await new Promise((r) => setTimeout(r, 100));
+      expect(await table2.countRows()).toEqual(2);
+    }
+  });
+});
+
+describe("schema evolution", function () {
+  let tmpDir: tmp.DirResult;
+  beforeEach(() => {
+    tmpDir = tmp.dirSync({ unsafeCleanup: true });
+  });
+  afterEach(() => {
+    tmpDir.removeCallback();
+  });
+
+  // Create a new sample table
+  it("can add a new column to the schema", async function () {
+    const con = await connect(tmpDir.name);
+    const table = await con.createTable("vectors", [
+      { id: 1n, vector: [0.1, 0.2] },
+    ]);
+
+    await table.addColumns([
+      { name: "price", valueSql: "cast(10.0 as float)" },
+    ]);
+
+    const expectedSchema = new Schema([
+      new Field("id", new Int64(), true),
+      new Field(
+        "vector",
+        new FixedSizeList(2, new Field("item", new Float32(), true)),
+        true,
+      ),
+      new Field("price", new Float32(), false),
+    ]);
+    expect(await table.schema()).toEqual(expectedSchema);
+  });
+
+  it("can add columns with schema for explicit data types", async function () {
+    const con = await connect(tmpDir.name);
+    const table = await con.createTable("vectors", [
+      { id: 1n, vector: [0.1, 0.2] },
+    ]);
+
+    // Define schema for new columns with explicit data types
+    // Note: All columns must be nullable when using addColumns with Schema
+    // because they are initially populated with null values
+    const newColumnsSchema = new Schema([
+      new Field("price", new Float64(), true),
+      new Field("category", new Utf8(), true),
+      new Field("rating", new Int32(), true),
+    ]);
+
+    const result = await table.addColumns(newColumnsSchema);
+    expect(result).toHaveProperty("version");
+    expect(result.version).toBe(2);
+
+    const expectedSchema = new Schema([
+      new Field("id", new Int64(), true),
+      new Field(
+        "vector",
+        new FixedSizeList(2, new Field("item", new Float32(), true)),
+        true,
+      ),
+      new Field("price", new Float64(), true),
+      new Field("category", new Utf8(), true),
+      new Field("rating", new Int32(), true),
+    ]);
+    expect(await table.schema()).toEqual(expectedSchema);
+
+    // Verify that new columns are populated with null values
+    const results = await table.query().toArray();
+    expect(results).toHaveLength(1);
+    expect(results[0].price).toBeNull();
+    expect(results[0].category).toBeNull();
+    expect(results[0].rating).toBeNull();
+  });
+
+  it("can add a single column using Field", async function () {
+    const con = await connect(tmpDir.name);
+    const table = await con.createTable("vectors", [
+      { id: 1n, vector: [0.1, 0.2] },
+    ]);
+
+    // Add a single field
+    const priceField = new Field("price", new Float64(), true);
+    const result = await table.addColumns(priceField);
+    expect(result).toHaveProperty("version");
+    expect(result.version).toBe(2);
+
+    const expectedSchema = new Schema([
+      new Field("id", new Int64(), true),
+      new Field(
+        "vector",
+        new FixedSizeList(2, new Field("item", new Float32(), true)),
+        true,
+      ),
+      new Field("price", new Float64(), true),
+    ]);
+    expect(await table.schema()).toEqual(expectedSchema);
+  });
+
+  it("can add multiple columns using array of Fields", async function () {
+    const con = await connect(tmpDir.name);
+    const table = await con.createTable("vectors", [
+      { id: 1n, vector: [0.1, 0.2] },
+    ]);
+
+    // Add multiple fields as array
+    const fields = [
+      new Field("price", new Float64(), true),
+      new Field("category", new Utf8(), true),
+    ];
+    const result = await table.addColumns(fields);
+    expect(result).toHaveProperty("version");
+    expect(result.version).toBe(2);
+
+    const expectedSchema = new Schema([
+      new Field("id", new Int64(), true),
+      new Field(
+        "vector",
+        new FixedSizeList(2, new Field("item", new Float32(), true)),
+        true,
+      ),
+      new Field("price", new Float64(), true),
+      new Field("category", new Utf8(), true),
+    ]);
+    expect(await table.schema()).toEqual(expectedSchema);
+  });
+
+  it("can alter the columns in the schema", async function () {
+    const con = await connect(tmpDir.name);
+    const schema = new Schema([
+      new Field("id", new Int64(), true),
+      new Field(
+        "vector",
+        new FixedSizeList(2, new Field("item", new Float32(), true)),
+        true,
+      ),
+      new Field("price", new Float64(), false),
+    ]);
+    const table = await con.createTable("vectors", [
+      { id: 1n, vector: [0.1, 0.2] },
+    ]);
+    // Can create a non-nullable column only through addColumns at the moment.
+    const addColumnsRes = await table.addColumns([
+      { name: "price", valueSql: "cast(10.0 as double)" },
+    ]);
+    expect(addColumnsRes).toHaveProperty("version");
+    expect(addColumnsRes.version).toBe(2);
+    expect(await table.schema()).toEqual(schema);
+
+    const alterColumnsRes = await table.alterColumns([
+      { path: "id", rename: "new_id" },
+      { path: "price", nullable: true },
+    ]);
+    expect(alterColumnsRes).toHaveProperty("version");
+    expect(alterColumnsRes.version).toBe(3);
+
+    const expectedSchema = new Schema([
+      new Field("new_id", new Int64(), true),
+      new Field(
+        "vector",
+        new FixedSizeList(2, new Field("item", new Float32(), true)),
+        true,
+      ),
+      new Field("price", new Float64(), true),
+    ]);
+    expect(await table.schema()).toEqual(expectedSchema);
+
+    await table.alterColumns([{ path: "new_id", dataType: "int32" }]);
+    const expectedSchema2 = new Schema([
+      new Field("new_id", new Int32(), true),
+      new Field(
+        "vector",
+        new FixedSizeList(2, new Field("item", new Float32(), true)),
+        true,
+      ),
+      new Field("price", new Float64(), true),
+    ]);
+    expect(await table.schema()).toEqual(expectedSchema2);
+
+    await table.alterColumns([
+      {
+        path: "vector",
+        dataType: new FixedSizeList(2, new Field("item", new Float64(), true)),
+      },
+    ]);
+    const expectedSchema3 = new Schema([
+      new Field("new_id", new Int32(), true),
+      new Field(
+        "vector",
+        new FixedSizeList(2, new Field("item", new Float64(), true)),
+        true,
+      ),
+      new Field("price", new Float64(), true),
+    ]);
+    expect(await table.schema()).toEqual(expectedSchema3);
+  });
+
+  it("can update field metadata", async function () {
+    const con = await connect(tmpDir.name);
+    const table = await con.createTable("fm", [
+      { id: 1, category: "a" },
+      { id: 2, category: "b" },
+    ]);
+
+    const res = await table.updateFieldMetadata([
+      { path: "category", metadata: { unit: "label", pii: "false" } },
+    ]);
+    expect(res).toHaveProperty("version");
+    expect(res.version).toBe(2);
+
+    let cat = (await table.schema()).fields.find((f) => f.name === "category");
+    expect(cat?.metadata.get("unit")).toBe("label");
+    expect(cat?.metadata.get("pii")).toBe("false");
+
+    // merge: add a key, delete one via null, keep the rest
+    await table.updateFieldMetadata([
+      { path: "category", metadata: { source: "import", pii: null } },
+    ]);
+    cat = (await table.schema()).fields.find((f) => f.name === "category");
+    expect(cat?.metadata.get("unit")).toBe("label"); // preserved
+    expect(cat?.metadata.get("source")).toBe("import"); // added
+    expect(cat?.metadata.has("pii")).toBe(false); // deleted
+  });
+
+  it("can cast to various types", async function () {
+    const con = await connect(tmpDir.name);
+
+    // integers
+    const intTypes = [
+      new arrow.Int8(),
+      new arrow.Int16(),
+      new arrow.Int32(),
+      new arrow.Int64(),
+      new arrow.Uint8(),
+      new arrow.Uint16(),
+      new arrow.Uint32(),
+      new arrow.Uint64(),
+    ];
+    const tableInts = await con.createTable("ints", [{ id: 1n }], {
+      schema: new Schema([new Field("id", new Int64(), true)]),
+    });
+    for (const intType of intTypes) {
+      await tableInts.alterColumns([{ path: "id", dataType: intType }]);
+      const schema = new Schema([new Field("id", intType, true)]);
+      expect(await tableInts.schema()).toEqual(schema);
+    }
+
+    // floats
+    const floatTypes = [
+      new arrow.Float16(),
+      new arrow.Float32(),
+      new arrow.Float64(),
+    ];
+    const tableFloats = await con.createTable("floats", [{ val: 2.1 }], {
+      schema: new Schema([new Field("val", new Float32(), true)]),
+    });
+    for (const floatType of floatTypes) {
+      await tableFloats.alterColumns([{ path: "val", dataType: floatType }]);
+      const schema = new Schema([new Field("val", floatType, true)]);
+      expect(await tableFloats.schema()).toEqual(schema);
+    }
+
+    // Lists of floats
+    const listTypes = [
+      new arrow.List(new arrow.Field("item", new arrow.Float32(), true)),
+      new arrow.FixedSizeList(
+        2,
+        new arrow.Field("item", new arrow.Float64(), true),
+      ),
+      new arrow.FixedSizeList(
+        2,
+        new arrow.Field("item", new arrow.Float16(), true),
+      ),
+      new arrow.FixedSizeList(
+        2,
+        new arrow.Field("item", new arrow.Float32(), true),
+      ),
+    ];
+    const tableLists = await con.createTable("lists", [{ val: [2.1, 3.2] }], {
+      schema: new Schema([
+        new Field(
+          "val",
+          new FixedSizeList(2, new arrow.Field("item", new Float32())),
+          true,
+        ),
+      ]),
+    });
+    for (const listType of listTypes) {
+      await tableLists.alterColumns([{ path: "val", dataType: listType }]);
+      const schema = new Schema([new Field("val", listType, true)]);
+      expect(await tableLists.schema()).toEqual(schema);
+    }
+  });
+
+  it("can drop a column from the schema", async function () {
+    const con = await connect(tmpDir.name);
+    const table = await con.createTable("vectors", [
+      { id: 1n, vector: [0.1, 0.2] },
+    ]);
+    const dropColumnsRes = await table.dropColumns(["vector"]);
+    expect(dropColumnsRes).toHaveProperty("version");
+    expect(dropColumnsRes.version).toBe(2);
+
+    const expectedSchema = new Schema([new Field("id", new Int64(), true)]);
+    expect(await table.schema()).toEqual(expectedSchema);
+  });
+});
+
+describe("when dealing with versioning", () => {
+  let tmpDir: tmp.DirResult;
+  beforeEach(() => {
+    tmpDir = tmp.dirSync({ unsafeCleanup: true });
+  });
+  afterEach(() => {
+    tmpDir.removeCallback();
+  });
+
+  it("can travel in time", async () => {
+    // Setup
+    const con = await connect(tmpDir.name);
+    const table = await con.createTable("vectors", [
+      { id: 1n, vector: [0.1, 0.2] },
+    ]);
+    const version = await table.version();
+    await table.add([{ id: 2n, vector: [0.1, 0.2] }]);
+    expect(await table.countRows()).toBe(2);
+    // Make sure we can rewind
+    await table.checkout(version);
+    expect(await table.countRows()).toBe(1);
+    // Can't add data in time travel mode
+    await expect(table.add([{ id: 3n, vector: [0.1, 0.2] }])).rejects.toThrow(
+      "table cannot be modified when a specific version is checked out",
+    );
+    // Can go back to normal mode
+    await table.checkoutLatest();
+    expect(await table.countRows()).toBe(2);
+    // Should be able to add data again
+    await table.add([{ id: 2n, vector: [0.1, 0.2] }]);
+    expect(await table.countRows()).toBe(3);
+    // Now checkout and restore
+    await table.checkout(version);
+    await table.restore();
+    expect(await table.countRows()).toBe(1);
+    // Should be able to add data
+    await table.add([{ id: 2n, vector: [0.1, 0.2] }]);
+    expect(await table.countRows()).toBe(2);
+    // Can't use restore if not checked out
+    await expect(table.restore()).rejects.toThrow(
+      "checkout before running restore",
+    );
+  });
+});
+
+describe("when dealing with tags", () => {
+  let tmpDir: tmp.DirResult;
+  beforeEach(() => {
+    tmpDir = tmp.dirSync({ unsafeCleanup: true });
+  });
+  afterEach(() => {
+    tmpDir.removeCallback();
+  });
+
+  it("can manage tags", async () => {
+    const conn = await connect(tmpDir.name, {
+      readConsistencyInterval: 0,
+    });
+
+    const table = await conn.createTable("my_table", [
+      { id: 1n, vector: [0.1, 0.2] },
+    ]);
+    expect(await table.version()).toBe(1);
+
+    await table.add([{ id: 2n, vector: [0.3, 0.4] }]);
+    expect(await table.version()).toBe(2);
+
+    const tagsManager = await table.tags();
+
+    const initialTags = await tagsManager.list();
+    expect(Object.keys(initialTags).length).toBe(0);
+
+    const tag1 = "tag1";
+    await tagsManager.create(tag1, 1);
+    expect(await tagsManager.getVersion(tag1)).toBe(1);
+
+    const tagsAfterFirst = await tagsManager.list();
+    expect(Object.keys(tagsAfterFirst).length).toBe(1);
+    expect(tagsAfterFirst).toHaveProperty(tag1);
+    expect(tagsAfterFirst[tag1].version).toBe(1);
+
+    await tagsManager.create("tag2", 2);
+    expect(await tagsManager.getVersion("tag2")).toBe(2);
+
+    const tagsAfterSecond = await tagsManager.list();
+    expect(Object.keys(tagsAfterSecond).length).toBe(2);
+    expect(tagsAfterSecond).toHaveProperty(tag1);
+    expect(tagsAfterSecond[tag1].version).toBe(1);
+    expect(tagsAfterSecond).toHaveProperty("tag2");
+    expect(tagsAfterSecond["tag2"].version).toBe(2);
+
+    await table.add([{ id: 3n, vector: [0.5, 0.6] }]);
+    await tagsManager.update(tag1, 3);
+    expect(await tagsManager.getVersion(tag1)).toBe(3);
+
+    await tagsManager.delete("tag2");
+    const tagsAfterDelete = await tagsManager.list();
+    expect(Object.keys(tagsAfterDelete).length).toBe(1);
+    expect(tagsAfterDelete).toHaveProperty(tag1);
+    expect(tagsAfterDelete[tag1].version).toBe(3);
+
+    await table.add([{ id: 4n, vector: [0.7, 0.8] }]);
+    expect(await table.version()).toBe(4);
+
+    await table.checkout(tag1);
+    expect(await table.version()).toBe(3);
+
+    await table.checkoutLatest();
+    expect(await table.version()).toBe(4);
+  });
+
+  it("can checkout and restore tags", async () => {
+    const conn = await connect(tmpDir.name, {
+      readConsistencyInterval: 0,
+    });
+
+    const table = await conn.createTable("my_table", [
+      { id: 1n, vector: [0.1, 0.2] },
+    ]);
+    expect(await table.version()).toBe(1);
+    expect(await table.countRows()).toBe(1);
+    const tagsManager = await table.tags();
+    const tag1 = "tag1";
+    await tagsManager.create(tag1, 1);
+    await table.add([{ id: 2n, vector: [0.3, 0.4] }]);
+    const tag2 = "tag2";
+    await tagsManager.create(tag2, 2);
+    expect(await table.version()).toBe(2);
+    await table.checkout(tag1);
+    expect(await table.version()).toBe(1);
+    await table.restore();
+    expect(await table.version()).toBe(3);
+    expect(await table.countRows()).toBe(1);
+    await table.add([{ id: 3n, vector: [0.5, 0.6] }]);
+    expect(await table.countRows()).toBe(2);
+  });
+});
+
+describe("when optimizing a dataset", () => {
+  let tmpDir: tmp.DirResult;
+  let table: Table;
+  beforeEach(async () => {
+    tmpDir = tmp.dirSync({ unsafeCleanup: true });
+    const con = await connect(tmpDir.name);
+    table = await con.createTable("vectors", [{ id: 1 }]);
+    await table.add([{ id: 2 }]);
+  });
+  afterEach(() => {
+    tmpDir.removeCallback();
+  });
+
+  it("compacts files", async () => {
+    const stats = await table.optimize();
+    expect(stats.compaction.filesAdded).toBe(1);
+    expect(stats.compaction.filesRemoved).toBe(2);
+    expect(stats.compaction.fragmentsAdded).toBe(1);
+    expect(stats.compaction.fragmentsRemoved).toBe(2);
+  });
+
+  it("cleanups old versions", async () => {
+    const stats = await table.optimize({ cleanupOlderThan: new Date() });
+    expect(stats.prune.bytesRemoved).toBeGreaterThan(0);
+    expect(stats.prune.oldVersionsRemoved).toBe(3);
+  });
+
+  it("delete unverified", async () => {
+    const version = await table.version();
+    const versionFile = `${tmpDir.name}/${table.name}.lance/_versions/${String(
+      18446744073709551615n - (BigInt(version) - 1n),
+    ).padStart(20, "0")}.manifest`;
+    fs.rmSync(versionFile);
+
+    let stats = await table.optimize({ deleteUnverified: false });
+    expect(stats.prune.oldVersionsRemoved).toBe(0);
+
+    stats = await table.optimize({
+      cleanupOlderThan: new Date(),
+      deleteUnverified: true,
+    });
+    expect(stats.prune.oldVersionsRemoved).toBeGreaterThan(1);
+  });
+});
+
+describe.each([arrow15, arrow16, arrow17, arrow18])(
+  "when optimizing a dataset",
+  // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+  (arrow: any) => {
+    let tmpDir: tmp.DirResult;
+    beforeEach(() => {
+      getRegistry().reset();
+      tmpDir = tmp.dirSync({ unsafeCleanup: true });
+    });
+    afterEach(() => {
+      tmpDir.removeCallback();
+    });
+
+    test("can search using a string", async () => {
+      @register()
+      class MockEmbeddingFunction extends EmbeddingFunction<string> {
+        ndims() {
+          return 1;
+        }
+        embeddingDataType() {
+          return new Float32();
+        }
+
+        // Hardcoded embeddings for the sake of testing
+        async computeQueryEmbeddings(_data: string) {
+          switch (_data) {
+            case "greetings":
+              return [0.1];
+            case "farewell":
+              return [0.2];
+            default:
+              return null as never;
+          }
+        }
+
+        // Hardcoded embeddings for the sake of testing
+        async computeSourceEmbeddings(data: string[]) {
+          return data.map((s) => {
+            switch (s) {
+              case "hello world":
+                return [0.1];
+              case "goodbye world":
+                return [0.2];
+              default:
+                return null as never;
+            }
+          });
+        }
+      }
+
+      const func = new MockEmbeddingFunction();
+      const schema = LanceSchema({
+        text: func.sourceField(new arrow.Utf8()),
+        vector: func.vectorField(),
+      });
+      const db = await connect(tmpDir.name);
+      const data = [{ text: "hello world" }, { text: "goodbye world" }];
+      const table = await db.createTable("test", data, { schema });
+
+      const results = await table.search("greetings").toArray();
+      expect(results[0].text).toBe(data[0].text);
+
+      const results2 = await table.search("farewell").toArray();
+      expect(results2[0].text).toBe(data[1].text);
+    });
+
+    test("rejects if no embedding function provided", async () => {
+      const db = await connect(tmpDir.name);
+      const data = [
+        { text: "hello world", vector: [0.1, 0.2, 0.3] },
+        { text: "goodbye world", vector: [0.4, 0.5, 0.6] },
+      ];
+      const table = await db.createTable("test", data);
+
+      expect(table.search("hello", "vector").toArray()).rejects.toThrow(
+        "No embedding functions are defined in the table",
+      );
+    });
+
+    test("full text search if no embedding function provided", async () => {
+      const db = await connect(tmpDir.name);
+      const data = [
+        { text: "hello world", vector: [0.1, 0.2, 0.3] },
+        { text: "goodbye world", vector: [0.4, 0.5, 0.6] },
+      ];
+      const table = await db.createTable("test", data);
+      await table.createIndex("text", {
+        config: Index.fts(),
+      });
+
+      const results = await table.search("hello").toArray();
+      expect(results[0].text).toBe(data[0].text);
+
+      const query = new MatchQuery("goodbye", "text");
+      expect(instanceOfFullTextQuery(query)).toBe(true);
+      const results2 = await table
+        .search(new MatchQuery("goodbye", "text"))
+        .toArray();
+      expect(results2[0].text).toBe(data[1].text);
+    });
+
+    test("tokenizes FTS queries by column or index name", async () => {
+      const db = await connect(tmpDir.name);
+      const data = [
+        {
+          text: "Running in cafés",
+          japanese: "Hello, こんにちは世界!",
+          vector: [0.1, 0.2, 0.3],
+        },
+      ];
+      const table = await db.createTable("test", data);
+      await table.createIndex("text", {
+        config: Index.fts({ baseTokenizer: "simple" }),
+      });
+      await table.createIndex("japanese", {
+        config: Index.fts({
+          baseTokenizer: "icu",
+          stem: false,
+          removeStopWords: false,
+        }),
+        name: "japanese_icu_idx",
+      });
+
+      await expect(table.tokenize("hello", {} as never)).rejects.toThrow(
+        "Specify exactly one",
+      );
+      await expect(
+        table.tokenize("hello", {
+          column: "text",
+          indexName: "text_idx",
+        } as never),
+      ).rejects.toThrow("Specify exactly one");
+
+      const simpleTokens = await table.tokenize("Running in cafés", {
+        column: "text",
+      });
+      expect(simpleTokens).toEqual([
+        { text: "run", position: 0 },
+        { text: "cafe", position: 2 },
+      ]);
+
+      const icuTokens = await table.tokenize("Hello, こんにちは世界!", {
+        indexName: "japanese_icu_idx",
+      });
+      expect(icuTokens).toEqual([
+        { text: "hello", position: 0 },
+        { text: "こんにちは", position: 1 },
+        { text: "世界", position: 2 },
+      ]);
+
+      const directSimpleTokens = await tokenize("Running in cafés", {
+        baseTokenizer: "simple",
+      });
+      expect(directSimpleTokens).toEqual([
+        { text: "run", position: 0 },
+        { text: "cafe", position: 2 },
+      ]);
+
+      const directIcuTokens = await tokenize("Hello, こんにちは世界!", {
+        baseTokenizer: "icu",
+        stem: false,
+        removeStopWords: false,
+      });
+      expect(directIcuTokens).toEqual([
+        { text: "hello", position: 0 },
+        { text: "こんにちは", position: 1 },
+        { text: "世界", position: 2 },
+      ]);
+    });
+
+    test("full text search fast search", async () => {
+      const db = await connect(tmpDir.name);
+      const data = [{ text: "hello world", vector: [0.1, 0.2, 0.3], id: 1 }];
+      const table = await db.createTable("test", data);
+      await table.createIndex("text", {
+        config: Index.fts(),
+      });
+
+      // Insert unindexed data after creating the index.
+      await table.add([{ text: "xyz", vector: [0.4, 0.5, 0.6], id: 2 }]);
+
+      const withFlatSearch = await table
+        .search("xyz", "fts")
+        .limit(10)
+        .toArray();
+      expect(withFlatSearch.length).toBeGreaterThan(0);
+
+      const fastSearchResults = await table
+        .search("xyz", "fts")
+        .fastSearch()
+        .limit(10)
+        .toArray();
+      expect(fastSearchResults.length).toBe(0);
+
+      const nearestToTextFastSearch = await table
+        .query()
+        .nearestToText("xyz")
+        .fastSearch()
+        .limit(10)
+        .toArray();
+      expect(nearestToTextFastSearch.length).toBe(0);
+
+      // fastSearch should be chainable with other methods.
+      const chainedFastSearch = await table
+        .search("xyz", "fts")
+        .fastSearch()
+        .select(["text"])
+        .limit(5)
+        .toArray();
+      expect(chainedFastSearch.length).toBe(0);
+
+      await table.optimize();
+
+      const indexedFastSearch = await table
+        .search("xyz", "fts")
+        .fastSearch()
+        .limit(10)
+        .toArray();
+      expect(indexedFastSearch.length).toBeGreaterThan(0);
+
+      const indexedNearestToTextFastSearch = await table
+        .query()
+        .nearestToText("xyz")
+        .fastSearch()
+        .limit(10)
+        .toArray();
+      expect(indexedNearestToTextFastSearch.length).toBeGreaterThan(0);
+    });
+
+    test("prewarm full text search index", async () => {
+      const db = await connect(tmpDir.name);
+      const data = [
+        { text: ["lance database", "the", "search"], vector: [0.1, 0.2, 0.3] },
+        { text: ["lance database"], vector: [0.4, 0.5, 0.6] },
+        { text: ["lance", "search"], vector: [0.7, 0.8, 0.9] },
+        { text: ["database", "search"], vector: [1.0, 1.1, 1.2] },
+        { text: ["unrelated", "doc"], vector: [1.3, 1.4, 1.5] },
+      ];
+      const table = await db.createTable("test", data);
+      await table.createIndex("text", {
+        config: Index.fts(),
+      });
+
+      // For the moment, we just confirm we can call prewarmIndex without error
+      // and still search it afterwards
+      await table.prewarmIndex("text_idx");
+
+      const results = await table.search("lance").toArray();
+      expect(results.length).toBe(3);
+    });
+
+    test("prewarmData errors on local tables", async () => {
+      const db = await connect(tmpDir.name);
+      const data = [
+        { text: "alpha", vector: [0.1, 0.2, 0.3] },
+        { text: "beta", vector: [0.4, 0.5, 0.6] },
+      ];
+      const table = await db.createTable("prewarm_data_test", data);
+
+      // prewarmData is only supported on remote tables. We verify the call
+      // is wired through napi and surfaces the expected error for both
+      // arg shapes (undefined and string[]).
+      await expect(table.prewarmData()).rejects.toThrow(
+        "prewarm_data is currently only supported on remote tables",
+      );
+      await expect(table.prewarmData(["text"])).rejects.toThrow(
+        "prewarm_data is currently only supported on remote tables",
+      );
+    });
+
+    test("full text index on list", async () => {
+      const db = await connect(tmpDir.name);
+      const data = [
+        { text: ["lance database", "the", "search"], vector: [0.1, 0.2, 0.3] },
+        { text: ["lance database"], vector: [0.4, 0.5, 0.6] },
+        { text: ["lance", "search"], vector: [0.7, 0.8, 0.9] },
+        { text: ["database", "search"], vector: [1.0, 1.1, 1.2] },
+        { text: ["unrelated", "doc"], vector: [1.3, 1.4, 1.5] },
+      ];
+      const table = await db.createTable("test", data);
+      await table.createIndex("text", {
+        config: Index.fts({
+          withPosition: true,
+        }),
+      });
+
+      const results = await table.search("lance").toArray();
+      expect(results.length).toBe(3);
+
+      const results2 = await table.search('"lance database"').toArray();
+      expect(results2.length).toBe(2);
+    });
+
+    test("full text search without positions", async () => {
+      const db = await connect(tmpDir.name);
+      const data = [
+        { text: "hello world", vector: [0.1, 0.2, 0.3] },
+        { text: "goodbye world", vector: [0.4, 0.5, 0.6] },
+      ];
+      const table = await db.createTable("test", data);
+      await table.createIndex("text", {
+        config: Index.fts({ withPosition: false }),
+      });
+
+      const results = await table.search("hello").toArray();
+      expect(results[0].text).toBe(data[0].text);
+
+      const results2 = await table
+        .search(new MatchQuery("hello world", "text"))
+        .toArray();
+      expect(results2.length).toBe(2);
+
+      const results3 = await table
+        .search(
+          new MatchQuery("hello world", "text", { operator: Operator.And }),
+        )
+        .toArray();
+      expect(results3.length).toBe(1);
+    });
+
+    test("full text search with custom posting block size", async () => {
+      const db = await connect(tmpDir.name);
+      const data = [
+        { text: "hello world", vector: [0.1, 0.2, 0.3] },
+        { text: "goodbye world", vector: [0.4, 0.5, 0.6] },
+      ];
+      const table = await db.createTable("test", data);
+      await table.createIndex("text", {
+        config: Index.fts({ blockSize: 256 }),
+      });
+
+      const index = (await table.listIndices()).find(
+        (index) => index.indexType === "FTS",
+      );
+      expect(index?.indexVersion).toBe(3);
+      expect(
+        (index?.indexDetails as Record<string, unknown>)["block_size"],
+      ).toBe(256);
+
+      const results = await table.search("hello").toArray();
+      expect(results[0].text).toBe(data[0].text);
+    });
+
+    test("rejects invalid full text posting block size", () => {
+      expect(() => Index.fts({ blockSize: 129 as 128 | 256 })).toThrow(
+        "128 or 256",
+      );
+    });
+
+    test("full text search without lowercase", async () => {
+      const db = await connect(tmpDir.name);
+      const data = [
+        { text: "hello world", vector: [0.1, 0.2, 0.3] },
+        { text: "Hello World", vector: [0.4, 0.5, 0.6] },
+      ];
+      const table = await db.createTable("test", data);
+      await table.createIndex("text", {
+        config: Index.fts({ withPosition: false }),
+      });
+      const results = await table.search("hello").toArray();
+      expect(results.length).toBe(2);
+
+      await table.createIndex("text", {
+        config: Index.fts({ withPosition: false, lowercase: false }),
+      });
+      const results2 = await table.search("hello").toArray();
+      expect(results2.length).toBe(1);
+    });
+
+    test("full text search phrase query", async () => {
+      const db = await connect(tmpDir.name);
+      const data = [
+        { text: "hello world", vector: [0.1, 0.2, 0.3] },
+        { text: "goodbye world", vector: [0.4, 0.5, 0.6] },
+      ];
+      const table = await db.createTable("test", data);
+      await table.createIndex("text", {
+        config: Index.fts({
+          withPosition: true,
+        }),
+      });
+
+      const results = await table.search("world").toArray();
+      expect(results.length).toBe(2);
+      const phraseResults = await table.search('"hello world"').toArray();
+      expect(phraseResults.length).toBe(1);
+      const phraseResults2 = await table
+        .search(new PhraseQuery("hello world", "text"))
+        .toArray();
+      expect(phraseResults2.length).toBe(1);
+    });
+
+    test("full text search fuzzy query", async () => {
+      const db = await connect(tmpDir.name);
+      const data = [
+        { text: "fa", vector: [0.1, 0.2, 0.3] },
+        { text: "fo", vector: [0.4, 0.5, 0.6] },
+        { text: "fob", vector: [0.4, 0.5, 0.6] },
+        { text: "focus", vector: [0.4, 0.5, 0.6] },
+        { text: "foo", vector: [0.4, 0.5, 0.6] },
+        { text: "food", vector: [0.4, 0.5, 0.6] },
+        { text: "foul", vector: [0.4, 0.5, 0.6] },
+      ];
+      const table = await db.createTable("test", data);
+      await table.createIndex("text", {
+        config: Index.fts(),
+      });
+
+      const results = await table
+        .search(new MatchQuery("foo", "text"))
+        .toArray();
+      expect(results.length).toBe(1);
+      expect(results[0].text).toBe("foo");
+
+      const fuzzyResults = await table
+        .search(new MatchQuery("foo", "text", { fuzziness: 1 }))
+        .toArray();
+      expect(fuzzyResults.length).toBe(4);
+      const resultSet = new Set(fuzzyResults.map((r) => r.text));
+      expect(resultSet.has("foo")).toBe(true);
+      expect(resultSet.has("fob")).toBe(true);
+      expect(resultSet.has("fo")).toBe(true);
+      expect(resultSet.has("food")).toBe(true);
+
+      const prefixResults = await table
+        .search(
+          new MatchQuery("foo", "text", { fuzziness: 3, prefixLength: 3 }),
+        )
+        .toArray();
+      expect(prefixResults.length).toBe(2);
+      const resultSet2 = new Set(prefixResults.map((r) => r.text));
+      expect(resultSet2.has("foo")).toBe(true);
+      expect(resultSet2.has("food")).toBe(true);
+    });
+
+    test("full text search boolean query", async () => {
+      const db = await connect(tmpDir.name);
+      const data = [
+        { text: "The cat and dog are playing" },
+        { text: "The cat is sleeping" },
+        { text: "The dog is barking" },
+        { text: "The dog chases the cat" },
+      ];
+      const table = await db.createTable("test", data);
+      await table.createIndex("text", {
+        config: Index.fts({ withPosition: false }),
+      });
+
+      const shouldResults = await table
+        .search(
+          new BooleanQuery([
+            [Occur.Should, new MatchQuery("cat", "text")],
+            [Occur.Should, new MatchQuery("dog", "text")],
+          ]),
+        )
+        .toArray();
+      expect(shouldResults.length).toBe(4);
+
+      const mustResults = await table
+        .search(
+          new BooleanQuery([
+            [Occur.Must, new MatchQuery("cat", "text")],
+            [Occur.Must, new MatchQuery("dog", "text")],
+          ]),
+        )
+        .toArray();
+      expect(mustResults.length).toBe(2);
+
+      const mustNotResults = await table
+        .search(
+          new BooleanQuery([
+            [Occur.Must, new MatchQuery("cat", "text")],
+            [Occur.MustNot, new MatchQuery("dog", "text")],
+          ]),
+        )
+        .toArray();
+      expect(mustNotResults.length).toBe(1);
+    });
+
+    test("full text search ngram", async () => {
+      const db = await connect(tmpDir.name);
+      const data = [
+        { text: "hello world", vector: [0.1, 0.2, 0.3] },
+        { text: "lance database", vector: [0.4, 0.5, 0.6] },
+        { text: "lance is cool", vector: [0.7, 0.8, 0.9] },
+      ];
+      const table = await db.createTable("test", data);
+      await table.createIndex("text", {
+        config: Index.fts({ baseTokenizer: "ngram" }),
+      });
+
+      const results = await table.search("lan").toArray();
+      expect(results.length).toBe(2);
+      const resultSet = new Set(results.map((r) => r.text));
+      expect(resultSet.has("lance database")).toBe(true);
+      expect(resultSet.has("lance is cool")).toBe(true);
+
+      const results2 = await table.search("nce").toArray(); // spellchecker:disable-line
+      expect(results2.length).toBe(2);
+      const resultSet2 = new Set(results2.map((r) => r.text));
+      expect(resultSet2.has("lance database")).toBe(true);
+      expect(resultSet2.has("lance is cool")).toBe(true);
+
+      // the default min_ngram_length is 3, so "la" should not match
+      const results3 = await table.search("la").toArray();
+      expect(results3.length).toBe(0);
+
+      // test setting min_ngram_length and prefix_only
+      await table.createIndex("text", {
+        config: Index.fts({
+          baseTokenizer: "ngram",
+          ngramMinLength: 2,
+          prefixOnly: true,
+        }),
+        replace: true,
+      });
+
+      const results4 = await table.search("lan").toArray();
+      expect(results4.length).toBe(2);
+      const resultSet4 = new Set(results4.map((r) => r.text));
+      expect(resultSet4.has("lance database")).toBe(true);
+      expect(resultSet4.has("lance is cool")).toBe(true);
+
+      const results5 = await table.search("nce").toArray(); // spellchecker:disable-line
+      expect(results5.length).toBe(0);
+
+      const results6 = await table.search("la").toArray();
+      expect(results6.length).toBe(2);
+      const resultSet6 = new Set(results6.map((r) => r.text));
+      expect(resultSet6.has("lance database")).toBe(true);
+      expect(resultSet6.has("lance is cool")).toBe(true);
+    });
+
+    test.each([
+      [0.4, 0.5, 0.599], // number[]
+      Float32Array.of(0.4, 0.5, 0.599), // Float32Array
+      Float64Array.of(0.4, 0.5, 0.599), // Float64Array
+    ])("can search using vectorlike datatypes", async (vectorlike) => {
+      const db = await connect(tmpDir.name);
+      const data = [
+        { text: "hello world", vector: [0.1, 0.2, 0.3] },
+        { text: "goodbye world", vector: [0.4, 0.5, 0.6] },
+      ];
+      const table = await db.createTable("test", data);
+
+      // biome-ignore lint/suspicious/noExplicitAny: test
+      const results: any[] = await table.search(vectorlike).toArray();
+
+      expect(results.length).toBe(2);
+      expect(results[0].text).toBe(data[1].text);
+    });
+  },
+);
+
+test("tokenize supports custom stop words", async () => {
+  const tokens = await tokenize("the lance data", {
+    stem: false,
+    removeStopWords: true,
+    customStopWords: ["lance"],
+  });
+  expect(tokens.map((token) => token.text)).toEqual(["the", "data"]);
+});
+
+describe("when calling explainPlan", () => {
+  let tmpDir: tmp.DirResult;
+  let table: Table;
+  let queryVec: number[];
+  beforeEach(async () => {
+    tmpDir = tmp.dirSync({ unsafeCleanup: true });
+    const con = await connect(tmpDir.name);
+    table = await con.createTable("vectors", [{ id: 1, vector: [0.1, 0.2] }]);
+  });
+
+  afterEach(() => {
+    tmpDir.removeCallback();
+  });
+
+  it("retrieves query plan", async () => {
+    queryVec = Array(2)
+      .fill(1)
+      .map(() => Math.random());
+    const plan = await table.query().nearestTo(queryVec).explainPlan(true);
+
+    expect(plan).toMatch("KNN");
+  });
+});
+
+describe("when calling analyzePlan", () => {
+  let tmpDir: tmp.DirResult;
+  let table: Table;
+  let queryVec: number[];
+  beforeEach(async () => {
+    tmpDir = tmp.dirSync({ unsafeCleanup: true });
+    const con = await connect(tmpDir.name);
+    table = await con.createTable("vectors", [{ id: 1, vector: [1.1, 0.9] }]);
+  });
+
+  afterEach(() => {
+    tmpDir.removeCallback();
+  });
+
+  it("retrieves runtime metrics", async () => {
+    queryVec = Array(2)
+      .fill(1)
+      .map(() => Math.random());
+    const plan = await table.query().nearestTo(queryVec).analyzePlan();
+    expect(plan).toMatch("AnalyzeExec");
+
+    const fullPlan = await table
+      .query()
+      .nearestTo(queryVec)
+      .analyzePlan("full");
+    expect(fullPlan).toMatch("AnalyzeExec");
+  });
+});
+
+describe("column name options", () => {
+  let tmpDir: tmp.DirResult;
+  let table: Table;
+  beforeEach(async () => {
+    tmpDir = tmp.dirSync({ unsafeCleanup: true });
+    const con = await connect(tmpDir.name);
+    table = await con.createTable("vectors", [
+      { camelCase: 1, vector: [0.1, 0.2] },
+    ]);
+  });
+
+  test("can select columns with different names", async () => {
+    const results = await table.query().select(["camelCase"]).toArray();
+    expect(results[0].camelCase).toBe(1);
+  });
+
+  test("can filter on columns with different names", async () => {
+    const results = await table.query().where("`camelCase` = 1").toArray();
+    expect(results[0].camelCase).toBe(1);
+  });
+
+  test("can make multiple vector queries in one go", async () => {
+    const results = await table
+      .query()
+      .nearestTo([0.1, 0.2])
+      .addQueryVector([0.1, 0.2])
+      .limit(1)
+      .toArray();
+    console.log(results);
+    expect(results.length).toBe(2);
+    results.sort((a, b) => a.query_index - b.query_index);
+    expect(results[0].query_index).toBe(0);
+    expect(results[1].query_index).toBe(1);
+  });
+
+  test("index and search multivectors", async () => {
+    const db = await connect(tmpDir.name);
+    const data = [];
+    // generate 512 random multivectors
+    for (let i = 0; i < 256; i++) {
+      data.push({
+        multivector: Array.from({ length: 10 }, () =>
+          Array(2).fill(Math.random()),
+        ),
+      });
+    }
+    const table = await db.createTable("multivectors", data, {
+      schema: new Schema([
+        new Field(
+          "multivector",
+          new List(
+            new Field(
+              "item",
+              new FixedSizeList(2, new Field("item", new Float32())),
+            ),
+          ),
+        ),
+      ]),
+    });
+
+    const results = await table.search(data[0].multivector).limit(10).toArray();
+    expect(results.length).toBe(10);
+
+    await table.createIndex("multivector", {
+      config: Index.ivfPq({ numPartitions: 2, distanceType: "cosine" }),
+    });
+
+    const results2 = await table
+      .search(data[0].multivector)
+      .limit(10)
+      .toArray();
+    expect(results2.length).toBe(10);
+  });
+});
+
+describe("when creating an empty table", () => {
+  let con: Connection;
+  beforeEach(async () => {
+    const tmpDir = tmp.dirSync({ unsafeCleanup: true });
+    con = await connect(tmpDir.name);
+  });
+  afterEach(() => {
+    con.close();
+  });
+
+  it("can create an empty table from an arrow Schema", async () => {
+    const schema = new Schema([
+      new Field("id", new Int64()),
+      new Field("vector", new Float64()),
+    ]);
+    const table = await con.createEmptyTable("test", schema);
+    const actualSchema = await table.schema();
+    expect(actualSchema.fields[0].type.typeId).toBe(Type.Int);
+    expect((actualSchema.fields[0].type as Int64).bitWidth).toBe(64);
+    expect(actualSchema.fields[1].type.typeId).toBe(Type.Float);
+    expect((actualSchema.fields[1].type as Float64).precision).toBe(2);
+  });
+
+  it("can create an empty table from schema that specifies field types by name", async () => {
+    const schemaLike = {
+      fields: [
+        {
+          name: "id",
+          type: "int64",
+          nullable: true,
+        },
+        {
+          name: "vector",
+          type: "float64",
+          nullable: true,
+        },
+      ],
+      metadata: new Map(),
+      names: ["id", "vector"],
+    } satisfies SchemaLike;
+    const table = await con.createEmptyTable("test", schemaLike);
+    const actualSchema = await table.schema();
+    expect(actualSchema.fields[0].type.typeId).toBe(Type.Int);
+    expect((actualSchema.fields[0].type as Int64).bitWidth).toBe(64);
+    expect(actualSchema.fields[1].type.typeId).toBe(Type.Float);
+    expect((actualSchema.fields[1].type as Float64).precision).toBe(2);
+  });
+});
+
+// Ensure we can create float32 arrays without using Arrow
+// by utilizing native JS TypedArray support
+//
+// https://github.com/lancedb/lancedb/issues/3115
+describe("when creating a table with Float32Array vectors", () => {
+  let tmpDir: tmp.DirResult;
+  beforeEach(() => {
+    tmpDir = tmp.dirSync({ unsafeCleanup: true });
+  });
+  afterEach(() => {
+    tmpDir.removeCallback();
+  });
+
+  it("should persist Float32Array as FixedSizeList<Float32> in the LanceDB schema", async () => {
+    const db = await connect(tmpDir.name);
+    const table = await db.createTable("test", [
+      { id: "a", vector: new Float32Array([0.1, 0.2, 0.3]) },
+      { id: "b", vector: new Float32Array([0.4, 0.5, 0.6]) },
+    ]);
+
+    const schema = await table.schema();
+    const vectorField = schema.fields.find((f) => f.name === "vector");
+    expect(vectorField).toBeDefined();
+    expect(vectorField!.type).toBeInstanceOf(FixedSizeList);
+
+    const fsl = vectorField!.type as FixedSizeList;
+    expect(fsl.listSize).toBe(3);
+    expect(fsl.children[0].type.typeId).toBe(Type.Float);
+    // precision: HALF=0, SINGLE=1, DOUBLE=2
+    expect((fsl.children[0].type as Float32).precision).toBe(1);
+  });
+});
+
+describe("setUnenforcedPrimaryKey", () => {
+  let tmpDir: tmp.DirResult;
+
+  beforeEach(() => {
+    tmpDir = tmp.dirSync({ unsafeCleanup: true });
+  });
+  afterEach(() => tmpDir.removeCallback());
+
+  it("sets a single-column primary key (string or one-element array)", async () => {
+    const conn = await connect(tmpDir.name);
+    const schema = new arrow.Schema([
+      new arrow.Field("id", new arrow.Int64(), false),
+    ]);
+    const t1 = await conn.createEmptyTable("t1", schema);
+    await t1.setUnenforcedPrimaryKey("id");
+
+    const t2 = await conn.createEmptyTable("t2", schema);
+    await t2.setUnenforcedPrimaryKey(["id"]);
+  });
+
+  it("rejects a compound primary key", async () => {
+    const conn = await connect(tmpDir.name);
+    const table = await conn.createEmptyTable(
+      "t",
+      new arrow.Schema([
+        new arrow.Field("id", new arrow.Int64(), false),
+        new arrow.Field("name", new arrow.Utf8(), false),
+      ]),
+    );
+    await expect(
+      table.setUnenforcedPrimaryKey(["id", "name"]),
+    ).rejects.toThrow();
+  });
+
+  it("rejects changing the primary key once set", async () => {
+    const conn = await connect(tmpDir.name);
+    const table = await conn.createEmptyTable(
+      "t",
+      new arrow.Schema([
+        new arrow.Field("id", new arrow.Int64(), false),
+        new arrow.Field("name", new arrow.Utf8(), false),
+      ]),
+    );
+    await table.setUnenforcedPrimaryKey("id");
+    await expect(table.setUnenforcedPrimaryKey("name")).rejects.toThrow();
+    await expect(table.setUnenforcedPrimaryKey("id")).rejects.toThrow();
+  });
+});
+
+describe("setLsmWriteSpec / unsetLsmWriteSpec", () => {
+  let tmpDir: tmp.DirResult;
+
+  beforeEach(() => {
+    tmpDir = tmp.dirSync({ unsafeCleanup: true });
+  });
+  afterEach(() => tmpDir.removeCallback());
+
+  async function makeTable(conn: Connection): Promise<Table> {
+    return await conn.createEmptyTable(
+      "t",
+      new arrow.Schema([new arrow.Field("id", new arrow.Int64(), false)]),
+    );
+  }
+
+  it("installs and removes a bucket spec", async () => {
+    const conn = await connect(tmpDir.name);
+    const table = await makeTable(conn);
+
+    await table.setUnenforcedPrimaryKey("id");
+    await table.setLsmWriteSpec({
+      specType: "bucket",
+      column: "id",
+      numBuckets: 4,
+    });
+    await table.unsetLsmWriteSpec();
+    // A second unset errors — there is no spec left to remove.
+    await expect(table.unsetLsmWriteSpec()).rejects.toThrow();
+    // A fresh spec can be installed after unset.
+    await table.setLsmWriteSpec({
+      specType: "bucket",
+      column: "id",
+      numBuckets: 8,
+    });
+  });
+
+  it("installs an unsharded spec", async () => {
+    const conn = await connect(tmpDir.name);
+    const table = await makeTable(conn);
+
+    await table.setUnenforcedPrimaryKey("id");
+    await table.setLsmWriteSpec({ specType: "unsharded" });
+    await table.unsetLsmWriteSpec();
+  });
+
+  it("installs an identity spec", async () => {
+    const conn = await connect(tmpDir.name);
+    const table = await makeTable(conn);
+
+    await table.setUnenforcedPrimaryKey("id");
+    await table.setLsmWriteSpec({ specType: "identity", column: "id" });
+    await table.unsetLsmWriteSpec();
+  });
+
+  it("rejects an invalid spec", async () => {
+    const conn = await connect(tmpDir.name);
+    const table = await makeTable(conn);
+
+    await table.setUnenforcedPrimaryKey("id");
+    // num_buckets out of range.
+    await expect(
+      table.setLsmWriteSpec({
+        specType: "bucket",
+        column: "id",
+        numBuckets: 0,
+      }),
+    ).rejects.toThrow();
+    // Column mismatch.
+    await expect(
+      table.setLsmWriteSpec({
+        specType: "bucket",
+        column: "missing",
+        numBuckets: 4,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("reads back the installed spec via getLsmWriteSpec", async () => {
+    const conn = await connect(tmpDir.name);
+    const table = await makeTable(conn);
+    await table.setUnenforcedPrimaryKey("id");
+
+    // Nothing installed yet.
+    expect(await table.getLsmWriteSpec()).toBeUndefined();
+
+    // A real scalar index is needed to name it as a maintained index.
+    await table.add([{ id: 1 }, { id: 2 }, { id: 3 }]);
+    await table.createIndex("id");
+    const indexName = (await table.listIndices())[0].name;
+
+    // Bucket spec round-trips, including maintained indexes and writer config
+    // defaults. Lance writer-config keys are canonically snake_case.
+    // biome-ignore lint/style/useNamingConvention: Lance writer-config keys are snake_case
+    const writerConfigDefaults = { durable_write: "false" };
+    await table.setLsmWriteSpec({
+      specType: "bucket",
+      column: "id",
+      numBuckets: 4,
+      maintainedIndexes: [indexName],
+      writerConfigDefaults,
+    });
+    const spec = await table.getLsmWriteSpec();
+    expect(spec).toBeDefined();
+    expect(spec?.specType).toBe("bucket");
+    expect(spec?.column).toBe("id");
+    expect(spec?.numBuckets).toBe(4);
+    expect(spec?.maintainedIndexes).toEqual([indexName]);
+    expect(spec?.writerConfigDefaults).toEqual(writerConfigDefaults);
+
+    // After unset, undefined again.
+    await table.unsetLsmWriteSpec();
+    expect(await table.getLsmWriteSpec()).toBeUndefined();
+
+    // Identity round-trips (column recovered from the schema).
+    await table.setLsmWriteSpec({ specType: "identity", column: "id" });
+    const identity = await table.getLsmWriteSpec();
+    expect(identity?.specType).toBe("identity");
+    expect(identity?.column).toBe("id");
+    await table.unsetLsmWriteSpec();
+
+    // Unsharded round-trips (no routing column).
+    await table.setLsmWriteSpec({ specType: "unsharded" });
+    const unsharded = await table.getLsmWriteSpec();
+    expect(unsharded?.specType).toBe("unsharded");
+    expect(unsharded?.column).toBeFalsy();
+  });
+});
+
+describe("LSM merge insert", () => {
+  let tmpDir: tmp.DirResult;
+
+  beforeEach(() => {
+    tmpDir = tmp.dirSync({ unsafeCleanup: true });
+  });
+  afterEach(() => tmpDir.removeCallback());
+
+  async function bucketTable(conn: Connection): Promise<Table> {
+    // The primary key column must be non-nullable.
+    const table = await conn.createEmptyTable(
+      "t",
+      new arrow.Schema([
+        new arrow.Field("id", new arrow.Utf8(), false),
+        new arrow.Field("value", new arrow.Float64(), true),
+      ]),
+    );
+    await table.add([
+      { id: "a", value: 1 },
+      { id: "b", value: 2 },
+    ]);
+    await table.setUnenforcedPrimaryKey("id");
+    // numBuckets = 1: every row routes to the single bucket.
+    await table.setLsmWriteSpec({
+      specType: "bucket",
+      column: "id",
+      numBuckets: 1,
+    });
+    return table;
+  }
+
+  it("routes merge_insert through the shard writer", async () => {
+    const conn = await connect(tmpDir.name);
+    const table = await bucketTable(conn);
+
+    const res = await table
+      .mergeInsert("id")
+      .whenMatchedUpdateAll()
+      .whenNotMatchedInsertAll()
+      .execute([
+        { id: "c", value: 3 },
+        { id: "d", value: 4 },
+      ]);
+    // LSM path: rows go to the MemWAL, so only numRows is populated.
+    expect(res.numRows).toBe(2);
+    expect(res.version).toBe(0);
+    expect(res.numInsertedRows).toBe(0);
+
+    await table.closeLsmWriters();
+  });
+
+  it("falls back to the standard path with useLsm(false)", async () => {
+    const conn = await connect(tmpDir.name);
+    const table = await bucketTable(conn);
+
+    const res = await table
+      .mergeInsert("id")
+      .whenNotMatchedInsertAll()
+      .useLsm(false)
+      .execute([
+        { id: "b", value: 9 },
+        { id: "e", value: 5 },
+      ]);
+    // Standard path commits: id="e" inserted ("b" already exists).
+    expect(res.numInsertedRows).toBe(1);
+    expect(await table.countRows()).toBe(3);
+  });
+
+  it("supports validateSingleShard(false)", async () => {
+    const conn = await connect(tmpDir.name);
+    const table = await bucketTable(conn);
+
+    const res = await table
+      .mergeInsert("id")
+      .whenMatchedUpdateAll()
+      .whenNotMatchedInsertAll()
+      .validateSingleShard(false)
+      .execute([{ id: "f", value: 6 }]);
+    expect(res.numRows).toBe(1);
+  });
+
+  it("rejects a non-upsert merge under an LSM spec", async () => {
+    const conn = await connect(tmpDir.name);
+    const table = await bucketTable(conn);
+
+    await expect(
+      table
+        .mergeInsert("id")
+        .whenNotMatchedInsertAll()
+        .execute([{ id: "g", value: 7 }]),
+    ).rejects.toThrow();
+  });
+
+  it("auto-routes reads through the MemWAL scanner", async () => {
+    const conn = await connect(tmpDir.name);
+    const table = await bucketTable(conn); // base ids "a", "b"
+
+    await table
+      .mergeInsert("id")
+      .whenMatchedUpdateAll()
+      .whenNotMatchedInsertAll()
+      .execute([{ id: "c", value: 3 }]);
+
+    // Default read auto-routes and includes the active memtable row.
+    const lsm = await table.query().toArray();
+    expect(lsm.map((r) => r.id).sort()).toEqual(["a", "b", "c"]);
+
+    // useLsm(false) bypasses the MemWAL and reads the base table only.
+    const baseOnly = await table.query().useLsm(false).toArray();
+    expect(baseOnly.map((r) => r.id).sort()).toEqual(["a", "b"]);
+  });
+
+  it("reads the base table when no LSM spec is installed", async () => {
+    const conn = await connect(tmpDir.name);
+    const table = await conn.createEmptyTable(
+      "plain",
+      new arrow.Schema([new arrow.Field("id", new arrow.Utf8(), false)]),
+    );
+    // No spec: default read and useLsm(false) both succeed against the base table.
+    await expect(table.query().toArray()).resolves.toBeDefined();
+    await expect(table.query().useLsm(false).toArray()).resolves.toBeDefined();
+    // useLsm(true) demands MemWAL routing; without a spec it errors.
+    await expect(table.query().useLsm(true).toArray()).rejects.toThrow();
+  });
+});

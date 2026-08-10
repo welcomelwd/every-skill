@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "repository": "stanford-oval/storm",
+  "source_url": "https://github.com/stanford-oval/storm",
+  "ref": "main",
+  "resolved_commit": "fb951af7744dab086e34962e9bc6fe878e145f83",
+  "category": "knowledge",
+  "subcategory": "rag",
+  "slug": "storm",
+  "license": null,
+  "source_date": null,
+  "imported_at": "2026-08-10T08:26:17+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 68,
+  "copied_bytes": 1863834,
+  "excluded_files": [
+    "assets/co-storm-workflow.jpg: binary, archive, media, or generated artifact",
+    "assets/storm_naacl2024_slides.pdf: file exceeds 2097152 bytes",
+    "assets/two_stages.jpg: binary, archive, media, or generated artifact",
+    "frontend/demo_light/assets/article_display.jpg: binary, archive, media, or generated artifact",
+    "frontend/demo_light/assets/create_article.jpg: binary, archive, media, or generated artifact",
+    "frontend/demo_light/assets/void.jpg: binary, archive, media, or generated artifact"
+  ],
+  "execution": "never run by this importer"
+}

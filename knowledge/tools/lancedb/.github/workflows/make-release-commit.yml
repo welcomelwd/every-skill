@@ -1,0 +1,73 @@
+name: Create release commit
+
+# This workflow increments the version, tags it, and pushes it. All SDKs share
+# a single version, so one tag releases all of them.
+# When a tag is pushed, another workflow is triggered that creates a GH release
+# and uploads the binaries. This workflow is only for creating the tag.
+
+# This script will enforce that a minor version is incremented if there are any
+# breaking changes since the last minor increment. A breaking change in any SDK
+# bumps the minor version for all of them. If you wish to bypass this check, you
+# can manually increment the version and push the tag.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (create the local commit/tags but do not push it)'
+        required: true
+        default: false
+        type: boolean
+      type:
+        description: 'What kind of release is this?'
+        required: true
+        default: 'preview'
+        type: choice
+        options:
+          - preview
+          - stable
+      bump-minor:
+        description: 'Bump minor version'
+        required: true
+        default: false
+        type: boolean
+
+jobs:
+  make-release:
+    # Creates tag and GH release. The GH release will trigger the build and release jobs.
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Output Inputs
+        run: echo "${{ toJSON(github.event.inputs) }}"
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          lfs: true
+          # It's important we use our token here, as the default token will NOT
+          # trigger any workflows watching for new tags. See:
+          # https://docs.github.com/en/actions/using-workflows/triggering-a-workflow#triggering-a-workflow-from-a-workflow
+          token: ${{ secrets.LANCEDB_RELEASE_TOKEN }}
+      - name: Validate Lance dependency is at stable version
+        if: ${{ inputs.type == 'stable' }}
+        run: python ci/validate_stable_lance.py
+      - name: Set git configs for bumpversion
+        shell: bash
+        run: |
+          git config user.name 'Lance Release'
+          git config user.email 'lance-dev@lancedb.com'
+      - name: Bump version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pip install bump-my-version PyGithub packaging
+          bash ci/bump_version.sh ${{ inputs.type }} ${{ inputs.bump-minor }}
+          bash ci/update_lockfiles.sh --amend
+      - name: Push new version tag
+        if: ${{ !inputs.dry_run }}
+        uses: ad-m/github-push-action@881a6320fdb16eb5318c5054f31c218aec2b324c # v1.3.0
+        with:
+          # Need to use PAT here too to trigger next workflow. See comment above.
+          github_token: ${{ secrets.LANCEDB_RELEASE_TOKEN }}
+          branch: ${{ github.ref }}
+          tags: true

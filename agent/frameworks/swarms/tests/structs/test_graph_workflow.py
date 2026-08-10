@@ -1,0 +1,1312 @@
+import hashlib
+
+import pytest
+
+from swarms.structs.agent import Agent
+from swarms.structs.graph_workflow import (
+    GraphWorkflow,
+    Node,
+    NodeType,
+)
+
+try:
+    import rustworkx as rx  # noqa: F401
+
+    RUSTWORKX_AVAILABLE = True
+except ImportError:
+    RUSTWORKX_AVAILABLE = False
+
+
+def create_test_agent(name: str, description: str = None) -> Agent:
+    """Create a real agent for testing"""
+    if description is None:
+        description = f"Test agent for {name} operations"
+
+    return Agent(
+        agent_name=name,
+        agent_description=description,
+        model_name="gpt-5.4",
+        verbose=False,
+        print_on=False,
+        max_loops=1,
+    )
+
+
+def test_graph_workflow_basic_node_creation():
+    """Test basic GraphWorkflow node creation with real agents"""
+    # Test basic node creation
+    agent = create_test_agent(
+        "TestAgent", "Test agent for node creation"
+    )
+    node = Node.from_agent(agent)
+    assert node.id == "TestAgent"
+    assert node.type == NodeType.AGENT
+    assert node.agent == agent
+
+    # Test node with custom id
+    node2 = Node(id="CustomID", type=NodeType.AGENT, agent=agent)
+    assert node2.id == "CustomID"
+
+
+def test_graph_workflow_multi_agent_collaboration():
+    """Test GraphWorkflow with multiple agents in a collaboration scenario"""
+    # Create specialized agents for a business analysis workflow
+    market_researcher = create_test_agent(
+        "Market-Researcher",
+        "Specialist in market analysis and trend identification",
+    )
+
+    data_analyst = create_test_agent(
+        "Data-Analyst",
+        "Expert in data processing and statistical analysis",
+    )
+
+    strategy_consultant = create_test_agent(
+        "Strategy-Consultant",
+        "Senior consultant for strategic planning and recommendations",
+    )
+
+    # Create workflow with linear execution path
+    workflow = GraphWorkflow(name="Business-Analysis-Workflow")
+    workflow.add_node(market_researcher)
+    workflow.add_node(data_analyst)
+    workflow.add_node(strategy_consultant)
+
+    # Add edges to define execution order
+    workflow.add_edge("Market-Researcher", "Data-Analyst")
+    workflow.add_edge("Data-Analyst", "Strategy-Consultant")
+
+    # Test workflow execution
+    result = workflow.run(
+        "Analyze market opportunities for AI in healthcare"
+    )
+    assert result is not None
+
+
+def test_graph_workflow_parallel_execution():
+    """Test GraphWorkflow with parallel execution paths"""
+    # Create agents for parallel analysis
+    technical_analyst = create_test_agent(
+        "Technical-Analyst",
+        "Technical feasibility and implementation analysis",
+    )
+
+    market_analyst = create_test_agent(
+        "Market-Analyst",
+        "Market positioning and competitive analysis",
+    )
+
+    financial_analyst = create_test_agent(
+        "Financial-Analyst", "Financial modeling and ROI analysis"
+    )
+
+    risk_assessor = create_test_agent(
+        "Risk-Assessor", "Risk assessment and mitigation planning"
+    )
+
+    # Create workflow with parallel execution
+    workflow = GraphWorkflow(name="Parallel-Analysis-Workflow")
+    workflow.add_node(technical_analyst)
+    workflow.add_node(market_analyst)
+    workflow.add_node(financial_analyst)
+    workflow.add_node(risk_assessor)
+
+    # Add edges for fan-out execution (one to many)
+    workflow.add_edges_from_source(
+        "Technical-Analyst",
+        ["Market-Analyst", "Financial-Analyst", "Risk-Assessor"],
+    )
+
+    # Test parallel execution
+    result = workflow.run(
+        "Evaluate feasibility of launching a new fintech platform"
+    )
+    assert result is not None
+
+
+def test_graph_workflow_complex_topology():
+    """Test GraphWorkflow with complex node topology"""
+    # Create agents for a comprehensive product development workflow
+    product_manager = create_test_agent(
+        "Product-Manager", "Product strategy and roadmap management"
+    )
+
+    ux_designer = create_test_agent(
+        "UX-Designer", "User experience design and research"
+    )
+
+    backend_developer = create_test_agent(
+        "Backend-Developer",
+        "Backend system architecture and development",
+    )
+
+    frontend_developer = create_test_agent(
+        "Frontend-Developer",
+        "Frontend interface and user interaction development",
+    )
+
+    qa_engineer = create_test_agent(
+        "QA-Engineer", "Quality assurance and testing specialist"
+    )
+
+    devops_engineer = create_test_agent(
+        "DevOps-Engineer", "Deployment and infrastructure management"
+    )
+
+    # Create workflow with complex dependencies
+    workflow = GraphWorkflow(name="Product-Development-Workflow")
+    workflow.add_node(product_manager)
+    workflow.add_node(ux_designer)
+    workflow.add_node(backend_developer)
+    workflow.add_node(frontend_developer)
+    workflow.add_node(qa_engineer)
+    workflow.add_node(devops_engineer)
+
+    # Define complex execution topology
+    workflow.add_edge("Product-Manager", "UX-Designer")
+    workflow.add_edge("UX-Designer", "Frontend-Developer")
+    workflow.add_edge("Product-Manager", "Backend-Developer")
+    workflow.add_edge("Backend-Developer", "QA-Engineer")
+    workflow.add_edge("Frontend-Developer", "QA-Engineer")
+    workflow.add_edge("QA-Engineer", "DevOps-Engineer")
+
+    # Test complex workflow execution
+    result = workflow.run(
+        "Develop a comprehensive e-commerce platform with AI recommendations"
+    )
+    assert result is not None
+
+
+def test_graph_workflow_error_handling():
+    """Test GraphWorkflow error handling and validation"""
+    # Test with empty workflow
+    workflow = GraphWorkflow()
+    result = workflow.run("Test task")
+    # Empty workflow should handle gracefully
+    assert result is not None
+
+    # Test workflow compilation and caching
+    researcher = create_test_agent(
+        "Researcher", "Research specialist"
+    )
+    workflow.add_node(researcher)
+
+    # First run should compile
+    result1 = workflow.run("Research task")
+    assert result1 is not None
+
+    # Second run should use cached compilation
+    result2 = workflow.run("Another research task")
+    assert result2 is not None
+
+
+def test_graph_workflow_node_metadata():
+    """Test GraphWorkflow with node metadata"""
+    # Create agents with different priorities and requirements
+    high_priority_agent = create_test_agent(
+        "High-Priority-Analyst", "High priority analysis specialist"
+    )
+
+    standard_agent = create_test_agent(
+        "Standard-Analyst", "Standard analysis agent"
+    )
+
+    # Create workflow and add nodes with metadata
+    workflow = GraphWorkflow(name="Metadata-Workflow")
+    workflow.add_node(
+        high_priority_agent,
+        metadata={"priority": "high", "timeout": 60},
+    )
+    workflow.add_node(
+        standard_agent, metadata={"priority": "normal", "timeout": 30}
+    )
+
+    # Add execution dependency
+    workflow.add_edge("High-Priority-Analyst", "Standard-Analyst")
+
+    # Test execution with metadata
+    result = workflow.run(
+        "Analyze business requirements with different priorities"
+    )
+    assert result is not None
+
+
+@pytest.mark.parametrize("backend", ["networkx", "rustworkx"])
+def test_graph_workflow_backend_basic(backend):
+    """Test GraphWorkflow basic functionality with both backends"""
+    if backend == "rustworkx" and not RUSTWORKX_AVAILABLE:
+        pytest.skip("rustworkx not available")
+
+    agent1 = create_test_agent("Agent1", "First agent")
+    agent2 = create_test_agent("Agent2", "Second agent")
+
+    workflow = GraphWorkflow(
+        name=f"Backend-Test-{backend}", backend=backend
+    )
+    workflow.add_node(agent1)
+    workflow.add_node(agent2)
+    workflow.add_edge(agent1, agent2)
+
+    assert len(workflow.nodes) == 2
+    assert len(workflow.edges) == 1
+
+    result = workflow.run("Test task")
+    assert result is not None
+    assert "Agent1" in result
+    assert "Agent2" in result
+
+
+@pytest.mark.parametrize("backend", ["networkx", "rustworkx"])
+def test_graph_workflow_backend_parallel_execution(backend):
+    """Test parallel execution with both backends"""
+    if backend == "rustworkx" and not RUSTWORKX_AVAILABLE:
+        pytest.skip("rustworkx not available")
+
+    coordinator = create_test_agent(
+        "Coordinator", "Coordinates tasks"
+    )
+    analyst1 = create_test_agent("Analyst1", "First analyst")
+    analyst2 = create_test_agent("Analyst2", "Second analyst")
+    analyst3 = create_test_agent("Analyst3", "Third analyst")
+
+    workflow = GraphWorkflow(
+        name=f"Parallel-Test-{backend}", backend=backend
+    )
+    workflow.add_node(coordinator)
+    workflow.add_node(analyst1)
+    workflow.add_node(analyst2)
+    workflow.add_node(analyst3)
+
+    workflow.add_edges_from_source(
+        coordinator, [analyst1, analyst2, analyst3]
+    )
+
+    workflow.compile()
+    assert len(workflow._sorted_layers) >= 1
+    assert (
+        len(workflow._sorted_layers[0]) == 1
+    )  # Coordinator in first layer
+
+    result = workflow.run("Analyze data in parallel")
+    assert result is not None
+
+
+@pytest.mark.parametrize("backend", ["networkx", "rustworkx"])
+def test_graph_workflow_backend_fan_in_pattern(backend):
+    """Test fan-in pattern with both backends"""
+    if backend == "rustworkx" and not RUSTWORKX_AVAILABLE:
+        pytest.skip("rustworkx not available")
+
+    analyst1 = create_test_agent("Analyst1", "First analyst")
+    analyst2 = create_test_agent("Analyst2", "Second analyst")
+    analyst3 = create_test_agent("Analyst3", "Third analyst")
+    synthesizer = create_test_agent(
+        "Synthesizer", "Synthesizes results"
+    )
+
+    workflow = GraphWorkflow(
+        name=f"FanIn-Test-{backend}", backend=backend
+    )
+    workflow.add_node(analyst1)
+    workflow.add_node(analyst2)
+    workflow.add_node(analyst3)
+    workflow.add_node(synthesizer)
+
+    workflow.add_edges_to_target(
+        [analyst1, analyst2, analyst3], synthesizer
+    )
+
+    workflow.compile()
+    assert len(workflow._sorted_layers) >= 2
+    assert synthesizer.agent_name in workflow.end_points
+
+    result = workflow.run("Synthesize multiple analyses")
+    assert result is not None
+
+
+@pytest.mark.parametrize("backend", ["networkx", "rustworkx"])
+def test_graph_workflow_backend_parallel_chain(backend):
+    """Test parallel chain pattern with both backends"""
+    if backend == "rustworkx" and not RUSTWORKX_AVAILABLE:
+        pytest.skip("rustworkx not available")
+
+    collector1 = create_test_agent("Collector1", "First collector")
+    collector2 = create_test_agent("Collector2", "Second collector")
+    processor1 = create_test_agent("Processor1", "First processor")
+    processor2 = create_test_agent("Processor2", "Second processor")
+
+    workflow = GraphWorkflow(
+        name=f"ParallelChain-Test-{backend}", backend=backend
+    )
+    workflow.add_node(collector1)
+    workflow.add_node(collector2)
+    workflow.add_node(processor1)
+    workflow.add_node(processor2)
+
+    workflow.add_parallel_chain(
+        [collector1, collector2], [processor1, processor2]
+    )
+
+    workflow.compile()
+    assert len(workflow.edges) == 4  # 2x2 = 4 edges
+
+    result = workflow.run("Process data from multiple collectors")
+    assert result is not None
+
+
+@pytest.mark.parametrize("backend", ["networkx", "rustworkx"])
+def test_graph_workflow_backend_complex_topology(backend):
+    """Test complex topology with both backends"""
+    if backend == "rustworkx" and not RUSTWORKX_AVAILABLE:
+        pytest.skip("rustworkx not available")
+
+    agents = [
+        create_test_agent(f"Agent{i}", f"Agent {i}") for i in range(5)
+    ]
+
+    workflow = GraphWorkflow(
+        name=f"Complex-Topology-{backend}", backend=backend
+    )
+    for agent in agents:
+        workflow.add_node(agent)
+
+    workflow.add_edge(agents[0], agents[1])
+    workflow.add_edge(agents[0], agents[2])
+    workflow.add_edge(agents[1], agents[3])
+    workflow.add_edge(agents[2], agents[3])
+    workflow.add_edge(agents[3], agents[4])
+
+    workflow.compile()
+    assert len(workflow._sorted_layers) >= 3
+
+    result = workflow.run("Execute complex workflow")
+    assert result is not None
+
+
+@pytest.mark.parametrize("backend", ["networkx", "rustworkx"])
+def test_graph_workflow_backend_validation(backend):
+    """Test workflow validation with both backends"""
+    if backend == "rustworkx" and not RUSTWORKX_AVAILABLE:
+        pytest.skip("rustworkx not available")
+
+    agent1 = create_test_agent("Agent1", "First agent")
+    agent2 = create_test_agent("Agent2", "Second agent")
+    isolated = create_test_agent("Isolated", "Isolated agent")
+
+    workflow = GraphWorkflow(
+        name=f"Validation-Test-{backend}", backend=backend
+    )
+    workflow.add_node(agent1)
+    workflow.add_node(agent2)
+    workflow.add_node(isolated)
+    workflow.add_edge(agent1, agent2)
+
+    validation = workflow.validate(auto_fix=False)
+    assert isinstance(validation, dict)
+    assert "is_valid" in validation
+
+    validation_fixed = workflow.validate(auto_fix=True)
+    assert isinstance(validation_fixed, dict)
+
+
+@pytest.mark.parametrize("backend", ["networkx", "rustworkx"])
+def test_graph_workflow_backend_entry_end_points(backend):
+    """Test entry and end points with both backends"""
+    if backend == "rustworkx" and not RUSTWORKX_AVAILABLE:
+        pytest.skip("rustworkx not available")
+
+    agent1 = create_test_agent("Agent1", "Entry agent")
+    agent2 = create_test_agent("Agent2", "Middle agent")
+    agent3 = create_test_agent("Agent3", "End agent")
+
+    workflow = GraphWorkflow(
+        name=f"EntryEnd-Test-{backend}", backend=backend
+    )
+    workflow.add_node(agent1)
+    workflow.add_node(agent2)
+    workflow.add_node(agent3)
+    workflow.add_edge(agent1, agent2)
+    workflow.add_edge(agent2, agent3)
+
+    workflow.auto_set_entry_points()
+    workflow.auto_set_end_points()
+
+    assert agent1.agent_name in workflow.entry_points
+    assert agent3.agent_name in workflow.end_points
+
+
+def test_graph_workflow_rustworkx_specific():
+    """Test rustworkx-specific features"""
+    if not RUSTWORKX_AVAILABLE:
+        pytest.skip("rustworkx not available")
+
+    agent1 = create_test_agent("Agent1", "First agent")
+    agent2 = create_test_agent("Agent2", "Second agent")
+    agent3 = create_test_agent("Agent3", "Third agent")
+
+    workflow = GraphWorkflow(
+        name="Rustworkx-Specific-Test", backend="rustworkx"
+    )
+    workflow.add_node(agent1)
+    workflow.add_node(agent2)
+    workflow.add_node(agent3)
+    workflow.add_edge(agent1, agent2)
+    workflow.add_edge(agent2, agent3)
+
+    assert (
+        workflow.graph_backend.__class__.__name__
+        == "RustworkxBackend"
+    )
+    assert hasattr(workflow.graph_backend, "_node_id_to_index")
+    assert hasattr(workflow.graph_backend, "_index_to_node_id")
+
+    workflow.compile()
+    assert len(workflow._sorted_layers) == 3
+
+    predecessors = list(
+        workflow.graph_backend.predecessors(agent2.agent_name)
+    )
+    assert agent1.agent_name in predecessors
+
+    descendants = workflow.graph_backend.descendants(
+        agent1.agent_name
+    )
+    assert agent2.agent_name in descendants
+    assert agent3.agent_name in descendants
+
+    result = workflow.run("Test rustworkx backend")
+    assert result is not None
+
+
+def test_graph_workflow_rustworkx_large_scale():
+    """Test rustworkx with larger workflow"""
+    if not RUSTWORKX_AVAILABLE:
+        pytest.skip("rustworkx not available")
+
+    agents = [
+        create_test_agent(f"Agent{i}", f"Agent {i}")
+        for i in range(10)
+    ]
+
+    workflow = GraphWorkflow(
+        name="Rustworkx-Large-Scale", backend="rustworkx"
+    )
+    for agent in agents:
+        workflow.add_node(agent)
+
+    for i in range(len(agents) - 1):
+        workflow.add_edge(agents[i], agents[i + 1])
+
+    workflow.compile()
+    assert len(workflow._sorted_layers) == 10
+
+    result = workflow.run("Test large scale workflow")
+    assert result is not None
+    assert len(result) == 10
+
+
+def test_graph_workflow_rustworkx_agent_objects():
+    """Test rustworkx with Agent objects directly in edges"""
+    if not RUSTWORKX_AVAILABLE:
+        pytest.skip("rustworkx not available")
+
+    agent1 = create_test_agent("Agent1", "First agent")
+    agent2 = create_test_agent("Agent2", "Second agent")
+    agent3 = create_test_agent("Agent3", "Third agent")
+
+    workflow = GraphWorkflow(
+        name="Rustworkx-Agent-Objects", backend="rustworkx"
+    )
+    workflow.add_node(agent1)
+    workflow.add_node(agent2)
+    workflow.add_node(agent3)
+
+    workflow.add_edges_from_source(agent1, [agent2, agent3])
+    workflow.add_edges_to_target([agent2, agent3], agent1)
+
+    workflow.compile()
+    assert len(workflow.edges) == 4
+
+    result = workflow.run("Test agent objects in edges")
+    assert result is not None
+
+
+def test_graph_workflow_checkpoint_writes_and_resumes(tmp_path):
+    """Checkpoint files are written after each layer and skipped on second run."""
+    from unittest.mock import MagicMock
+
+    def make_agent(name):
+        a = MagicMock()
+        a.agent_name = name
+        a.run = MagicMock(return_value=f"output-{name}")
+        return a
+
+    a1 = make_agent("CP-Alpha")
+    a2 = make_agent("CP-Beta")
+    a3 = make_agent("CP-Gamma")
+
+    cp_dir = str(tmp_path / "checkpoints")
+    wf = GraphWorkflow(name="CP-Test", checkpoint_dir=cp_dir)
+    wf.add_nodes([a1, a2, a3])
+    wf.add_edge("CP-Alpha", "CP-Beta")
+    wf.add_edge("CP-Beta", "CP-Gamma")
+    wf.compile()
+
+    TASK = "checkpoint test task"
+
+    # First run — all three agents execute, three checkpoint files written
+    results = wf.run(TASK)
+    assert results["CP-Alpha"] == "output-CP-Alpha"
+    assert results["CP-Beta"] == "output-CP-Beta"
+    assert results["CP-Gamma"] == "output-CP-Gamma"
+
+    task_key = hashlib.sha256(TASK.encode("utf-8")).hexdigest()[:16]
+    cp_files = list(tmp_path.glob("checkpoints/*.json"))
+    assert len(cp_files) == 3
+    assert any(f"{task_key}_layer_0" in f.name for f in cp_files)
+    assert any(f"{task_key}_layer_1" in f.name for f in cp_files)
+    assert any(f"{task_key}_layer_2" in f.name for f in cp_files)
+
+    # Reset call counts, then run again — all layers should be skipped
+    a1.run.reset_mock()
+    a2.run.reset_mock()
+    a3.run.reset_mock()
+
+    results2 = wf.run(TASK)
+    assert a1.run.call_count == 0
+    assert a2.run.call_count == 0
+    assert a3.run.call_count == 0
+    assert results2["CP-Alpha"] == "output-CP-Alpha"
+
+
+def test_graph_workflow_checkpoint_partial_resume(tmp_path):
+    """When only some checkpoints exist, only the missing layers re-execute."""
+    from unittest.mock import MagicMock
+
+    def make_agent(name):
+        a = MagicMock()
+        a.agent_name = name
+        a.run = MagicMock(return_value=f"output-{name}")
+        return a
+
+    a1 = make_agent("PR-Alpha")
+    a2 = make_agent("PR-Beta")
+    a3 = make_agent("PR-Gamma")
+
+    cp_dir = str(tmp_path / "checkpoints")
+    wf = GraphWorkflow(name="PR-Test", checkpoint_dir=cp_dir)
+    wf.add_nodes([a1, a2, a3])
+    wf.add_edge("PR-Alpha", "PR-Beta")
+    wf.add_edge("PR-Beta", "PR-Gamma")
+    wf.compile()
+
+    TASK = "partial resume task"
+    wf.run(TASK)
+
+    # Delete the last layer's checkpoint to simulate a crash after layer 2
+    task_key = hashlib.sha256(TASK.encode("utf-8")).hexdigest()[:16]
+    (tmp_path / "checkpoints" / f"{task_key}_layer_2.json").unlink()
+
+    a1.run.reset_mock()
+    a2.run.reset_mock()
+    a3.run.reset_mock()
+
+    wf.run(TASK)
+
+    assert a1.run.call_count == 0  # restored from checkpoint
+    assert a2.run.call_count == 0  # restored from checkpoint
+    assert a3.run.call_count == 1  # re-executed
+
+
+def test_graph_workflow_clear_checkpoints(tmp_path):
+    """clear_checkpoints() removes only the target task's files."""
+    from unittest.mock import MagicMock
+
+    def make_agent(name):
+        a = MagicMock()
+        a.agent_name = name
+        a.run = MagicMock(return_value=f"output-{name}")
+        return a
+
+    a1 = make_agent("CL-Alpha")
+    a2 = make_agent("CL-Beta")
+
+    cp_dir = str(tmp_path / "checkpoints")
+    wf = GraphWorkflow(name="CL-Test", checkpoint_dir=cp_dir)
+    wf.add_nodes([a1, a2])
+    wf.add_edge("CL-Alpha", "CL-Beta")
+    wf.compile()
+
+    TASK_A = "task a"
+    TASK_B = "task b"
+
+    wf.run(TASK_A)
+    wf.run(TASK_B)
+
+    all_files_before = list(tmp_path.glob("checkpoints/*.json"))
+    assert len(all_files_before) == 4  # 2 layers x 2 tasks
+
+    deleted = wf.clear_checkpoints(TASK_A)
+    assert deleted == 2
+
+    remaining = list(tmp_path.glob("checkpoints/*.json"))
+    assert len(remaining) == 2  # only TASK_B files remain
+
+    task_b_key = hashlib.sha256(TASK_B.encode("utf-8")).hexdigest()[
+        :16
+    ]
+    assert all(task_b_key in f.name for f in remaining)
+
+
+def test_graph_workflow_clear_checkpoints_no_dir():
+    """clear_checkpoints() raises ValueError when checkpoint_dir is not set."""
+    wf = GraphWorkflow(name="NoCp-Test")
+    with pytest.raises(ValueError, match="checkpoint_dir"):
+        wf.clear_checkpoints("some task")
+
+
+def test_graph_workflow_checkpoint_conversation_replay(tmp_path):
+    """Restored checkpoint outputs are replayed into self.conversation."""
+    from unittest.mock import MagicMock
+
+    def make_agent(name):
+        a = MagicMock()
+        a.agent_name = name
+        a.run = MagicMock(return_value=f"output-{name}")
+        return a
+
+    a1 = make_agent("CV-Alpha")
+    a2 = make_agent("CV-Beta")
+
+    cp_dir = str(tmp_path / "checkpoints")
+    wf = GraphWorkflow(name="CV-Test", checkpoint_dir=cp_dir)
+    wf.add_nodes([a1, a2])
+    wf.add_edge("CV-Alpha", "CV-Beta")
+    wf.compile()
+
+    TASK = "conversation replay task"
+    wf.run(TASK)
+
+    # Second run — both layers restored from checkpoints
+    a1.run.reset_mock()
+    a2.run.reset_mock()
+    wf.conversation = type(wf.conversation)()  # fresh conversation
+    wf.run(TASK)
+
+    assert a1.run.call_count == 0
+    assert a2.run.call_count == 0
+    # Conversation should contain the restored outputs
+    history_roles = [
+        m["role"] for m in wf.conversation.conversation_history
+    ]
+    assert "CV-Alpha" in history_roles
+    assert "CV-Beta" in history_roles
+
+
+def test_graph_workflow_to_spec_round_trip():
+    """to_spec / from_topology_spec round-trip preserves topology and metadata."""
+    a = create_test_agent("Alpha", "First agent")
+    b = create_test_agent("Beta", "Second agent")
+    c = create_test_agent("Gamma", "Third agent")
+
+    wf = GraphWorkflow(
+        name="RoundTrip", description="Test pipeline", max_loops=2
+    )
+    wf.add_nodes([a, b, c])
+    wf.add_edge("Alpha", "Beta", weight=1)
+    wf.add_edge("Beta", "Gamma", weight=2)
+    wf.compile()
+
+    spec = wf.to_spec()
+
+    # Top-level fields
+    assert spec["name"] == "RoundTrip"
+    assert spec["description"] == "Test pipeline"
+    assert spec["max_loops"] == 2
+
+    # Nodes are sorted by id
+    node_ids = [n["id"] for n in spec["nodes"]]
+    assert node_ids == sorted(node_ids)
+    assert set(node_ids) == {"Alpha", "Beta", "Gamma"}
+    for n in spec["nodes"]:
+        assert n["agent_name"] == n["id"]
+
+    # Edges are sorted by (source, target)
+    edge_pairs = [(e["source"], e["target"]) for e in spec["edges"]]
+    assert edge_pairs == sorted(edge_pairs)
+    assert ("Alpha", "Beta") in edge_pairs
+    assert ("Beta", "Gamma") in edge_pairs
+
+    # entry / end points are sorted lists
+    assert spec["entry_points"] == sorted(spec["entry_points"])
+    assert spec["end_points"] == sorted(spec["end_points"])
+
+    # Reconstruct
+    registry = {"Alpha": a, "Beta": b, "Gamma": c}
+    wf2 = GraphWorkflow.from_topology_spec(spec, registry)
+
+    assert set(wf2.nodes.keys()) == {"Alpha", "Beta", "Gamma"}
+    assert len(wf2.edges) == 2
+    assert wf2.name == "RoundTrip"
+    assert wf2.max_loops == 2
+    assert set(wf2.entry_points) == set(wf.entry_points)
+    assert set(wf2.end_points) == set(wf.end_points)
+
+    # Agent objects are resolved correctly
+    assert wf2.nodes["Alpha"].agent is a
+    assert wf2.nodes["Beta"].agent is b
+    assert wf2.nodes["Gamma"].agent is c
+
+
+def test_graph_workflow_to_spec_deterministic_order():
+    """to_spec output is identical regardless of insertion order."""
+    a = create_test_agent("Zebra")
+    b = create_test_agent("Apple")
+    c = create_test_agent("Mango")
+
+    wf1 = GraphWorkflow(name="Order-Test")
+    wf1.add_nodes([a, b, c])
+    wf1.add_edge("Apple", "Mango")
+    wf1.add_edge("Mango", "Zebra")
+    wf1.compile()
+
+    wf2 = GraphWorkflow(name="Order-Test")
+    wf2.add_nodes([c, a, b])  # different insertion order
+    wf2.add_edge("Mango", "Zebra")
+    wf2.add_edge("Apple", "Mango")
+    wf2.compile()
+
+    assert wf1.to_spec()["nodes"] == wf2.to_spec()["nodes"]
+    assert wf1.to_spec()["edges"] == wf2.to_spec()["edges"]
+
+
+def test_graph_workflow_to_spec_node_metadata():
+    """Node metadata is preserved through the spec round-trip."""
+    a = create_test_agent("Alpha")
+    b = create_test_agent("Beta")
+
+    from swarms.structs.graph_workflow import Node
+
+    wf = GraphWorkflow(name="Meta-Test")
+    wf.nodes["Alpha"] = Node(
+        id="Alpha", agent=a, metadata={"role": "lead", "priority": 1}
+    )
+    wf.nodes["Beta"] = Node(
+        id="Beta", agent=b, metadata={"role": "support"}
+    )
+    wf.add_edge("Alpha", "Beta")
+    wf.compile()
+
+    spec = wf.to_spec()
+    alpha_spec = next(n for n in spec["nodes"] if n["id"] == "Alpha")
+    assert alpha_spec["metadata"] == {"role": "lead", "priority": 1}
+
+    registry = {"Alpha": a, "Beta": b}
+    wf2 = GraphWorkflow.from_topology_spec(spec, registry)
+    assert wf2.nodes["Alpha"].metadata == {
+        "role": "lead",
+        "priority": 1,
+    }
+    assert wf2.nodes["Beta"].metadata == {"role": "support"}
+
+
+def test_graph_workflow_from_topology_spec_missing_agent():
+    """from_topology_spec raises ValueError when an agent is absent from the registry."""
+    a = create_test_agent("Alpha")
+    b = create_test_agent("Beta")
+
+    wf = GraphWorkflow(name="Missing-Agent-Test")
+    wf.add_nodes([a, b])
+    wf.add_edge("Alpha", "Beta")
+    wf.compile()
+
+    spec = wf.to_spec()
+
+    # Registry is missing "Beta"
+    with pytest.raises(ValueError, match="Beta"):
+        GraphWorkflow.from_topology_spec(spec, {"Alpha": a})
+
+
+def test_graph_workflow_from_topology_spec_malformed_node():
+    """from_topology_spec raises ValueError when a node dict is missing required keys."""
+    spec = {
+        "nodes": [{"id": "Alpha"}],  # missing "agent_name"
+        "edges": [],
+    }
+    with pytest.raises(ValueError, match="agent_name"):
+        GraphWorkflow.from_topology_spec(spec, {})
+
+
+def test_graph_workflow_from_topology_spec_malformed_edge():
+    """from_topology_spec raises ValueError when an edge dict is missing required keys."""
+    a = create_test_agent("Alpha")
+    spec = {
+        "nodes": [{"id": "Alpha", "agent_name": "Alpha"}],
+        "edges": [{"source": "Alpha"}],  # missing "target"
+    }
+    with pytest.raises(ValueError, match="target"):
+        GraphWorkflow.from_topology_spec(spec, {"Alpha": a})
+
+
+def test_graph_workflow_from_topology_spec_not_a_dict():
+    """from_topology_spec raises ValueError when spec is not a dict."""
+    with pytest.raises(ValueError, match="dict"):
+        GraphWorkflow.from_topology_spec("not-a-dict", {})
+
+
+def test_graph_workflow_backend_fallback():
+    """Test backend fallback when rustworkx unavailable"""
+    workflow = GraphWorkflow(
+        name="Fallback-Test", backend="rustworkx"
+    )
+    agent = create_test_agent("Agent", "Test agent")
+    workflow.add_node(agent)
+
+    if not RUSTWORKX_AVAILABLE:
+        assert (
+            workflow.graph_backend.__class__.__name__
+            == "NetworkXBackend"
+        )
+    else:
+        assert (
+            workflow.graph_backend.__class__.__name__
+            == "RustworkxBackend"
+        )
+
+
+@pytest.mark.parametrize("backend", ["networkx", "rustworkx"])
+def test_graph_workflow_max_loops_accumulates_results(backend):
+    """Test that max_loops > 1 actually executes multiple iterations and
+    accumulates results across loops (fixes #1481)."""
+    if backend == "rustworkx" and not RUSTWORKX_AVAILABLE:
+        pytest.skip("rustworkx not available")
+
+    agent1 = create_test_agent("Agent1", "Entry agent")
+    agent2 = create_test_agent("Agent2", "End agent")
+
+    workflow = GraphWorkflow(
+        name=f"MultiLoop-Test-{backend}",
+        backend=backend,
+        max_loops=3,
+    )
+    workflow.add_node(agent1)
+    workflow.add_node(agent2)
+    workflow.add_edge(agent1, agent2)
+
+    result = workflow.run("Iteratively refine analysis")
+    assert result is not None
+
+    # With max_loops > 1, result should contain per-loop keys
+    assert "Agent1_loop_1" in result
+    assert "Agent2_loop_1" in result
+    assert "Agent1_loop_2" in result
+    assert "Agent2_loop_2" in result
+    assert "Agent1_loop_3" in result
+    assert "Agent2_loop_3" in result
+
+    # Final loop results should also be accessible under plain node IDs
+    assert "Agent1" in result
+    assert "Agent2" in result
+
+
+def test_graph_workflow_single_loop_backward_compatible():
+    """Test that max_loops=1 (the default) returns results in the original
+    format — plain node-ID keys, no loop suffixes."""
+    agent1 = create_test_agent("Agent1", "Entry agent")
+    agent2 = create_test_agent("Agent2", "End agent")
+
+    workflow = GraphWorkflow(name="SingleLoop-Compat")
+    workflow.add_node(agent1)
+    workflow.add_node(agent2)
+    workflow.add_edge(agent1, agent2)
+
+    result = workflow.run("Simple task")
+    assert result is not None
+    assert "Agent1" in result
+    assert "Agent2" in result
+
+    # Should NOT have loop-suffixed keys
+    assert not any(
+        k.endswith("_loop_1") for k in result
+    ), "Single-loop results should not contain loop-suffixed keys"
+
+
+def test_graph_workflow_on_node_complete_callback_via_run():
+    """Test that on_node_complete callback fires for each agent when passed
+    to run() (fixes #1482)."""
+    agent1 = create_test_agent("Agent1", "Entry agent")
+    agent2 = create_test_agent("Agent2", "End agent")
+
+    workflow = GraphWorkflow(name="Callback-Run-Test")
+    workflow.add_node(agent1)
+    workflow.add_node(agent2)
+    workflow.add_edge(agent1, agent2)
+
+    completed = []
+
+    def on_complete(node_id, output):
+        completed.append((node_id, output))
+
+    result = workflow.run(
+        "Test callback via run",
+        on_node_complete=on_complete,
+    )
+    assert result is not None
+    assert len(completed) == 2
+
+    completed_ids = [nid for nid, _ in completed]
+    assert "Agent1" in completed_ids
+    assert "Agent2" in completed_ids
+
+    # Outputs in callback should match the returned results
+    for node_id, output in completed:
+        assert result[node_id] == output
+
+
+def test_graph_workflow_on_node_complete_callback_via_init():
+    """Test that on_node_complete callback works when set at __init__ level."""
+    agent1 = create_test_agent("Agent1", "Entry agent")
+    agent2 = create_test_agent("Agent2", "End agent")
+
+    completed = []
+
+    def on_complete(node_id, output):
+        completed.append(node_id)
+
+    workflow = GraphWorkflow(
+        name="Callback-Init-Test",
+        on_node_complete=on_complete,
+    )
+    workflow.add_node(agent1)
+    workflow.add_node(agent2)
+    workflow.add_edge(agent1, agent2)
+
+    result = workflow.run("Test callback via init")
+    assert result is not None
+    assert "Agent1" in completed
+    assert "Agent2" in completed
+
+
+def test_graph_workflow_on_node_complete_run_overrides_init():
+    """Test that a callback passed to run() takes precedence over __init__."""
+    agent1 = create_test_agent("Agent1", "Solo agent")
+
+    init_calls = []
+    run_calls = []
+
+    workflow = GraphWorkflow(
+        name="Callback-Override-Test",
+        on_node_complete=lambda nid, out: init_calls.append(nid),
+    )
+    workflow.add_node(agent1)
+
+    workflow.run(
+        "Test override",
+        on_node_complete=lambda nid, out: run_calls.append(nid),
+    )
+
+    # Only the run-level callback should have been called
+    assert len(run_calls) == 1
+    assert len(init_calls) == 0
+
+
+# ---------------------------------------------------------------------------
+# Subgraph / nested GraphWorkflow tests (no real LLM calls)
+# ---------------------------------------------------------------------------
+
+
+def _mock_agent(name: str, response: str = None):
+    """Return a MagicMock that looks like an Agent."""
+    from unittest.mock import MagicMock
+
+    a = MagicMock()
+    a.agent_name = name
+    a.run = MagicMock(return_value=response or f"output-{name}")
+    return a
+
+
+def test_node_from_subgraph_creates_subgraph_node():
+    """Node.from_subgraph returns a SUBGRAPH-typed node with the inner workflow."""
+    inner = GraphWorkflow(name="inner")
+    a = _mock_agent("Inner-A")
+    inner.add_node(a)
+
+    node = Node.from_subgraph(inner)
+
+    assert node.type == NodeType.SUBGRAPH
+    assert node.agent is inner
+    assert node.id == "inner"
+
+
+def test_node_from_subgraph_custom_id():
+    """Node.from_subgraph respects an explicit node_id override."""
+    inner = GraphWorkflow(name="inner")
+    inner.add_node(_mock_agent("Inner-A"))
+
+    node = Node.from_subgraph(inner, node_id="my-subgraph")
+    assert node.id == "my-subgraph"
+
+
+def test_add_node_accepts_graph_workflow():
+    """add_node should accept a GraphWorkflow and register it as SUBGRAPH."""
+    inner = GraphWorkflow(name="ResearchPipeline")
+    inner.add_node(_mock_agent("Researcher", "research done"))
+
+    outer = GraphWorkflow(name="Outer")
+    outer.add_node(inner)
+
+    assert "ResearchPipeline" in outer.nodes
+    assert outer.nodes["ResearchPipeline"].type == NodeType.SUBGRAPH
+
+
+def test_subgraph_executes_and_output_reaches_downstream():
+    """Outer graph passes subgraph output to the downstream agent."""
+    # Inner graph: single agent
+    inner_agent = _mock_agent("InnerAgent", "inner result")
+    inner = GraphWorkflow(name="Inner")
+    inner.add_node(inner_agent)
+
+    # Downstream agent in outer graph
+    downstream = _mock_agent("Downstream", "downstream done")
+
+    outer = GraphWorkflow(name="Outer")
+    outer.add_node(inner)
+    outer.add_node(downstream)
+    outer.add_edge("Inner", "Downstream")
+
+    result = outer.run("test task")
+
+    assert result is not None
+    # Inner agent must have been called
+    inner_agent.run.assert_called_once()
+    # Downstream agent must have been called with the inner graph's output
+    downstream.run.assert_called_once()
+    call_prompt = downstream.run.call_args[0][0]
+    assert "inner result" in call_prompt
+
+
+def test_subgraph_result_in_outer_output():
+    """Outer result dict contains the subgraph node's output."""
+    inner_agent = _mock_agent("IA", "inner-output")
+    inner = GraphWorkflow(name="SubWF")
+    inner.add_node(inner_agent)
+
+    outer = GraphWorkflow(name="Outer")
+    outer.add_node(inner)
+
+    result = outer.run("task")
+
+    assert "SubWF" in result
+    assert "inner-output" in result["SubWF"]
+
+
+def test_to_spec_embeds_subgraph_spec():
+    """to_spec encodes subgraph nodes with type='subgraph' and a nested spec."""
+    inner_agent = _mock_agent("IA")
+    inner = GraphWorkflow(name="Inner")
+    inner.add_node(inner_agent)
+    inner.compile()
+
+    outer = GraphWorkflow(name="Outer")
+    outer.add_node(inner)
+    outer.compile()
+
+    spec = outer.to_spec()
+
+    subgraph_node = next(
+        (n for n in spec["nodes"] if n.get("type") == "subgraph"),
+        None,
+    )
+    assert subgraph_node is not None, "No subgraph node found in spec"
+    assert subgraph_node["id"] == "Inner"
+    assert "spec" in subgraph_node
+    assert subgraph_node["spec"]["name"] == "Inner"
+
+
+def test_from_topology_spec_round_trip_with_subgraph():
+    """to_spec / from_topology_spec round-trip preserves nested subgraph topology."""
+    inner_agent = _mock_agent("IA")
+    inner = GraphWorkflow(name="InnerWF")
+    inner.add_node(inner_agent)
+    inner.compile()
+
+    outer_agent = _mock_agent("OA")
+    outer = GraphWorkflow(name="OuterWF")
+    outer.add_node(inner)
+    outer.add_node(outer_agent)
+    outer.add_edge("InnerWF", "OA")
+    outer.compile()
+
+    spec = outer.to_spec()
+    registry = {"IA": inner_agent, "OA": outer_agent}
+    rebuilt = GraphWorkflow.from_topology_spec(spec, registry)
+
+    assert "InnerWF" in rebuilt.nodes
+    assert rebuilt.nodes["InnerWF"].type == NodeType.SUBGRAPH
+    assert "OA" in rebuilt.nodes
+    assert len(rebuilt.edges) == 1
+
+
+def test_from_topology_spec_subgraph_missing_spec_key():
+    """from_topology_spec raises ValueError when a subgraph node has no 'spec' key."""
+    spec = {
+        "nodes": [
+            {"id": "Sub", "type": "subgraph"}
+        ],  # missing "spec"
+        "edges": [],
+    }
+    with pytest.raises(ValueError, match="spec"):
+        GraphWorkflow.from_topology_spec(spec, {})
+
+
+def test_subgraph_checkpoint_dir_inherits_from_parent(tmp_path):
+    """Checkpoints for the inner graph are written under parent_dir/node_id,
+    and inner.checkpoint_dir is restored to its original value after the run.
+    """
+    inner_agent = _mock_agent("IA", "inner-output")
+    inner = GraphWorkflow(name="SubCP")
+    inner.add_node(inner_agent)
+
+    cp_dir = str(tmp_path / "checkpoints")
+    outer = GraphWorkflow(name="Outer", checkpoint_dir=cp_dir)
+    outer.add_node(inner)
+    outer.compile()
+
+    original_inner_cp = inner.checkpoint_dir  # None before run
+    outer.run("task")
+
+    # checkpoint_dir is restored to original value after the run
+    assert inner.checkpoint_dir == original_inner_cp
+
+    # checkpoint files must have been written inside the namespaced sub-dir
+    nested_dir = tmp_path / "checkpoints" / "SubCP"
+    cp_files = (
+        list(nested_dir.glob("*.json")) if nested_dir.exists() else []
+    )
+    assert (
+        len(cp_files) > 0
+    ), f"No checkpoint files found under {nested_dir}"
+
+
+# ---------------------------------------------------------------------------
+# validate() / compile-time validation tests (real agents, real LLM)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_returns_dict_with_expected_keys():
+    """validate() always returns a dict with is_valid, errors, warnings, fixed."""
+    a = create_test_agent(
+        "Validator-A", "Answers questions concisely"
+    )
+    b = create_test_agent("Validator-B", "Summarises text")
+    wf = GraphWorkflow(name="V-Basic")
+    wf.add_node(a)
+    wf.add_node(b)
+    wf.add_edge("Validator-A", "Validator-B")
+
+    result = wf.validate()
+    assert isinstance(result, dict)
+    for key in ("is_valid", "errors", "warnings", "fixed"):
+        assert key in result
+
+
+def test_validate_clean_workflow_is_valid():
+    """A properly wired workflow reports is_valid=True with no errors."""
+    a = create_test_agent("Clean-A", "Answers questions concisely")
+    b = create_test_agent("Clean-B", "Summarises text")
+    wf = GraphWorkflow(name="V-Clean")
+    wf.add_node(a)
+    wf.add_node(b)
+    wf.add_edge("Clean-A", "Clean-B")
+    wf.compile()
+
+    result = wf.validate()
+    assert result["is_valid"] is True
+    assert result["errors"] == []
+
+
+def test_validate_detects_isolated_node():
+    """validate() warns about a node with no edges."""
+    a = create_test_agent("Isolated-A", "Answers questions concisely")
+    b = create_test_agent("Isolated-B", "Summarises text")
+    orphan = create_test_agent(
+        "Orphan-Node", "Orphaned agent with no edges"
+    )
+
+    wf = GraphWorkflow(name="V-Isolated")
+    wf.add_node(a)
+    wf.add_node(b)
+    wf.add_node(orphan)
+    wf.add_edge("Isolated-A", "Isolated-B")
+
+    result = wf.validate()
+    warning_text = " ".join(result["warnings"])
+    assert (
+        "Orphan-Node" in warning_text
+        or "isolated" in warning_text.lower()
+    )
+
+
+def test_validate_detects_unreachable_node():
+    """validate() warns about nodes unreachable from the explicit entry point."""
+    a = create_test_agent("Reach-A", "Answers questions concisely")
+    b = create_test_agent("Reach-B", "Summarises text")
+    c = create_test_agent("Reach-C", "Analyses data")
+    d = create_test_agent("Reach-D", "Unreachable side node")
+
+    wf = GraphWorkflow(name="V-Unreachable")
+    wf.add_node(a)
+    wf.add_node(b)
+    wf.add_node(c)
+    wf.add_node(d)
+    wf.add_edge("Reach-A", "Reach-B")
+    wf.add_edge("Reach-A", "Reach-C")
+    wf.add_edge(
+        "Reach-D", "Reach-B"
+    )  # D has edges but is unreachable from A
+    wf.set_entry_points(["Reach-A"])
+
+    result = wf.validate()
+    warning_text = " ".join(result["warnings"])
+    assert (
+        "Reach-D" in warning_text
+        or "unreachable" in warning_text.lower()
+    )
+
+
+def test_validate_raise_on_error_raises_for_invalid_workflow():
+    """validate(raise_on_error=True) raises ValueError for invalid workflows."""
+    wf = GraphWorkflow(name="V-RaiseErr")
+    wf.nodes["Ghost"] = Node(
+        id="Ghost", agent=None
+    )  # invalid — no agent
+
+    with pytest.raises(ValueError, match="validation failed"):
+        wf.validate(raise_on_error=True)
+
+
+def test_validate_raise_on_error_false_does_not_raise():
+    """validate(raise_on_error=False) returns dict even for invalid workflows."""
+    wf = GraphWorkflow(name="V-NoRaise")
+    wf.nodes["Ghost"] = Node(id="Ghost", agent=None)
+
+    result = wf.validate(raise_on_error=False)
+    assert isinstance(result, dict)
+    assert result["is_valid"] is False
+
+
+def test_compile_calls_validate_and_reports_errors():
+    """compile() surfaces validation errors: the validation result has non-empty errors."""
+    wf = GraphWorkflow(name="V-CompileCheck")
+    wf.nodes["Ghost"] = Node(id="Ghost", agent=None)
+
+    # compile() completes without raising, but validation errors are detectable
+    wf.compile()
+
+    result = wf.validate(raise_on_error=False)
+    assert not result["is_valid"]
+    assert len(result["errors"]) > 0
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

@@ -14,7 +14,7 @@
 | `utkusen/sast-skills` | up-to-date | `skill/security/sast-skills @ db52227eab1043bf122cbff7206fac6708b4d6c9` |
 | `mukul975/Anthropic-Cybersecurity-Skills` | up-to-date | `skill/security/anthropic-cybersecurity-skills @ 4c0b700ac5d280ba46695062077f0fe922ce3602` |
 | `dair-ai/Prompt-Engineering-Guide` | up-to-date | `skill/research/prompt-engineering-guide @ 57673726396dd94acb23bdb1e67f27c78ee85a8e` |
-| `ChromeDevTools/chrome-devtools-mcp` | up-to-date | `mcp/servers/chrome-devtools-mcp @ 5ddbffd0f364ecd073f4d42a56109950b1421a57` |
+| `ChromeDevTools/chrome-devtools-mcp` | updated | `mcp/servers/chrome-devtools-mcp @ 774d78f5eef5e610407a0c92fa6ec5ed74b027e8 (278 files, 5917919 bytes); excluded 5 files` |
 | `DeusData/codebase-memory-mcp` | up-to-date | `mcp/servers/codebase-memory-mcp @ ad010b1656aa39c48a34b180e3501b9205a27ffd` |
 | `mrexodia/ida-pro-mcp` | up-to-date | `mcp/servers/ida-pro-mcp @ 0b5f7ae4026d3c770b190ca93c0692d1b0ceab22` |
 | `0x4m4/hexstrike-ai` | up-to-date | `mcp/servers/hexstrike-ai @ d689933ff579d839c676c82b231f8e98326c5f04` |
@@ -30,18 +30,18 @@
 | `crewAIInc/crewAI` | up-to-date | `agent/frameworks/crewai @ 17f107c197e64ea486a1c985a36b3c4aecb20d28` |
 | `agno-agi/agno` | up-to-date | `agent/frameworks/agno @ d28d580499e4e5ecb01e6f131cbdc9949c31f2f2` |
 | `browser-use/browser-use` | up-to-date | `agent/workflows/browser-use @ 32601887cfbc9f4f1e3cad3e2b678e56aeaeaae4` |
-| `NousResearch/hermes-agent` | up-to-date | `agent/workflows/hermes-agent @ 56dc01d904d5826957208450e62a1634b5dc76a3` |
+| `NousResearch/hermes-agent` | updated | `agent/workflows/hermes-agent @ ad2c7af86a28075296a1888b16a8fc10f8dedd76 (2497 files, 26214399 bytes); excluded 6198 files` |
 | `aaif-goose/goose` | up-to-date | `agent/workflows/goose @ 1844d3fb4aed0ec7f2e3806829cb887981f15ead` |
 | `SWE-agent/SWE-agent` | up-to-date | `agent/workflows/swe-agent @ 3ea751c087f32b16e039a2233dd6eefecef325d5` |
 | `google-gemini/gemini-cli` | up-to-date | `agent/runtimes/gemini-cli @ cf22ac7e86f3dcf528e3ae591fec1c03090a49f8` |
 | `ComposioHQ/composio` | up-to-date | `agent/runtimes/composio @ 13cba53b1d1d88eb9f54b740735fcd33534e0eb5` |
 | `Aider-AI/aider` | up-to-date | `agent/runtimes/aider @ 5dc9490bb35f9729ef2c95d00a19ccd30c26339c` |
 | `code-yeongyu/oh-my-openagent` | up-to-date | `agent/runtimes/oh-my-openagent @ 8a49796f3f4ac7a8d902cbdbf2a83485b3ed2e82` |
-| `infiniflow/ragflow` | up-to-date | `knowledge/rag/ragflow @ a690078a2433b946ca98fc1fde6ec0ccb7af2a9f` |
+| `infiniflow/ragflow` | updated | `knowledge/rag/ragflow @ 4eaad55efe8b6ebbcf94b7916efac0eca137262e (2276 files, 26214394 bytes); excluded 3095 files` |
 | `run-llama/llama_index` | up-to-date | `knowledge/rag/llama-index @ 47b85c8ec229f725aa680ed3d613d2c02359480f` |
-| `deepset-ai/haystack` | up-to-date | `knowledge/rag/haystack @ 902fd98484138cd25940a9eec97d0018b8376e69` |
+| `deepset-ai/haystack` | updated | `knowledge/rag/haystack @ 80bb1486863391eb2d71194490b39e82c593ce09 (1950 files, 26214387 bytes); excluded 8094 files` |
 | `HKUDS/LightRAG` | up-to-date | `knowledge/rag/lightrag @ 419aaab3bd1aa13ab2c3a837b576e522e19e027f` |
 | `VectifyAI/PageIndex` | up-to-date | `knowledge/rag/pageindex @ d5c4e62c20172ce400aef84545dfba3a0580b9ae` |
-| `vllm-project/vllm` | updated | `knowledge/tools/vllm @ 70b84f0bcbb6d0a35b74b1035673a1c934089dbb (2799 files, 26214379 bytes); excluded 3635 files` |
-| `ggml-org/llama.cpp` | updated | `knowledge/tools/llama-cpp @ e23e9440eb0c625c30d6c40266e9335071a4debc (1653 files, 26214398 bytes); excluded 1722 files` |
-| `langfuse/langfuse` | up-to-date | `knowledge/evaluations/langfuse @ ac6020bb4f5e903a2dc3cf57c9eaf373a3e03e2a` |
+| `vllm-project/vllm` | updated | `knowledge/tools/vllm @ d89ba6481bd0cbe99e1c83ed169131682b366dbd (2801 files, 26214389 bytes); excluded 3633 files` |
+| `ggml-org/llama.cpp` | updated | `knowledge/tools/llama-cpp @ 7a20b417f4526cae073bd997af5020cea3e7ccbe (1652 files, 26214398 bytes); excluded 1723 files` |
+| `langfuse/langfuse` | updated | `knowledge/evaluations/langfuse @ e59a7411bcf8a333916db7f05a96448cbaa4e619 (3583 files, 26214400 bytes); excluded 1124 files` |

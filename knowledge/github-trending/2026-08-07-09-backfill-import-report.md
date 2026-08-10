@@ -4,14 +4,14 @@
 
 | 项目 | 状态 | 目录或原因 |
 | --- | --- | --- |
-| `OpenHands/OpenHands` | up-to-date | `agent/workflows/openhands-openhands @ 68de5c58872a6b32dc2a94cce6fd33a410de49ff` |
+| `OpenHands/OpenHands` | updated | `agent/workflows/openhands-openhands @ eb85ed456627d5644c2db94b77c4ebd5623f8b9f (1995 files, 11418158 bytes); excluded 14 files` |
 | `bytedance/deer-flow` | up-to-date | `agent/workflows/bytedance-deer-flow @ 17531d7c118d6111b863f945ff910a7889a235b0` |
-| `langgenius/dify` | up-to-date | `agent/workflows/langgenius-dify @ 64ebfe22354f347aaf51499ac305d3eea0abde73` |
+| `langgenius/dify` | updated | `agent/workflows/langgenius-dify @ 648806bc9c32eeb9e7f2307e067435f7de4e0840 (2930 files, 26214400 bytes); excluded 10512 files` |
 | `hiyouga/LlamaFactory` | up-to-date | `skill/research/hiyouga-llamafactory @ 0bbe481e6e621527284d37f1e13a6b9556c303ec` |
-| `unslothai/unsloth` | updated | `knowledge/tools/unslothai-unsloth @ 5a84766941702749d0dd4fec5dd64c19f4e76655 (1044 files, 26214369 bytes); excluded 2225 files` |
+| `unslothai/unsloth` | updated | `knowledge/tools/unslothai-unsloth @ 88c54835a74da0c7b219984f621d93e539bba5da (1031 files, 26214393 bytes); excluded 2260 files` |
 | `open-webui/open-webui` | up-to-date | `knowledge/products/open-webui-open-webui @ 01f4282f1ffe0d6212f58d3afbeae21fffd0c4be` |
 | `khoj-ai/khoj` | up-to-date | `agent/workflows/khoj-ai-khoj @ ae229ca894c0b80ad84664afcfdde523b5e87057` |
-| `coder/coder` | updated | `agent/runtimes/coder-coder @ 041494845460454a16f95f4da114e7d712b4efc2 (2818 files, 26214399 bytes); excluded 9423 files` |
+| `coder/coder` | updated | `agent/runtimes/coder-coder @ 19fdc23d63743c1a47bde33e6a0d2a9730fea231 (2818 files, 26214399 bytes); excluded 9423 files` |
 | `anthropics/skills` | up-to-date | `skill/development/anthropics-skills @ f17010c9bb483898c1d9c9f42dde2b3a98889434` |
 | `obra/superpowers` | up-to-date | `skill/development/obra-superpowers @ 44c9b2d6e889982ac18c27d05a19fefe335194e1` |
 | `github/github-mcp-server` | up-to-date | `mcp/servers/github-github-mcp-server @ eb4c099e05ef622445e930b18682a0464f22418f` |
