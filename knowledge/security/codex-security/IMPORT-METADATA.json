@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "repository": "openai/codex-security",
+  "source_url": "https://github.com/openai/codex-security",
+  "ref": "main",
+  "resolved_commit": "8c40d7a0061488fedcd7e24a825c332f82d45483",
+  "category": "knowledge",
+  "subcategory": "security",
+  "slug": "codex-security",
+  "license": null,
+  "source_date": null,
+  "imported_at": "2026-08-10T08:36:57+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 210,
+  "copied_bytes": 3255566,
+  "excluded_files": [
+    "sdk/typescript/_bundled_plugin/assets/logo.png: binary content",
+    "sdk/typescript/_bundled_plugin/mcp/server.mjs.br.part-000: binary content",
+    "sdk/typescript/_bundled_plugin/mcp/server.mjs.br.part-001: binary content"
+  ],
+  "execution": "never run by this importer"
+}
