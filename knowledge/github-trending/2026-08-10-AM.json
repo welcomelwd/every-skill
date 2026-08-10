@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "source_date": "2026-08-10",
+  "batch": "AM",
+  "source_markdown": "knowledge/github-trending/2026-08-10.md",
+  "projects": [
+    {
+      "repository": "trailofbits/skills",
+      "source_url": "https://github.com/trailofbits/skills",
+      "category": "skill",
+      "subcategory": "security",
+      "slug": "trailofbits-skills",
+      "license": "CC BY-SA 4.0",
+      "download": true
+    },
+    {
+      "repository": "tech-leads-club/agent-skills",
+      "source_url": "https://github.com/tech-leads-club/agent-skills",
+      "category": "skill",
+      "subcategory": "development",
+      "slug": "tech-leads-club-agent-skills",
+      "license": "MIT / CC BY 4.0 / third-party licenses",
+      "download": true
+    },
+    {
+      "repository": "mcpbeat/best-mcp-servers",
+      "source_url": "https://github.com/mcpbeat/best-mcp-servers",
+      "category": "mcp",
+      "subcategory": "resources",
+      "slug": "mcpbeat-best-mcp-servers",
+      "license": "CC BY 4.0",
+      "download": true
+    },
+    {
+      "repository": "apify/mcpc",
+      "source_url": "https://github.com/apify/mcpc",
+      "category": "mcp",
+      "subcategory": "clients",
+      "slug": "apify-mcpc",
+      "license": "Apache-2.0",
+      "download": true
+    },
+    {
+      "repository": "msitarzewski/agency-agents",
+      "source_url": "https://github.com/msitarzewski/agency-agents",
+      "category": "agent",
+      "subcategory": "roles",
+      "slug": "msitarzewski-agency-agents",
+      "license": "MIT",
+      "download": true
+    },
+    {
+      "repository": "harveyai/harvey-labs",
+      "source_url": "https://github.com/harveyai/harvey-labs",
+      "category": "agent",
+      "subcategory": "evaluations",
+      "slug": "harveyai-harvey-labs",
+      "license": "MIT",
+      "download": true
+    },
+    {
+      "repository": "NVIDIA/SkillSpector",
+      "source_url": "https://github.com/NVIDIA/SkillSpector",
+      "category": "knowledge",
+      "subcategory": "tools",
+      "slug": "nvidia-skillspector",
+      "license": "Apache-2.0",
+      "download": true
+    },
+    {
+      "repository": "vitali87/code-graph-rag",
+      "source_url": "https://github.com/vitali87/code-graph-rag",
+      "category": "knowledge",
+      "subcategory": "tools",
+      "slug": "vitali87-code-graph-rag",
+      "license": "MIT",
+      "download": true
+    }
+  ]
+}
