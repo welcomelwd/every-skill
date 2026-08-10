@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "source_date": "2026-08-11",
+  "batch": "AM",
+  "source_markdown": "knowledge/github-trending/2026-08-11.md",
+  "projects": [
+    {
+      "repository": "OthmanAdi/planning-with-files",
+      "source_url": "https://github.com/OthmanAdi/planning-with-files",
+      "category": "skill",
+      "subcategory": "development",
+      "slug": "planning-with-files",
+      "license": "MIT",
+      "download": true,
+      "ref": "master",
+      "commit": "e8f505a4f5025df5b070494e46c25789582bff55"
+    },
+    {
+      "repository": "Anselmoo/mcp-ai-agent-guidelines",
+      "source_url": "https://github.com/Anselmoo/mcp-ai-agent-guidelines",
+      "category": "mcp",
+      "subcategory": "servers",
+      "slug": "mcp-ai-agent-guidelines",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "68a70d9c57fc5a3dee029e478ef145c2c213c35b"
+    },
+    {
+      "repository": "paperclipai/paperclip",
+      "source_url": "https://github.com/paperclipai/paperclip",
+      "category": "agent",
+      "subcategory": "runtimes",
+      "slug": "paperclip",
+      "license": "MIT",
+      "download": true,
+      "ref": "master",
+      "commit": "5a0985f80a6286c14c5bad3dec545b7aa0c96b3b"
+    },
+    {
+      "repository": "danielmiessler/LifeOS",
+      "source_url": "https://github.com/danielmiessler/LifeOS",
+      "category": "agent",
+      "subcategory": "workflows",
+      "slug": "lifeos",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "58381b3df66252d7cc0cddf8b0d4e735fac35109"
+    },
+    {
+      "repository": "semantica-agi/semantica",
+      "source_url": "https://github.com/semantica-agi/semantica",
+      "category": "knowledge",
+      "subcategory": "tools",
+      "slug": "semantica",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "6f310d1d7acf11013dc7e68d4e68823eb96cec4d"
+    },
+    {
+      "repository": "GoPlusSecurity/agentguard",
+      "source_url": "https://github.com/GoPlusSecurity/agentguard",
+      "category": "knowledge",
+      "subcategory": "security",
+      "slug": "agentguard",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "d18e142a88fe708a6bc7ba7acccf65bf0d858c0c"
+    }
+  ]
+}
