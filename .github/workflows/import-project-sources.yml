@@ -1,0 +1,59 @@
+name: Import GitHub project sources
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "knowledge/github-trending/*.json"
+      - "scripts/import_github_projects.py"
+      - ".github/workflows/import-project-sources.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: import-project-sources-main
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Import bounded source snapshots
+        id: import
+        continue-on-error: true
+        run: python scripts/import_github_projects.py
+
+      - name: Commit imported sources and reports
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add skill mcp agent knowledge/github-trending/*-import-report.md
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "chore: import GitHub project sources"
+          for attempt in 1 2 3; do
+            if git pull --rebase origin main && git push origin HEAD:main; then
+              exit 0
+            fi
+            git rebase --abort || true
+            sleep 5
+          done
+          exit 1
+
+      - name: Preserve import failure status
+        if: steps.import.outcome == 'failure'
+        run: exit 1
