@@ -40,10 +40,10 @@ data:
 
 *   **Case 1: No historical metrics data available (e.g., brand new agent) or no
     monitoring namespaces found**: You MUST read and follow:
-    [no_historical_traffic_data.md](references/no_historical_traffic_data.md)
+    [no_historical_traffic_data.md](no_historical_traffic_data.md)
 *   **Case 2: Historical metrics data available (e.g., active agent with
     traffic)**: You MUST read and follow:
-    [has_historical_traffic_data.md](references/has_historical_traffic_data.md)
+    [has_historical_traffic_data.md](has_historical_traffic_data.md)
 
 ## Critical Rules
 
@@ -52,7 +52,7 @@ data:
     they expect (Steady, Seasonal, or Bursty) in your response. If immediate
     setup is requested, ask the question but proceed using the default
     Steady/Consistent (Short-Window Z-Score) pattern. Follow
-    [no_historical_traffic_data.md](references/no_historical_traffic_data.md).
+    [no_historical_traffic_data.md](no_historical_traffic_data.md).
 *   **Alert policy configuration**: You MUST configure exactly the following
     Cost alerting policies. See the `Telemetry Metrics` to get the required
     metrics and read the descriptions for each signal:

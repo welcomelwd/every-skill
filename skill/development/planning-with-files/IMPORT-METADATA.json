@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "repository": "OthmanAdi/planning-with-files",
+  "source_url": "https://github.com/OthmanAdi/planning-with-files",
+  "ref": "master",
+  "resolved_commit": "e8f505a4f5025df5b070494e46c25789582bff55",
+  "category": "skill",
+  "subcategory": "development",
+  "slug": "planning-with-files",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-10T23:07:17+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 602,
+  "copied_bytes": 4494759,
+  "excluded_files": [
+    "media/banner.png: binary content",
+    "media/social-preview.png: binary content",
+    "media/v3-banner-1400.jpg: binary, archive, media, or generated artifact",
+    "media/v3-banner.png: file exceeds 2097152 bytes"
+  ],
+  "execution": "never run by this importer"
+}

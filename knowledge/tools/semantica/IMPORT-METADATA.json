@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "repository": "semantica-agi/semantica",
+  "source_url": "https://github.com/semantica-agi/semantica",
+  "ref": "main",
+  "resolved_commit": "6f310d1d7acf11013dc7e68d4e68823eb96cec4d",
+  "category": "knowledge",
+  "subcategory": "tools",
+  "slug": "semantica",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-10T23:07:17+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 996,
+  "copied_bytes": 14379274,
+  "excluded_files": [
+    ".gitignore: binary content",
+    "Semantica Logo.png: binary content",
+    "docs/assets/img/semantica-cli-demo.gif: binary content",
+    "docs/assets/img/semantica-knowledge-explorer-demo.gif: file exceeds 2097152 bytes",
+    "docs/assets/img/semantica-logo.png: binary content",
+    "explorer/src/assets/hero.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

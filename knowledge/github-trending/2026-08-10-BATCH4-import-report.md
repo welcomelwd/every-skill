@@ -5,11 +5,11 @@
 | 项目 | 状态 | 目录或原因 |
 | --- | --- | --- |
 | `microsoft/markitdown` | up-to-date | `knowledge/tools/markitdown @ fd239d5d2be43d9b68329730206b9312c7d5a388` |
-| `ollama/ollama` | up-to-date | `knowledge/tools/ollama @ acdf81510d58d993de6175f8565b504d9777940a` |
-| `huggingface/transformers` | updated | `knowledge/tools/transformers @ fe95f5423d65951cf63055d519dd7fa5ae12eb8d (2713 files, 26214387 bytes); excluded 3652 files` |
-| `BerriAI/litellm` | up-to-date | `knowledge/tools/litellm @ f6b9518ddbb1e91542ae406f230500adcf58c8e4` |
-| `promptfoo/promptfoo` | up-to-date | `knowledge/evaluations/promptfoo @ 49c0f6d77496c022c6d32e362522993bb0d72d42` |
-| `Arize-ai/phoenix` | up-to-date | `knowledge/evaluations/phoenix @ b4d9b19e6c681cedcf627fc27dc48f13c7320b73` |
+| `ollama/ollama` | updated | `knowledge/tools/ollama @ 4f066a6fb0c05d7dcf68e02858a5ddd399af716a (1177 files, 12041932 bytes); excluded 73 files` |
+| `huggingface/transformers` | updated | `knowledge/tools/transformers @ c7e57f79348480f73d3ef0ad8c47f807ef1378c8 (2716 files, 26214400 bytes); excluded 3660 files` |
+| `BerriAI/litellm` | updated | `knowledge/tools/litellm @ 20354bfcdcdd0130d257c844c4368d37a4be8990 (1794 files, 26214395 bytes); excluded 7408 files` |
+| `promptfoo/promptfoo` | updated | `knowledge/evaluations/promptfoo @ 00f6c3868d98ed8de649b0ad06eb71bf0d0b35a2 (3019 files, 26214397 bytes); excluded 2453 files` |
+| `Arize-ai/phoenix` | updated | `knowledge/evaluations/phoenix @ 75de295360b2eb483e94a318d938ec1c395ccb18 (4407 files, 26214400 bytes); excluded 2671 files` |
 | `Giskard-AI/giskard-oss` | up-to-date | `knowledge/evaluations/giskard-oss @ 62b07bbc703e0774c38e5737a6d128b52ecc2be1` |
-| `openai/codex-security` | up-to-date | `knowledge/security/codex-security @ 8c40d7a0061488fedcd7e24a825c332f82d45483` |
-| `NationalSecurityAgency/ghidra` | updated | `knowledge/reverse-engineering/ghidra @ 5988acbdf56b5bab2c37657a07e70f2bf9be4834 (2638 files, 26214400 bytes); excluded 17722 files` |
+| `openai/codex-security` | updated | `knowledge/security/codex-security @ b0d4fec532c957772c5af79738a173100f63933f (214 files, 3246585 bytes); excluded 3 files` |
+| `NationalSecurityAgency/ghidra` | updated | `knowledge/reverse-engineering/ghidra @ 2a81006bf6554f7e5986fcf5fe6eec8c013194bf (2637 files, 26214400 bytes); excluded 17724 files` |

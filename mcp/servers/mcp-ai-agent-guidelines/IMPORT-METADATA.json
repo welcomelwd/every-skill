@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "repository": "Anselmoo/mcp-ai-agent-guidelines",
+  "source_url": "https://github.com/Anselmoo/mcp-ai-agent-guidelines",
+  "ref": "main",
+  "resolved_commit": "68a70d9c57fc5a3dee029e478ef145c2c213c35b",
+  "category": "mcp",
+  "subcategory": "servers",
+  "slug": "mcp-ai-agent-guidelines",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-10T23:07:17+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 860,
+  "copied_bytes": 8114609,
+  "excluded_files": [],
+  "execution": "never run by this importer"
+}

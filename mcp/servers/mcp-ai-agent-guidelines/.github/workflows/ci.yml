@@ -1,0 +1,265 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: true
+  NODE_VERSION: "22"
+
+jobs:
+  # ── 0. Lint & code quality — Lefthook pre-commit hooks ──────────────────────
+  lint:
+    name: Lint & Code Quality (Lefthook)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Lefthook (biome-check)
+        run: npx lefthook run pre-commit --command biome-check --no-tty
+
+  # ── 1a. Audit — dependency & secret scan ─────────────────────────────────────
+  audit:
+    name: Audit (npm · Gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: lint
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # Gitleaks needs full history for PR diff scans
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Dependency audit
+        run: npm audit --production --audit-level=high
+
+      - name: Secret scan (Gitleaks)
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── 1b. Policy — branch · commit · changelog ─────────────────────────────────
+  policy:
+    name: Policy (branch · commit · changelog)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: lint
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Policy checks
+        uses: Anselmoo/repo-release-tools@df495573af273f213078d9837515681fcc3e0304 # v1.14.1
+        with:
+          check-dirty-tree: "false"
+          changelog-strategy: "unreleased"
+
+  # ── 1c. Type-check ────────────────────────────────────────────────────────────
+  typecheck:
+    name: Type-check (tsc)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: lint
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+  # ── 1d. Checks — matrix · python tests · workflow-docs · biome · dep-audit ───
+  checks:
+    name: Checks (matrix · python · biome · dep-audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: lint
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Quality checks (matrix · python tests · workflow-docs · biome · dep-audit)
+        run: npm run quality
+
+  # ── 1e. Docs build — validates Astro/Starlight on every PR ───────────────────
+  docs-build:
+    name: Docs build (Astro/Starlight)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: lint
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript (required for skill-docs generator)
+        run: npm run build
+
+      - name: Generate skill reference docs
+        run: npm run generate:skill-docs
+
+      - name: Build Astro / Starlight site
+        run: npm run docs:build
+
+  # ── 2. Test matrix ────────────────────────────────────────────────────────────
+  test:
+    name: Test (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [audit, policy, typecheck, checks]
+    permissions:
+      contents: read
+      id-token: write  # Codecov OIDC
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["22", "24", "latest"]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2  # helps Codecov infer base commit
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Bootstrap orchestration config for CI
+        run: |
+          mkdir -p .mcp-ai-agent-guidelines/config
+          cp src/tests/fixtures/orchestration.toml .mcp-ai-agent-guidelines/config/orchestration.toml
+
+      - name: Run tests with coverage
+        run: npx vitest run --coverage
+
+      - name: Upload coverage to Codecov
+        if: matrix.node-version == '22'
+        uses: codecov/codecov-action@v6
+        with:
+          use_oidc: true
+          files: coverage/lcov.info
+          flags: unittests
+          slug: Anselmoo/mcp-ai-agent-guidelines
+          fail_ci_if_error: false
+
+  # ── 3. Security scan (filesystem) ────────────────────────────────────────────
+  security:
+    name: Security scan (Trivy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [audit, policy, typecheck, checks]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Scan filesystem for vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          scanners: vuln
+
+  # ── 4. Drift check ───────────────────────────────────────────────────────────
+  drift:
+    name: Generated-file drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [test, security]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Regenerate TypeScript tool definitions
+        run: python3 scripts/generate-tool-definitions.py
+
+      - name: Check generated TypeScript drift (src/generated/)
+        run: git diff --exit-code src/generated/
+
+      - name: Regenerate skill graph
+        run: python3 scripts/visualize_skill_graph.py
+
+      - name: Check skill graph drift (docs/architecture/03-skill-graph.md)
+        run: git diff --exit-code docs/architecture/03-skill-graph.md

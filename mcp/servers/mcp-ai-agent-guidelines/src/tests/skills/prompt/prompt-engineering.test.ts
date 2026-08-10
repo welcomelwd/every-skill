@@ -1,0 +1,183 @@
+import { describe, expect, it } from "vitest";
+import { skillModule } from "../../../skills/prompt/prompt-engineering.js";
+import {
+	createMockSkillRuntime,
+	expectEmptyRequestHandling,
+	expectSkillGuidance,
+	expectSkillModuleContract,
+} from "../test-helpers.js";
+
+describe("prompt-engineering", () => {
+	it("exports a manifest-backed capability module", async () => {
+		await expectSkillModuleContract(skillModule);
+	});
+
+	it("returns a prompt template, comparison matrix, and versioning guidance", async () => {
+		const result = await expectSkillGuidance(
+			skillModule,
+			{
+				request:
+					"Build a reusable system prompt with JSON output fields, few-shot examples, and strict safety guardrails",
+				deliverable: "versioned support-assistant system prompt",
+				successCriteria:
+					"outputs valid JSON and refuses unsupported account actions",
+				options: {
+					promptType: "system",
+					includeVersioning: true,
+					includeVariables: true,
+				},
+			},
+			{
+				summaryIncludes: ["Prompt Engineering produced"],
+				detailIncludes: [
+					"output contract",
+					"version header",
+					"typed variables",
+				],
+			},
+		);
+
+		expect(result.artifacts?.map((artifact) => artifact.kind)).toEqual([
+			"comparison-matrix",
+			"output-template",
+			"worked-example",
+			"tool-chain",
+			"eval-criteria",
+			"comparison-matrix",
+		]);
+		expect(result.artifacts?.[1]).toMatchObject({
+			kind: "output-template",
+			title: "system prompt template",
+		});
+	});
+
+	it("names a selected technique for a tool-use request", async () => {
+		const result = await expectSkillGuidance(
+			skillModule,
+			{
+				request:
+					"prompt for an agent that calls a tool then observes the result",
+			},
+			{ detailIncludes: ["Selected technique"] },
+		);
+		expect(
+			result.artifacts?.some(
+				(a) =>
+					a.kind === "comparison-matrix" && a.title === "Technique selection",
+			),
+		).toBe(true);
+	});
+
+	it("emits a worked-example artifact for a first-class (react) technique selection", async () => {
+		const result = await expectSkillGuidance(
+			skillModule,
+			{
+				request:
+					"Build a prompt for an agent that calls an API tool then observes the result before acting again",
+			},
+			{ detailIncludes: ["Selected technique"] },
+		);
+
+		const workedExamples = result.artifacts?.filter(
+			(a) => a.kind === "worked-example",
+		);
+		// Exactly two: the built-in prompt template example + the react technique card
+		expect(workedExamples?.length).toBe(2);
+
+		const techniqueCard = result.artifacts?.find(
+			(a) => a.kind === "worked-example" && a.title === "react worked example",
+		);
+		expect(techniqueCard).toBeDefined();
+		expect(techniqueCard).toMatchObject({
+			kind: "worked-example",
+			title: "react worked example",
+		});
+	});
+
+	it("lists same-category supplementary techniques in the selection matrix", async () => {
+		// "sample … majority … vote" → self-consistency (primary); "reason step by
+		// step" → cot (supplementary, same reasoning category).
+		const result = await expectSkillGuidance(
+			skillModule,
+			{
+				request:
+					"reason step by step, then sample multiple answers and take the majority vote",
+			},
+			{ detailIncludes: ["Selected technique"] },
+		);
+		const matrix = result.artifacts?.find(
+			(a) =>
+				a.kind === "comparison-matrix" && a.title === "Technique selection",
+		);
+		expect(matrix).toBeDefined();
+		const supplementaryRows =
+			matrix?.kind === "comparison-matrix"
+				? matrix.rows.filter((row) => row.label === "supplementary")
+				: [];
+		expect(supplementaryRows.length).toBeGreaterThanOrEqual(1);
+	});
+
+	it("returns structured guidance for an empty request", async () => {
+		await expectEmptyRequestHandling(skillModule);
+	});
+
+	it("returns insufficient-signal guidance for a non-empty request with no keywords, context, or deliverable", async () => {
+		// "the it is" passes schema validation (non-empty) but every token is a
+		// stop word, so extractRequestSignals().keywords is empty; combined with
+		// no context/deliverable this hits the in-handler insufficient-signal
+		// branch (distinct from the schema-level empty-string rejection).
+		const result = await skillModule.run(
+			{ request: "the it is" },
+			createMockSkillRuntime(),
+		);
+		expect(result.recommendations[0]).toMatchObject({
+			title: "Provide more detail",
+		});
+	});
+
+	it("proceeds past the signal check when a keyword-less request still carries context", async () => {
+		// Same all-stop-word request, but hasContext is true, so the combined
+		// `keywords.length === 0 && !hasContext && !hasDeliverable` guard is
+		// false and the handler produces full guidance instead of bailing out.
+		const result = await expectSkillGuidance(
+			skillModule,
+			{
+				request: "the it is",
+				context: "the it is also background",
+			},
+			{ summaryIncludes: ["Prompt Engineering produced"] },
+		);
+		expect(result.summary).not.toContain("Provide more detail");
+	});
+
+	it("falls back to 'the requested task' label and uses singular/omitted phrasing when nothing else applies", async () => {
+		// Request has real keywords (so it clears the insufficient-signal gate)
+		// but matches none of the PROMPT_ENGINEERING_RULES, and every optional
+		// signal (context, deliverable, successCriteria, constraints, technique
+		// selection) is absent, with variables/versioning both disabled. This
+		// exercises: the summarizeKeywords() `||` fallback, the includeVersioning
+		// false branches (template placeholder + summary "omitted"), the
+		// includeVariables "omitted" branch, and the singular "guardrail" suffix.
+		const result = await expectSkillGuidance(
+			skillModule,
+			{
+				request: "Summarize quarterly sales results for the leadership team",
+				options: { includeVariables: false, includeVersioning: false },
+			},
+			{
+				summaryIncludes: [
+					"Prompt Engineering produced 1 asset-design guardrail",
+					"variables: omitted",
+					"versioning: omitted",
+				],
+			},
+		);
+		const template = result.artifacts?.find(
+			(artifact) => artifact.kind === "output-template",
+		);
+		expect(template).toMatchObject({
+			kind: "output-template",
+			template: expect.stringContaining("version: <set-version>"),
+		});
+	});
+});

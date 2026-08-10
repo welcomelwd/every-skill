@@ -1,0 +1,28 @@
+{
+	"$schema": "https://docs.renovatebot.com/renovate-schema.json",
+	"extends": ["config:recommended", ":dependencyDashboard"],
+	"schedule": ["every weekend"],
+	"packageRules": [
+		{
+			"groupName": "non-major dependencies",
+			"matchUpdateTypes": ["minor", "patch"],
+			"matchCurrentVersion": "!/^0/",
+			"automerge": true
+		},
+		{
+			"groupName": "dev dependencies",
+			"matchDepTypes": ["devDependencies"],
+			"automerge": true
+		},
+		{
+			"groupName": "non-major dependencies",
+			"matchManagers": ["dockerfile", "github-actions"],
+			"matchUpdateTypes": ["minor", "patch"],
+			"automerge": true
+		}
+	],
+	"vulnerabilityAlerts": {
+		"enabled": true,
+		"labels": ["security"]
+	}
+}

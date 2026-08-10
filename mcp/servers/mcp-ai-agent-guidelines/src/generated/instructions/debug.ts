@@ -1,0 +1,115 @@
+// AUTO-GENERATED — do not edit manually.
+
+import type { InstructionManifestEntry } from "../../contracts/generated.js";
+import { createInstructionModule } from "../../instructions/create-instruction-module.js";
+
+export const instructionManifest: InstructionManifestEntry = {
+	id: "debug",
+	toolName: "issue-debug",
+	aliases: [],
+	displayName: "Debug: Diagnose and Fix Problems",
+	description:
+		"Use when something is broken, producing wrong output, crashing, behaving unexpectedly, or when you need to trace a failure to its root cause. Do NOT use for adding new functionality (use feature-implement) or for broad code-quality improvement (use code-refactor). Triggers: 'something is broken', 'this is failing', 'why does this crash', 'unexpected output', 'trace this error', 'find the bug'.",
+	sourcePath: "src/instructions/instruction-specs.ts#debug",
+	mission:
+		"Diagnose and fix problems: reproduce → locate → understand → fix → prevent recurrence.",
+	inputSchema: {
+		type: "object",
+		properties: {
+			request: {
+				type: "string",
+				description: "Primary task request for this workflow.",
+			},
+			context: {
+				type: "string",
+				description: "Relevant background context for the workflow.",
+			},
+			failureMode: {
+				type: "string",
+				description: "Observed failure or incorrect behavior.",
+			},
+			reproduction: {
+				type: "string",
+				description: "Reproduction details or minimal failing case.",
+			},
+		},
+		required: ["request"],
+	},
+	workflow: {
+		instructionId: "debug",
+		steps: [
+			{
+				kind: "invokeSkill",
+				label: "REPRODUCE",
+				skillId: "debug-reproduction",
+			},
+			{
+				kind: "invokeSkill",
+				label: "LOCATE",
+				skillId: "debug-assistant",
+			},
+			{
+				kind: "invokeSkill",
+				label: "ROOT CAUSE",
+				skillId: "debug-root-cause",
+			},
+			{
+				kind: "parallel",
+				label: "MEASURE",
+				steps: [
+					{
+						kind: "invokeSkill",
+						label: "qual-code-analysis",
+						skillId: "qual-code-analysis",
+					},
+					{
+						kind: "invokeSkill",
+						label: "qual-performance",
+						skillId: "qual-performance",
+					},
+					{
+						kind: "invokeSkill",
+						label: "eval-output-grading",
+						skillId: "eval-output-grading",
+					},
+					{
+						kind: "invokeSkill",
+						label: "eval-variance",
+						skillId: "eval-variance",
+					},
+				],
+			},
+			{
+				kind: "invokeInstruction",
+				label: "FIX",
+				instructionId: "implement",
+			},
+			{
+				kind: "invokeSkill",
+				label: "POSTMORTEM",
+				skillId: "debug-postmortem",
+			},
+			{
+				kind: "invokeSkill",
+				label: "PREVENT",
+				skillId: "debug-root-cause",
+			},
+			{
+				kind: "invokeSkill",
+				label: "MODE SWITCH",
+				skillId: "flow-mode-switching",
+			},
+			{
+				kind: "finalize",
+				label: "Finalize",
+			},
+		],
+	},
+	chainTo: ["test-verify", "code-refactor", "policy-govern"],
+	preferredModelClass: "cheap",
+	autoChainOnCompletion: false,
+	requiredPreconditions: [],
+	reactivationPolicy: "once",
+};
+
+export const instructionModule = createInstructionModule(instructionManifest);

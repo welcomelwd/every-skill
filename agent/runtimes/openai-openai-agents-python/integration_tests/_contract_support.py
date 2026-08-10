@@ -15,6 +15,8 @@ from pathlib import Path
 from types import FunctionType, TracebackType
 from typing import Any, cast
 
+from pydantic import BaseModel
+
 
 @dataclasses.dataclass(frozen=True)
 class OptionalDependencyInstallation:
@@ -31,6 +33,8 @@ class OptionalDependencyInstallation:
 class SubmoduleExportPolicy:
     modules: dict[str, dict[str, dict[str, str]]]
     dependency_installations: tuple[OptionalDependencyInstallation, ...]
+    canonical_imports: tuple[dict[str, str], ...] = ()
+    public_properties: tuple[dict[str, Any], ...] = ()
 
 
 def load_api_contract(path: Path) -> dict[str, Any]:
@@ -43,7 +47,9 @@ def load_submodule_export_policy(path: Path) -> SubmoduleExportPolicy:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise ValueError("submodule export policy must be an object")
-    unknown_top_level_fields = sorted(set(value) - {"modules", "optional_dependencies"})
+    unknown_top_level_fields = sorted(
+        set(value) - {"canonical_imports", "modules", "optional_dependencies", "public_properties"}
+    )
     if unknown_top_level_fields:
         raise ValueError(
             f"submodule export policy has unknown fields: {unknown_top_level_fields!r}"
@@ -147,7 +153,80 @@ def load_submodule_export_policy(path: Path) -> SubmoduleExportPolicy:
                 dependency_installations, key=lambda installation: installation.dependency_module
             )
         ),
+        canonical_imports=_canonical_import_policy(value.get("canonical_imports", [])),
+        public_properties=_public_property_policy(value.get("public_properties", [])),
     )
+
+
+def _canonical_import_policy(value: object) -> tuple[dict[str, str], ...]:
+    if not isinstance(value, list):
+        raise ValueError("submodule export policy canonical_imports must be a list")
+    required_fields = {"canonical_module", "canonical_name", "module", "name"}
+    entries: list[dict[str, str]] = []
+    identities: set[tuple[str, str]] = set()
+    for entry in value:
+        if not isinstance(entry, dict) or set(entry) != required_fields:
+            raise ValueError(
+                "submodule export policy canonical_imports entries must contain exactly "
+                "canonical_module, canonical_name, module, and name"
+            )
+        if not all(type(entry[field]) is str and entry[field] for field in required_fields):
+            raise ValueError(
+                "submodule export policy canonical_imports values must be non-empty strings"
+            )
+        identity = (entry["module"], entry["name"])
+        if identity in identities:
+            raise ValueError(
+                "submodule export policy canonical_imports must not repeat "
+                f"{entry['module']}.{entry['name']}"
+            )
+        identities.add(identity)
+        entries.append({field: entry[field] for field in sorted(required_fields)})
+    return tuple(entries)
+
+
+def _public_property_policy(value: object) -> tuple[dict[str, Any], ...]:
+    if not isinstance(value, list):
+        raise ValueError("submodule export policy public_properties must be a list")
+    required_fields = {"class_name", "module", "names"}
+    entries: list[dict[str, Any]] = []
+    identities: set[tuple[str, str]] = set()
+    for entry in value:
+        if not isinstance(entry, dict) or set(entry) != required_fields:
+            raise ValueError(
+                "submodule export policy public_properties entries must contain exactly "
+                "class_name, module, and names"
+            )
+        module_name = entry["module"]
+        class_name = entry["class_name"]
+        names = entry["names"]
+        if type(module_name) is not str or not module_name:
+            raise ValueError(
+                "submodule export policy public_properties module must be a non-empty string"
+            )
+        if type(class_name) is not str or not class_name:
+            raise ValueError(
+                "submodule export policy public_properties class_name must be a non-empty string"
+            )
+        if (
+            not isinstance(names, list)
+            or not names
+            or not all(type(name) is str and name for name in names)
+            or len(names) != len(set(names))
+        ):
+            raise ValueError(
+                "submodule export policy public_properties names must be a non-empty list of "
+                "unique non-empty strings"
+            )
+        identity = (module_name, class_name)
+        if identity in identities:
+            raise ValueError(
+                "submodule export policy public_properties must not repeat "
+                f"{module_name}.{class_name}"
+            )
+        identities.add(identity)
+        entries.append({"class_name": class_name, "module": module_name, "names": list(names)})
+    return tuple(entries)
 
 
 def _add_legacy_literal_types(value: object) -> None:
@@ -357,12 +436,42 @@ def _dataclass_field_contract(value: object) -> list[dict[str, object]]:
     return result
 
 
+def _pydantic_model_field_contract(value: object) -> list[dict[str, object]] | None:
+    if not (isinstance(value, type) and issubclass(value, BaseModel)):
+        return None
+    result: list[dict[str, object]] = []
+    for name, field in value.model_fields.items():
+        if name.startswith("_"):
+            continue
+        if field.is_required():
+            default_contract: dict[str, object] = {"kind": "required"}
+        elif field.default_factory is not None:
+            factory = field.default_factory
+            default_contract = {
+                "kind": "factory",
+                "factory": f"{factory.__module__}.{factory.__qualname__}",
+            }
+        else:
+            default_contract = _default_contract(field.default)
+        result.append({"name": name, "default": default_contract})
+    return result
+
+
 def _callable_kind(value: Callable[..., Any]) -> str | None:
     if issubclass(type(value), type):
         return "class"
     if type(value) is FunctionType:
         return "function"
     return None
+
+
+def _is_sdk_owned_callable(value: object) -> bool:
+    module_name = getattr(value, "__module__", None)
+    return (
+        _callable_kind(cast(Callable[..., Any], value)) is not None
+        and isinstance(module_name, str)
+        and (module_name == "agents" or module_name.startswith("agents."))
+    )
 
 
 def _enum_member_contract(value: object) -> list[dict[str, object]] | None:
@@ -497,6 +606,9 @@ def _callable_contract(value: Callable[..., Any]) -> dict[str, Any]:
     }
     if kind == "function":
         contract["execution_kind"] = _function_execution_kind(value)
+    model_fields = _pydantic_model_field_contract(value)
+    if model_fields is not None:
+        contract["model_fields"] = model_fields
     enum_members = _enum_member_contract(value)
     if enum_members is not None:
         contract["enum_members"] = enum_members
@@ -505,13 +617,143 @@ def _callable_contract(value: Callable[..., Any]) -> dict[str, Any]:
     return contract
 
 
+def _merge_canonical_imports(
+    existing: Iterable[Mapping[str, str]], promoted: Iterable[Mapping[str, str]]
+) -> list[dict[str, str]]:
+    result = [dict(entry) for entry in existing]
+    by_identity = {(entry["module"], entry["name"]): entry for entry in result}
+    for entry_value in promoted:
+        entry = dict(entry_value)
+        identity = (entry["module"], entry["name"])
+        previous = by_identity.get(identity)
+        if previous is not None:
+            if previous != entry:
+                raise ValueError(
+                    "release policy canonical import conflicts with the released contract for "
+                    f"{entry['module']}.{entry['name']}"
+                )
+            continue
+        result.append(entry)
+        by_identity[identity] = entry
+    return result
+
+
+def _merge_public_properties(
+    existing: Iterable[Mapping[str, Any]], promoted: Iterable[Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    result = [deepcopy(dict(entry)) for entry in existing]
+    by_identity = {(entry["module"], entry["class_name"]): entry for entry in result}
+    for entry_value in promoted:
+        entry = deepcopy(dict(entry_value))
+        identity = (entry["module"], entry["class_name"])
+        previous = by_identity.get(identity)
+        if previous is None:
+            result.append(entry)
+            by_identity[identity] = entry
+            continue
+        previous_names = previous["names"]
+        for name in entry["names"]:
+            if name not in previous_names:
+                previous_names.append(name)
+    return result
+
+
+def _optional_dependency_unsupported_platforms(
+    contract: Mapping[str, Any],
+) -> dict[str, tuple[str, ...]]:
+    value = contract.get("optional_dependency_unsupported_platforms", {})
+    if not isinstance(value, dict):
+        raise ValueError("optional_dependency_unsupported_platforms must be an object")
+    result: dict[str, tuple[str, ...]] = {}
+    for dependency_module, platforms in value.items():
+        if type(dependency_module) is not str or not dependency_module:
+            raise ValueError(
+                "optional_dependency_unsupported_platforms keys must be non-empty strings"
+            )
+        if (
+            not isinstance(platforms, list)
+            or not all(type(platform) is str and platform for platform in platforms)
+            or len(platforms) != len(set(platforms))
+        ):
+            raise ValueError(
+                "optional_dependency_unsupported_platforms values must be lists of unique "
+                "non-empty strings"
+            )
+        result[dependency_module] = tuple(platforms)
+    return result
+
+
+def _optional_dependency_is_available_for_contract(
+    dependency_module: str,
+    unsupported_platforms: Mapping[str, tuple[str, ...]],
+) -> bool:
+    return not _optional_dependency_is_unsupported_for_contract(
+        dependency_module, unsupported_platforms
+    ) and _optional_dependency_is_available(dependency_module)
+
+
+def _optional_dependency_is_unsupported_for_contract(
+    dependency_module: str,
+    unsupported_platforms: Mapping[str, tuple[str, ...]],
+) -> bool:
+    return sys.platform in unsupported_platforms.get(dependency_module, ())
+
+
+def _optional_dependency_for_binding(
+    contract: Mapping[str, Any], module_name: str, binding_name: str
+) -> str | None:
+    return _optional_dependency_for_binding_in_modules(
+        contract.get("required_submodule_exports", {}), module_name, binding_name
+    )
+
+
+def _optional_dependency_for_binding_in_modules(
+    modules: Mapping[str, Any], module_name: str, binding_name: str
+) -> str | None:
+    module_contract = modules.get(module_name, {})
+    for field_name in ("optional_bindings", "optional_exports"):
+        dependency_module = module_contract.get(field_name, {}).get(binding_name)
+        if dependency_module is not None:
+            return cast(str, dependency_module)
+    return None
+
+
+def _preserve_released_callable_for_promotion(
+    contract: Mapping[str, Any],
+    callables: dict[str, Any],
+    qualified_name: str,
+    *,
+    fail_if_missing: bool,
+    unavailable_reason: str,
+) -> None:
+    released_callable = contract["callables"].get(qualified_name)
+    if released_callable is None:
+        if not fail_if_missing:
+            return
+        raise ValueError(
+            f"Cannot promote new canonical callable {qualified_name} because "
+            f"{unavailable_reason}. Ensure the binding is available and exposes an inspectable "
+            "signature on the release preparation host."
+        )
+    callables[qualified_name] = deepcopy(released_callable)
+
+
+def _preserve_released_submodule_callables(
+    contract: Mapping[str, Any], callables: dict[str, Any], module_name: str
+) -> None:
+    for qualified_name, released_callable in contract["callables"].items():
+        callable_module, _, _ = qualified_name.rpartition(".")
+        if callable_module == module_name:
+            callables.setdefault(qualified_name, deepcopy(released_callable))
+
+
 def build_released_api_contract(
     contract: dict[str, Any],
     *,
     baseline: str,
     baseline_commit: str,
     agents_module: Any | None = None,
-    submodule_export_policy: Mapping[str, Mapping[str, Mapping[str, str]]] | None = None,
+    release_policy: SubmoduleExportPolicy | None = None,
 ) -> dict[str, Any]:
     """Build the next rolling release contract from the current public surface."""
     agents = agents_module or importlib.import_module("agents")
@@ -550,16 +792,86 @@ def build_released_api_contract(
         if should_track:
             callables[name] = _callable_contract(value)
 
+    canonical_imports = _merge_canonical_imports(
+        contract["canonical_imports"],
+        release_policy.canonical_imports if release_policy is not None else (),
+    )
+    policy_unsupported_platforms = (
+        {
+            installation.dependency_module: installation.unsupported_platforms
+            for installation in release_policy.dependency_installations
+            if installation.unsupported_platforms
+        }
+        if release_policy is not None
+        else {}
+    )
     top_level_callable_ids = {
         id(getattr(agents, name)) for name in callables if not name.startswith("agents.")
     }
-    for entry in contract["canonical_imports"]:
+    for entry in canonical_imports:
         module_name = entry["module"]
         if module_name == "agents":
             continue
         qualified_name = f"{module_name}.{entry['name']}"
-        module = _import_contract_module(module_name, agents_module)
-        value = getattr(module, entry["name"])
+        is_new_canonical_import = entry not in contract["canonical_imports"]
+        optional_dependency = (
+            _optional_dependency_for_binding_in_modules(
+                release_policy.modules, module_name, entry["name"]
+            )
+            if release_policy is not None
+            else None
+        )
+        if optional_dependency is not None and not _optional_dependency_is_available_for_contract(
+            optional_dependency, policy_unsupported_platforms
+        ):
+            if _optional_dependency_is_unsupported_for_contract(
+                optional_dependency, policy_unsupported_platforms
+            ):
+                _preserve_released_callable_for_promotion(
+                    contract,
+                    callables,
+                    qualified_name,
+                    fail_if_missing=is_new_canonical_import,
+                    unavailable_reason=(
+                        f"optional dependency {optional_dependency!r} is unsupported on "
+                        f"{sys.platform!r}"
+                    ),
+                )
+            continue
+        try:
+            module = _import_contract_module(module_name, agents_module)
+        except Exception as error:
+            if _matches_platform_import_error(contract, module_name, error):
+                _preserve_released_callable_for_promotion(
+                    contract,
+                    callables,
+                    qualified_name,
+                    fail_if_missing=is_new_canonical_import,
+                    unavailable_reason=(
+                        f"module {module_name!r} has a declared import error on {sys.platform!r}"
+                    ),
+                )
+                continue
+            raise
+        value = getattr(module, entry["name"], None)
+        if value is None:
+            try:
+                _import_contract_module(entry["canonical_module"], agents_module)
+            except Exception as error:
+                if _matches_platform_import_error(contract, entry["canonical_module"], error):
+                    _preserve_released_callable_for_promotion(
+                        contract,
+                        callables,
+                        qualified_name,
+                        fail_if_missing=is_new_canonical_import,
+                        unavailable_reason=(
+                            f"canonical module {entry['canonical_module']!r} has a declared "
+                            f"import error on {sys.platform!r}"
+                        ),
+                    )
+                    continue
+                raise
+            continue
         if id(value) in top_level_callable_ids:
             continue
         kind = _callable_kind(value)
@@ -567,7 +879,14 @@ def build_released_api_contract(
             continue
         try:
             _signature(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as error:
+            _preserve_released_callable_for_promotion(
+                contract,
+                callables,
+                qualified_name,
+                fail_if_missing=is_new_canonical_import,
+                unavailable_reason=f"its signature cannot be inspected: {error!r}",
+            )
             continue
         callables[qualified_name] = _callable_contract(value)
 
@@ -575,8 +894,19 @@ def build_released_api_contract(
     updated["baseline"] = baseline
     updated["required_top_level_exports"] = ordered_exports
     updated["callables"] = callables
+    updated["canonical_imports"] = canonical_imports
+    updated["public_properties"] = _merge_public_properties(
+        contract.get("public_properties", []),
+        release_policy.public_properties if release_policy is not None else (),
+    )
+    if release_policy is not None:
+        updated["optional_dependency_unsupported_platforms"] = {
+            dependency_module: list(platforms)
+            for dependency_module, platforms in policy_unsupported_platforms.items()
+        }
     excluded_submodule_exports = set(contract.get("submodule_export_exclusions", []))
     public_modules = list(contract["public_modules"])
+    submodule_export_policy = release_policy.modules if release_policy is not None else None
     if submodule_export_policy is not None:
         invalid_policy_modules = sorted(
             module_name
@@ -598,7 +928,10 @@ def build_released_api_contract(
                 for dependency_module in _optional_dependency_modules(
                     dict(module_policy.get(field_name, {})), field_name=field_name
                 ).values()
-                if not _optional_dependency_is_available(dependency_module)
+                if not _optional_dependency_is_unsupported_for_contract(
+                    dependency_module, policy_unsupported_platforms
+                )
+                and not _optional_dependency_is_available(dependency_module)
             }
         )
         if unavailable_policy_dependencies:
@@ -609,6 +942,7 @@ def build_released_api_contract(
             )
     updated["public_modules"] = public_modules
     required_submodule_exports: dict[str, dict[str, Any]] = {}
+    released_submodule_exports = contract.get("required_submodule_exports", {})
     for module_name in public_modules:
         if module_name == "agents" or module_name in excluded_submodule_exports:
             continue
@@ -616,6 +950,7 @@ def build_released_api_contract(
             module = _import_contract_module(module_name, agents_module)
         except Exception as error:
             if _matches_platform_import_error(contract, module_name, error):
+                _preserve_released_submodule_callables(contract, callables, module_name)
                 continue
             if submodule_export_policy is not None and module_name in submodule_export_policy:
                 raise ValueError(
@@ -626,13 +961,56 @@ def build_released_api_contract(
             module_policy = contract.get("required_submodule_exports", {}).get(module_name, {})
         else:
             module_policy = submodule_export_policy.get(module_name, {})
+        allowed_missing_optional_exports = {
+            name
+            for name, dependency_module in _optional_dependency_modules(
+                dict(module_policy.get("optional_exports", {})),
+                field_name="optional_exports",
+            ).items()
+            if _optional_dependency_is_unsupported_for_contract(
+                dependency_module, policy_unsupported_platforms
+            )
+        }
         module_contract = _submodule_export_contract(
             module,
             optional_bindings=module_policy.get("optional_bindings", {}),
             optional_exports=module_policy.get("optional_exports", {}),
+            allowed_missing_optional_exports=allowed_missing_optional_exports,
         )
         if module_contract is not None:
             required_submodule_exports[module_name] = module_contract
+            released_names = set(released_submodule_exports.get(module_name, {}).get("names", []))
+            for name in module_contract["names"]:
+                qualified_name = f"{module_name}.{name}"
+                was_tracked = qualified_name in tracked_callables
+                if name in released_names and not was_tracked:
+                    continue
+                optional_dependency = _optional_dependency_for_binding_in_modules(
+                    {module_name: module_contract}, module_name, name
+                )
+                if optional_dependency is not None and not (
+                    _optional_dependency_is_available_for_contract(
+                        optional_dependency, policy_unsupported_platforms
+                    )
+                ):
+                    if was_tracked:
+                        callables[qualified_name] = deepcopy(contract["callables"][qualified_name])
+                    continue
+                value = getattr(module, name, None)
+                if value is None:
+                    continue
+                if not was_tracked and not _is_sdk_owned_callable(value):
+                    continue
+                kind = _callable_kind(value)
+                if kind is None:
+                    continue
+                try:
+                    _signature(value)
+                except (TypeError, ValueError):
+                    if was_tracked:
+                        callables[qualified_name] = deepcopy(contract["callables"][qualified_name])
+                    continue
+                callables[qualified_name] = _callable_contract(value)
     updated["required_submodule_exports"] = required_submodule_exports
 
     updated_errors = validate_released_api_contract(updated, agents_module=agents)
@@ -643,6 +1021,7 @@ def build_released_api_contract(
     surface_keys = (
         "canonical_imports",
         "callables",
+        "optional_dependency_unsupported_platforms",
         "platform_import_errors",
         "public_properties",
         "public_modules",
@@ -700,6 +1079,30 @@ def _validate_parameter_contract(
     return errors
 
 
+def _validate_pydantic_model_field_contract(
+    name: str,
+    released: list[dict[str, object]],
+    current: list[dict[str, object]] | None,
+) -> list[str]:
+    errors: list[str] = []
+    current_by_name = {cast(str, entry["name"]): entry for entry in current or []}
+    for entry in released:
+        current_entry = current_by_name.get(cast(str, entry["name"]))
+        if current_entry != entry:
+            errors.append(
+                f"{name}.{entry['name']} changed its released Pydantic model field contract: "
+                f"expected {entry!r}, got {current_entry!r}"
+            )
+    released_names = {entry["name"] for entry in released}
+    for entry in current or []:
+        if entry["name"] in released_names:
+            continue
+        default = entry["default"]
+        if isinstance(default, dict) and default.get("kind") == "required":
+            errors.append(f"{name}.{entry['name']} added a required Pydantic model field")
+    return errors
+
+
 def _import_contract_module(module_name: str, agents_module: Any | None) -> Any:
     if module_name == "agents" and agents_module is not None:
         return agents_module
@@ -709,11 +1112,19 @@ def _import_contract_module(module_name: str, agents_module: Any | None) -> Any:
 def _validate_public_property_contract(
     contract: dict[str, Any],
     agents_module: Any | None,
+    *,
+    unsupported_platforms: Mapping[str, tuple[str, ...]] | None = None,
 ) -> list[str]:
     errors: list[str] = []
+    unsupported_platforms = unsupported_platforms or {}
     for entry in contract.get("public_properties", []):
         module_name = entry["module"]
         class_name = entry["class_name"]
+        optional_dependency = _optional_dependency_for_binding(contract, module_name, class_name)
+        if optional_dependency is not None and not _optional_dependency_is_available_for_contract(
+            optional_dependency, unsupported_platforms
+        ):
+            continue
         try:
             module = _import_contract_module(module_name, agents_module)
         except Exception as error:
@@ -738,6 +1149,7 @@ def _submodule_export_contract(
     *,
     optional_bindings: Mapping[str, str] | None = None,
     optional_exports: Mapping[str, str] | None = None,
+    allowed_missing_optional_exports: Iterable[str] = (),
 ) -> dict[str, Any] | None:
     exports = getattr(module, "__all__", None)
     if exports is None:
@@ -755,11 +1167,19 @@ def _submodule_export_contract(
     )
     optional_binding_names = set(optional_binding_modules)
     optional_export_names = set(optional_export_modules)
-    unknown_optional_names = sorted((optional_binding_names | optional_export_names) - set(names))
+    allowed_missing_names = set(allowed_missing_optional_exports)
+    unknown_optional_names = sorted(
+        (optional_binding_names | optional_export_names) - set(names) - allowed_missing_names
+    )
     if unknown_optional_names:
         raise ValueError(
             f"optional submodule bindings are not exported: {unknown_optional_names!r}"
         )
+    names.extend(
+        name
+        for name in optional_export_modules
+        if name in allowed_missing_names and name not in names
+    )
     return {
         "names": names,
         "optional_bindings": {
@@ -816,7 +1236,19 @@ def validate_released_api_contract(
     agents = agents_module or importlib.import_module("agents")
     errors: list[str] = []
 
-    errors.extend(_validate_public_property_contract(contract, agents_module))
+    try:
+        unsupported_platforms = _optional_dependency_unsupported_platforms(contract)
+    except ValueError as error:
+        errors.append(f"Invalid released optional dependency platform declarations: {error}")
+        unsupported_platforms = {}
+
+    errors.extend(
+        _validate_public_property_contract(
+            contract,
+            agents_module,
+            unsupported_platforms=unsupported_platforms,
+        )
+    )
 
     missing_exports = sorted(set(contract["required_top_level_exports"]) - set(agents.__all__))
     if missing_exports:
@@ -870,15 +1302,33 @@ def validate_released_api_contract(
             )
             continue
         try:
+            unsupported_optional_exports = {
+                name
+                for name, dependency_module in optional_exports.items()
+                if _optional_dependency_is_unsupported_for_contract(
+                    dependency_module, unsupported_platforms
+                )
+            }
+            unsupported_optional_bindings = {
+                name
+                for name, dependency_module in (optional_bindings | optional_exports).items()
+                if _optional_dependency_is_unsupported_for_contract(
+                    dependency_module, unsupported_platforms
+                )
+            }
             unavailable_optional_exports = {
                 name
                 for name, dependency_module in optional_exports.items()
-                if not _optional_dependency_is_available(dependency_module)
+                if not _optional_dependency_is_available_for_contract(
+                    dependency_module, unsupported_platforms
+                )
             }
             unavailable_optional_bindings = {
                 name
                 for name, dependency_module in (optional_bindings | optional_exports).items()
-                if not _optional_dependency_is_available(dependency_module)
+                if not _optional_dependency_is_available_for_contract(
+                    dependency_module, unsupported_platforms
+                )
             }
         except (AttributeError, ImportError, ValueError) as error:
             errors.append(
@@ -890,17 +1340,25 @@ def validate_released_api_contract(
             try:
                 getattr(module, name)
             except (AttributeError, ImportError):
-                errors.append(
-                    f"Invalid released {module_name} optional dependency declaration: "
-                    f"{name!r} remains in __all__ but its binding is unavailable; "
-                    "declare it in optional_bindings instead of optional_exports"
-                )
+                if name in unsupported_optional_exports:
+                    errors.append(
+                        f"Invalid released {module_name} optional dependency declaration: "
+                        f"{name!r} remains in __all__ on an unsupported platform but its "
+                        "binding is unavailable"
+                    )
+                else:
+                    errors.append(
+                        f"Invalid released {module_name} optional dependency declaration: "
+                        f"{name!r} remains in __all__ but its binding is unavailable; "
+                        "declare it in optional_bindings instead of optional_exports"
+                    )
             else:
-                errors.append(
-                    f"Invalid released {module_name} optional dependency declaration: "
-                    f"{name!r} remains in __all__ and its binding resolves; remove its "
-                    "optional declaration or correct its dependency module"
-                )
+                if name not in unsupported_optional_exports:
+                    errors.append(
+                        f"Invalid released {module_name} optional dependency declaration: "
+                        f"{name!r} remains in __all__ and its binding resolves; remove its "
+                        "optional declaration or correct its dependency module"
+                    )
         binding_only_names = set(optional_bindings) - set(optional_exports)
         for name in sorted(unavailable_optional_bindings & binding_only_names):
             if name not in current_names:
@@ -913,13 +1371,19 @@ def validate_released_api_contract(
             try:
                 getattr(module, name)
             except (AttributeError, ImportError):
-                pass
+                if name in unsupported_optional_bindings:
+                    errors.append(
+                        f"Invalid released {module_name} optional dependency declaration: "
+                        f"{name!r} remains in __all__ on an unsupported platform but its "
+                        "binding is unavailable"
+                    )
             else:
-                errors.append(
-                    f"Invalid released {module_name} optional dependency declaration: "
-                    f"{name!r} remains in __all__ and its binding resolves; remove its "
-                    "optional declaration or correct its dependency module"
-                )
+                if name not in unsupported_optional_bindings:
+                    errors.append(
+                        f"Invalid released {module_name} optional dependency declaration: "
+                        f"{name!r} remains in __all__ and its binding resolves; remove its "
+                        "optional declaration or correct its dependency module"
+                    )
         missing_names = sorted(
             set(released["names"]) - unavailable_optional_exports - current_names
         )
@@ -939,6 +1403,13 @@ def validate_released_api_contract(
             )
 
     for entry in contract["canonical_imports"]:
+        optional_dependency = _optional_dependency_for_binding(
+            contract, entry["module"], entry["name"]
+        )
+        if optional_dependency is not None and not _optional_dependency_is_available_for_contract(
+            optional_dependency, unsupported_platforms
+        ):
+            continue
         try:
             module = _import_contract_module(entry["module"], agents_module)
         except Exception as error:
@@ -967,6 +1438,15 @@ def validate_released_api_contract(
     for name, released in contract["callables"].items():
         if name.startswith("agents."):
             module_name, _, binding_name = name.rpartition(".")
+            optional_dependency = _optional_dependency_for_binding(
+                contract, module_name, binding_name
+            )
+            if optional_dependency is not None and not (
+                _optional_dependency_is_available_for_contract(
+                    optional_dependency, unsupported_platforms
+                )
+            ):
+                continue
             try:
                 module = _import_contract_module(module_name, agents_module)
             except Exception as error:
@@ -1029,6 +1509,15 @@ def validate_released_api_contract(
             default = field["default"]
             if field["init"] and isinstance(default, dict) and default.get("kind") == "required":
                 errors.append(f"{name}.{field['name']} added a required dataclass field")
+        released_model_fields = released.get("model_fields")
+        if released_model_fields is not None:
+            errors.extend(
+                _validate_pydantic_model_field_contract(
+                    name,
+                    cast(list[dict[str, object]], released_model_fields),
+                    _pydantic_model_field_contract(value),
+                )
+            )
         for member_name, released_member in released.get("members", {}).items():
             descriptor = _sdk_public_class_descriptor(value, member_name)
             current_member = _class_member_contract(descriptor)

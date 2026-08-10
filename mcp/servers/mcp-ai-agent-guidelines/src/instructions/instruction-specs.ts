@@ -1,0 +1,391 @@
+import type { ModelClass } from "../contracts/generated.js";
+
+export type InstructionSurfaceCategory = "workflow" | "discovery" | "internal";
+
+/**
+ * Governs how often an instruction may be re-activated within a session.
+ *
+ * - `"once"` — fires at most once per session (default for most instructions).
+ * - `"periodic"` — may re-fire after `agent_mode.re_activation_interval_turns`
+ *   turns have elapsed (controlled by orchestration.toml [agent_mode]).
+ * - `"on-context-drift"` — re-fires when the context-drift detector exceeds
+ *   `agent_mode.context_drift_threshold`.
+ */
+export type ReactivationPolicy =
+	| "once"
+	| "periodic"
+	| "on-context-drift"
+	/** Fires once at the beginning of every new session (SessionStart equivalent). */
+	| "session-start";
+
+export interface InstructionSpecDefinition {
+	id: string;
+	toolName: string;
+	aliases?: string[];
+	displayName: string;
+	description: string;
+	mission: string;
+	chainTo: string[];
+	preferredModelClass: ModelClass;
+	public: boolean;
+	surface: InstructionSurfaceCategory;
+	sourcePath: string;
+	/**
+	 * Whether this instruction automatically invokes its highest-confidence
+	 * `chainTo` entry on completion (P3 bootstrap-chaining fix).
+	 * Defaults to `false`.
+	 */
+	autoChainOnCompletion?: boolean;
+	/**
+	 * Tools or instructions that must be called before this instruction
+	 * is invoked (R8 precondition fix).
+	 */
+	requiredPreconditions?: string[];
+	/**
+	 * Controls how often this instruction may be re-activated in a session
+	 * (P3 / RS3 agent-mode re-activation fix).
+	 * Defaults to `"once"`.
+	 */
+	reactivationPolicy?: ReactivationPolicy;
+}
+
+export const INSTRUCTION_SPECS: InstructionSpecDefinition[] = [
+	// -----------------------------------------------------------------------
+	// HIGH-FREQUENCY general-purpose instructions — listed first to reduce
+	// positional bias in LLM tool selection.
+	// -----------------------------------------------------------------------
+	{
+		id: "design",
+		toolName: "system-design",
+		displayName: "Design: Architecture and System Design",
+		description:
+			"Use when designing a new system, service, agent architecture, data pipeline, or infrastructure component; evaluating architectural options; making build-vs-buy decisions; or establishing constraints and tradeoffs before coding begins. This is the primary tool for architecture work — use this instead of adapt or orchestrate for system design tasks. Do NOT use for implementing the design (use feature-implement) or for comparing tool options without a design decision (use evidence-research). Companion tools: use `graph-visualize` (chain-graph, skill-graph) to inspect the instruction chain and skill topology. Triggers: 'design this system', 'architecture for', 'how should we structure', 'system design', 'greenfield', 'architectural decision'.",
+		mission:
+			"Understand constraints → explore options → decide → document. Produces a decision-backed architecture.",
+		chainTo: ["feature-implement", "policy-govern"],
+		preferredModelClass: "strong",
+		public: true,
+		surface: "workflow",
+		sourcePath: "src/instructions/instruction-specs.ts#design",
+	},
+	{
+		id: "implement",
+		toolName: "feature-implement",
+		aliases: ["implement"],
+		displayName: "Implement: Build New Feature or Tool",
+		description:
+			"Use when building a new tool, feature, endpoint, agent, workflow component, or capability from scratch. Covers the full lifecycle: requirements gathering, design decisions, code structure, tests, governance checks, and documentation. Do NOT use for fixing a broken existing feature (use issue-debug) or for pure design decisions before coding begins (use system-design). Triggers: 'build this', 'add a new', 'create a tool', 'implement feature', 'new functionality'.",
+		mission:
+			"Build new tools or features end-to-end: requirements → design → code → tests → docs.",
+		chainTo: ["test-verify", "code-review"],
+		preferredModelClass: "strong",
+		public: true,
+		surface: "workflow",
+		sourcePath: "src/instructions/instruction-specs.ts#implement",
+	},
+	{
+		id: "research",
+		toolName: "evidence-research",
+		displayName: "Research: Synthesis, Comparison, and Recommendations",
+		description:
+			"Use when gathering information from multiple sources, comparing tools or approaches, synthesizing evidence into a structured summary, framing a recommendation with clear rationale, or answering questions that require surveying a landscape before deciding. This is the primary tool for information gathering and comparison — use this instead of adapt or orchestrate for research tasks. Triggers: 'research this', 'compare these options', 'what should we use', 'gather evidence', 'synthesize findings', 'recommendation on'.",
+		mission:
+			"Gather → compare → synthesize → frame. Every research output ends with a structured recommendation.",
+		chainTo: ["strategy-plan", "system-design", "enterprise-strategy"],
+		preferredModelClass: "strong",
+		public: true,
+		surface: "workflow",
+		sourcePath: "src/instructions/instruction-specs.ts#research",
+	},
+	{
+		id: "review",
+		toolName: "code-review",
+		aliases: ["review"],
+		displayName: "Review: Code, Quality, and Security Review",
+		description:
+			"Use when reviewing existing code for quality, security vulnerabilities, correctness, maintainability, API surface hygiene, compliance adherence, or evaluation output grading. This is the primary tool for code review and quality assessment — use this instead of adapt or orchestrate for review tasks. Do NOT use for making the changes themselves (use code-refactor or feature-implement) or for compliance and policy enforcement (use policy-govern). Triggers: 'review this code', 'code review', 'check for security issues', 'quality review', 'audit this', 'grade this output', 'inspect this PR'.",
+		mission:
+			"Inspect → grade → recommend → close the loop. Every review produces actionable findings.",
+		chainTo: ["policy-govern", "code-refactor", "test-verify"],
+		preferredModelClass: "reviewer",
+		public: true,
+		surface: "workflow",
+		sourcePath: "src/instructions/instruction-specs.ts#review",
+	},
+	{
+		id: "plan",
+		toolName: "strategy-plan",
+		displayName: "Plan: Strategy, Roadmap, and Sprint Planning",
+		description:
+			"Use when creating a project roadmap, running sprint planning, prioritizing a backlog, mapping capability gaps, sequencing technical investments, estimating effort, or framing strategic recommendations for leadership. Triggers: 'plan this sprint', 'roadmap for', 'prioritize the backlog', 'strategy for', 'capability map', 'what do we do next', 'sequence this work'.",
+		mission:
+			"Prioritize → sequence → estimate → commit. Every plan produces concrete next actions.",
+		chainTo: ["feature-implement", "enterprise-strategy", "evidence-research"],
+		preferredModelClass: "strong",
+		public: true,
+		surface: "workflow",
+		sourcePath: "src/instructions/instruction-specs.ts#plan",
+	},
+	{
+		id: "debug",
+		toolName: "issue-debug",
+		displayName: "Debug: Diagnose and Fix Problems",
+		description:
+			"Use when something is broken, producing wrong output, crashing, behaving unexpectedly, or when you need to trace a failure to its root cause. Do NOT use for adding new functionality (use feature-implement) or for broad code-quality improvement (use code-refactor). Triggers: 'something is broken', 'this is failing', 'why does this crash', 'unexpected output', 'trace this error', 'find the bug'.",
+		mission:
+			"Diagnose and fix problems: reproduce → locate → understand → fix → prevent recurrence.",
+		chainTo: ["test-verify", "code-refactor", "policy-govern"],
+		preferredModelClass: "cheap",
+		public: true,
+		surface: "workflow",
+		sourcePath: "src/instructions/instruction-specs.ts#debug",
+	},
+	{
+		id: "refactor",
+		toolName: "code-refactor",
+		displayName: "Refactor: Improve Existing Code Safely",
+		description:
+			"Use when improving existing code quality, reducing technical debt, eliminating coupling, splitting oversized modules, improving performance, or hardening security of existing code. Do NOT use for adding new functionality (use feature-implement) or for diagnosing why code is broken (use issue-debug). Triggers: 'refactor this', 'reduce tech debt', 'clean up', 'improve code quality', 'split this module', 'too complex'.",
+		mission:
+			"Improve existing code: measure → prioritize → transform → verify. Never break working behavior.",
+		chainTo: ["test-verify", "code-review"],
+		preferredModelClass: "cheap",
+		public: true,
+		surface: "workflow",
+		sourcePath: "src/instructions/instruction-specs.ts#refactor",
+	},
+	{
+		id: "testing",
+		toolName: "test-verify",
+		displayName: "Testing: Write, Run, and Verify Tests",
+		description:
+			"Use when writing unit tests, integration tests, or eval test cases; measuring test coverage; closing coverage gaps; verifying correctness of AI outputs; preventing regressions; or setting up testing infrastructure. Do NOT use for debugging why a test fails (use issue-debug) or for benchmarking AI output quality (use quality-evaluate). Triggers: 'write tests', 'add tests', 'test coverage', 'regression tests', 'eval test cases', 'test this', 'verify this works'.",
+		mission:
+			"Write, run, and verify tests: define what to prove → choose strategy → implement → measure coverage → close gaps → prevent regression.",
+		chainTo: ["code-review", "issue-debug", "quality-evaluate"],
+		preferredModelClass: "cheap",
+		public: true,
+		surface: "workflow",
+		sourcePath: "src/instructions/instruction-specs.ts#testing",
+	},
+	{
+		id: "document",
+		toolName: "docs-generate",
+		displayName: "Document: Generate Documentation Artifacts",
+		description:
+			"Use when generating API reference documentation, README files, operational runbooks, postmortems, technical guides, or any other documentation artifact. Do NOT use for reviewing code or checking its quality (use code-review) or for writing code that happens to be documented (use feature-implement). Triggers: 'write documentation', 'generate docs', 'create a README', 'document this API', 'write a runbook', 'document this module', 'postmortem for', 'technical guide'.",
+		mission:
+			"Identify audience → choose format → generate content → publish. Every doc is audience-targeted.",
+		chainTo: ["code-review", "enterprise-strategy"],
+		preferredModelClass: "cheap",
+		public: true,
+		surface: "workflow",
+		sourcePath: "src/instructions/instruction-specs.ts#document",
+	},
+	{
+		id: "evaluate",
+		toolName: "quality-evaluate",
+		displayName: "Evaluate: Benchmark and Assess Quality",
+		description:
+			"Use when benchmarking AI system quality, measuring output consistency, running eval suites, comparing model versions, detecting quality regressions, grading outputs against rubrics, or generating evaluation reports. Do NOT use for reviewing code quality (use code-review) or for writing the tests themselves (use test-verify). Triggers: 'benchmark this', 'run evals', 'measure quality', 'compare model outputs', 'quality gate', 'detect regression', 'grade these outputs', 'eval suite'.",
+		mission:
+			"Define metrics → measure → compare → report → act. Every evaluation produces a decision or action.",
+		chainTo: ["prompt-engineering", "code-refactor", "policy-govern"],
+		preferredModelClass: "reviewer",
+		public: true,
+		surface: "workflow",
+		sourcePath: "src/instructions/instruction-specs.ts#evaluate",
+	},
+	{
+		id: "prompt-engineering",
+		toolName: "prompt-engineering",
+		displayName: "Prompt Engineering: Build, Evaluate, and Optimize Prompts",
+		description:
+			"Use when writing a new system prompt, building a prompt template, improving an existing prompt that is failing or hallucinating, versioning prompts, chaining prompts into pipelines, calibrating agent autonomy levels, or evaluating prompt quality against benchmarks. Do NOT use for measuring output quality at scale (use quality-evaluate) or for implementing the agent or tool being prompted (use feature-implement). Triggers: 'write a system prompt', 'improve this prompt', 'prompt is hallucinating', 'prompt template', 'chain these prompts', 'calibrate autonomy', 'prompt version'.",
+		mission:
+			"Structure → test → refine → version. Every prompt is a versioned, tested artifact.",
+		chainTo: ["quality-evaluate", "policy-govern"],
+		preferredModelClass: "cheap",
+		public: true,
+		surface: "workflow",
+		sourcePath: "src/instructions/instruction-specs.ts#prompt-engineering",
+	},
+	// -----------------------------------------------------------------------
+	// SPECIALIST instructions — less commonly needed, listed after general-
+	// purpose tools to reduce false-positive selection.
+	// -----------------------------------------------------------------------
+	{
+		id: "orchestrate",
+		toolName: "agent-orchestrate",
+		displayName: "Orchestrate: Compose Multi-Agent Workflows",
+		description:
+			"ONLY use when explicitly coordinating multiple specialized agents on a shared task, designing multi-agent pipelines, routing tasks between agents, synthesizing results from parallel agents, or managing agent handoffs and context flow. Do NOT use for single-task requests — use system-design, evidence-research, code-review, or feature-implement instead. Companion tools: use `orchestration-config` (read/write) to inspect or patch the orchestration configuration; use `model-discover` to list available models and their capabilities. Triggers: 'coordinate agents', 'multi-agent workflow', 'agent pipeline', 'assign tasks to agents', 'parallel agents', 'orchestrate this workflow'.",
+		mission:
+			"Decompose → assign → coordinate → synthesize results. Every orchestration produces a coherent unified output.",
+		chainTo: ["quality-evaluate", "fault-resilience"],
+		preferredModelClass: "strong",
+		public: true,
+		surface: "workflow",
+		sourcePath: "src/instructions/instruction-specs.ts#orchestrate",
+	},
+	{
+		id: "enterprise",
+		toolName: "enterprise-strategy",
+		displayName: "Enterprise: Leadership and Enterprise Scale",
+		description:
+			"Use when designing enterprise AI platforms, mapping capability gaps across an organization, creating transformation roadmaps, preparing executive briefings, mentoring staff engineers, providing distinguished-engineer-level architectural review, or framing multi-year AI strategy. Triggers: 'enterprise AI strategy', 'executive briefing', 'transformation roadmap', 'capability map', 'AI platform design', 'staff engineering', 'distinguished engineer review', 'organisation-wide'.",
+		mission:
+			"Vision → capability map → transformation roadmap → governance. AI at organisational scale.",
+		chainTo: ["policy-govern", "system-design", "strategy-plan"],
+		preferredModelClass: "strong",
+		public: true,
+		surface: "workflow",
+		sourcePath: "src/instructions/instruction-specs.ts#enterprise",
+	},
+	{
+		id: "govern",
+		toolName: "policy-govern",
+		displayName: "Govern: Safety, Compliance, and Guardrails",
+		description:
+			"Use when auditing AI workflows for policy compliance, enforcing data guardrails, validating model governance, hardening against prompt injection, designing regulated workflows, monitoring compliance drift, or remediating security and governance issues. Triggers: 'compliance check', 'safety audit', 'policy validation', 'data guardrails', 'prompt injection hardening', 'regulated workflow', 'governance review', 'model version policy'.",
+		mission:
+			"Audit → enforce → monitor → remediate. Zero tolerance for undetected compliance violations.",
+		chainTo: ["code-review", "fault-resilience", "docs-generate"],
+		preferredModelClass: "strong",
+		public: true,
+		surface: "workflow",
+		sourcePath: "src/instructions/instruction-specs.ts#govern",
+	},
+	// -----------------------------------------------------------------------
+	// GATED / NICHE instructions — domain-specific tools that should only be
+	// invoked under explicit conditions. Listed last to minimize positional bias.
+	// -----------------------------------------------------------------------
+	{
+		id: "analogy-think",
+		toolName: "analogy-think",
+		displayName: "Analogy Think",
+		description:
+			"Maps a problem to candidate physics metaphors with structural-feature gating. Output is a metaphor, not a theorem. Use when you want to explore structural analogies between a software/engineering problem and a physical system. Full surface only — not available in slim mode.",
+		mission:
+			"Clarify → gate → rank → expand. Produces metaphor candidates grounded in structural features, never theorem-strength claims.",
+		chainTo: [],
+		preferredModelClass: "strong",
+		public: true,
+		surface: "workflow",
+		sourcePath: "src/instructions/instruction-specs.ts#analogy-think",
+	},
+	{
+		id: "resilience",
+		toolName: "fault-resilience",
+		displayName: "Resilience: Self-Healing and Fault Tolerance",
+		description:
+			"ONLY use when adding structural fault tolerance to an AI workflow, designing retry and fallback strategies, isolating failures from cascading, running N-version redundancy for reliability, implementing self-healing prompts, or adding quality gates that recover automatically from degraded output. Do NOT use for debugging individual errors (use debug), code quality issues (use review), or general fault-finding. Triggers: 'make this more reliable', 'add fault tolerance', 'self-healing', 'reduce hallucinations structurally', 'N-version redundancy', 'retry strategy', 'fallback design'.",
+		mission:
+			"Monitor → detect → isolate → repair → validate. Workflows that recover themselves.",
+		chainTo: ["policy-govern", "quality-evaluate"],
+		preferredModelClass: "strong",
+		public: true,
+		surface: "workflow",
+		sourcePath: "src/instructions/instruction-specs.ts#resilience",
+	},
+	{
+		id: "adapt",
+		toolName: "routing-adapt",
+		displayName: "Adapt: Bio-Inspired Adaptive Routing",
+		description:
+			"ONLY use when an existing multi-agent workflow needs autonomous bio-inspired route optimization based on historical performance — e.g. Hebbian reinforcement, ant-colony pheromone trails, simulated annealing, quorum sensing, or Physarum network pruning. Disable with DISABLE_ADAPTIVE_ROUTING=true. Do NOT use for: general research, design, review, debugging, planning, implementation, code quality, documentation, or any task that does not involve bio-inspired routing algorithms. If unsure, use the specific domain tool (design, research, review, implement, etc.) instead.",
+		mission:
+			"Deploy → observe → reinforce → prune → converge. Workflows that get smarter over time.",
+		chainTo: ["agent-orchestrate", "quality-evaluate"],
+		preferredModelClass: "strong",
+		public: true,
+		surface: "workflow",
+		sourcePath: "src/instructions/instruction-specs.ts#adapt",
+	},
+	// -----------------------------------------------------------------------
+	// INTERNAL + DISCOVERY — not part of the workflow tool surface
+	// -----------------------------------------------------------------------
+	{
+		id: "initial_instructions",
+		toolName: "initial_instructions",
+		displayName: "MCP AI Agent Guidelines — Project Principles",
+		description:
+			"Core architecture principles, skill taxonomy, and design goals for mcp-ai-agent-guidelines. Loaded for all sessions in this workspace.",
+		mission: "",
+		chainTo: [],
+		preferredModelClass: "free",
+		public: false,
+		surface: "internal",
+		sourcePath: "src/instructions/instruction-specs.ts#initial_instructions",
+	},
+	{
+		id: "bootstrap",
+		toolName: "task-bootstrap",
+		displayName: "Bootstrap: First Contact",
+		description:
+			"Use when starting a new task or work session with unclear scope, before any implementation begins, when requirements are vague or ambiguous, when exploring what a codebase does, or when getting oriented in a project for the first time. Covers scope clarification, requirements extraction, priority setting, project orientation, and context loading. Triggers: 'start a new task', 'onboard', 'what does this project do', 'first session', 'where do I start', 'help me orient'. Example call: {\"request\": \"Onboard me: what does this repo do and where do I start on the flaky coverage gate?\"}. Companion tools (full surface only, MCP_FULL_SURFACE=true): `agent-workspace` for source-file access, `graph-visualize` (skill-graph, chain-graph) to explore the skill topology.",
+		mission:
+			"Orient the agent, load project context, identify scope and unknowns before any implementation starts.",
+		chainTo: [
+			"meta-routing",
+			"system-design",
+			"feature-implement",
+			"evidence-research",
+			"code-review",
+			"strategy-plan",
+			"issue-debug",
+			"code-refactor",
+			"test-verify",
+			"agent-orchestrate",
+			"policy-govern",
+			"enterprise-strategy",
+		],
+		preferredModelClass: "free",
+		public: true,
+		surface: "discovery",
+		sourcePath: "src/instructions/instruction-specs.ts#bootstrap",
+		// Auto-chain to the highest-confidence downstream instruction after scope
+		// is locked, preventing the bootstrap gravity trap (P2 / P3 fix).
+		autoChainOnCompletion: true,
+		// Re-activate periodically in continuous/agent sessions so stale context
+		// is caught before it causes routing errors (P3 / RS3 fix).
+		reactivationPolicy: "periodic",
+	},
+	{
+		id: "meta-routing",
+		toolName: "meta-routing",
+		displayName: "Meta-Routing: Task Router",
+		description:
+			"Use at session start to classify the problem before any domain tool is called; use when a task spans multiple domains; use when instructions should run serially vs in parallel; use when escalation or cross-instruction chaining is needed. This is the master decision guide — call it when unsure which tool to use. Do NOT use for single-domain tasks where the right tool is obvious (just call the domain tool directly). Anti-patterns: do not call meta-routing for straightforward implement/debug/review requests; do not call it after every single step. Companion tools (full surface only): use `graph-visualize` (chain-graph) to inspect instruction chains and routing topology. Triggers: 'not sure which tool', 'multi-domain task', 'how should I approach this', 'route this request', 'classify the problem', 'session start', 'orient myself'. Example call: {\"request\": \"We need to redesign the routing layer, add tests, and document the migration — where do we start?\"}.",
+		mission:
+			"Decide which instruction(s) to invoke, in what order, and how to chain them for compound or ambiguous tasks.",
+		chainTo: [],
+		preferredModelClass: "cheap",
+		public: true,
+		surface: "discovery",
+		sourcePath: "src/instructions/instruction-specs.ts#meta-routing",
+		// Fires once at the beginning of every new session so problem-classification
+		// always happens before the first domain tool is invoked (issue #1445 fix).
+		reactivationPolicy: "session-start",
+	},
+];
+
+export const INSTRUCTION_SPECS_BY_ID = new Map(
+	INSTRUCTION_SPECS.map((spec) => [spec.id, spec] as const),
+);
+
+export function getInstructionSpec(
+	id: string,
+): InstructionSpecDefinition | undefined {
+	return INSTRUCTION_SPECS_BY_ID.get(id);
+}
+
+export const PUBLIC_INSTRUCTION_SPECS = INSTRUCTION_SPECS.filter(
+	(spec) => spec.public,
+);
+
+export const WORKFLOW_PUBLIC_INSTRUCTION_SPECS =
+	PUBLIC_INSTRUCTION_SPECS.filter((spec) => spec.surface === "workflow");
+
+export const DISCOVERY_PUBLIC_INSTRUCTION_SPECS =
+	PUBLIC_INSTRUCTION_SPECS.filter((spec) => spec.surface === "discovery");

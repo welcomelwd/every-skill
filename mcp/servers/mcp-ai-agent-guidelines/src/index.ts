@@ -1,0 +1,404 @@
+#!/usr/bin/env node
+
+import { realpathSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+	CallToolRequestSchema,
+	GetPromptRequestSchema,
+	ListPromptsRequestSchema,
+	ListResourcesRequestSchema,
+	ListToolsRequestSchema,
+	ReadResourceRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
+import {
+	loadOrchestrationConfig,
+	resetConfigCache,
+	resolveOrchestrationConfigPath,
+} from "./config/orchestration-config.js";
+import type {
+	ExecutionProgressRecord,
+	SessionStateStore,
+	WorkflowExecutionRuntime,
+} from "./contracts/runtime.js";
+import { toErrorMessage } from "./infrastructure/object-utilities.js";
+import { packageMetadata } from "./infrastructure/package-metadata.js";
+import { InstructionRegistry } from "./instructions/instruction-registry.js";
+import { ModelRouter } from "./models/model-router.js";
+import {
+	buildPublicPrompts,
+	getPublicPrompt,
+} from "./prompts/prompt-surface.js";
+import {
+	buildPublicResources,
+	readPublicResource,
+} from "./resources/resource-surface.js";
+import { createIntegratedRuntime } from "./runtime/integration.js";
+import { MemorySessionStore } from "./runtime/memory-session-store.js";
+import {
+	createSessionId,
+	isValidSessionId,
+	SecureFileSessionStore,
+} from "./runtime/secure-session-store.js";
+import {
+	DEFAULT_SESSION_STATE_DIR,
+	isEphemeralMode,
+	resolveWorkspaceRoot,
+	sweepStaleTempFiles,
+} from "./runtime/session-store-utils.js";
+import { resolveSerenaClient, type SerenaClient } from "./serena/client.js";
+import { SkillRegistry } from "./skills/skill-registry.js";
+import {
+	dispatchModelDiscoveryToolCall,
+	MODEL_DISCOVERY_TOOL_DEFINITIONS,
+	MODEL_DISCOVERY_TOOL_NAME,
+} from "./tools/model-discovery.js";
+import {
+	computeEffectiveHiddenTools,
+	filterHiddenTools,
+	filterToSlimSurface,
+} from "./tools/shared/tool-surface-manifest.js";
+import { dispatchToolCall } from "./tools/tool-call-handler.js";
+import { buildPublicToolSurface } from "./tools/tool-surface.js";
+import {
+	buildVisualizationToolSurface,
+	dispatchVisualizationToolCall,
+} from "./tools/visualization-tools.js";
+import {
+	buildWorkspaceToolSurface,
+	dispatchWorkspaceToolCall,
+	resolveWorkspaceToolName,
+} from "./tools/workspace-tools.js";
+import { createErrorContext, ValidationService } from "./validation/index.js";
+import { WorkflowEngine } from "./workflows/workflow-engine.js";
+
+export interface ServerRuntime extends WorkflowExecutionRuntime {
+	/** Session store.  The concrete type is `SecureFileSessionStore` at runtime,
+	 *  but the interface accepts any `SessionStateStore` to allow seam injection
+	 *  in tests and alternative implementations. */
+	sessionStore: SessionStateStore;
+	instructionRegistry: InstructionRegistry;
+	skillRegistry: SkillRegistry;
+	modelRouter: ModelRouter;
+	workflowEngine: WorkflowEngine;
+}
+
+function getValidationService() {
+	try {
+		return ValidationService.getInstance();
+	} catch {
+		return ValidationService.initialize();
+	}
+}
+
+function formatAuxToolError(
+	toolName: string,
+	runtime: ServerRuntime,
+	error: unknown,
+) {
+	const validationService = getValidationService();
+	return {
+		isError: true,
+		content: [
+			{
+				type: "text" as const,
+				text: validationService.formatError({
+					code: `TOOL_EXECUTION_${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
+					message: `Tool \`${toolName}\` failed: ${toErrorMessage(error)}`,
+					context: createErrorContext(
+						undefined,
+						toolName,
+						undefined,
+						runtime.sessionId,
+					),
+					recoverable: true,
+					suggestedAction:
+						"Try the operation again or review the workspace tool arguments.",
+				}),
+			},
+		],
+	};
+}
+
+export function createRuntime(
+	options: { serena?: SerenaClient } = {},
+): ServerRuntime {
+	const instructionRegistry = new InstructionRegistry();
+	const skillRegistry = new SkillRegistry();
+	const modelRouter = new ModelRouter();
+	const serena = options.serena ?? resolveSerenaClient();
+	const integratedRuntime = createIntegratedRuntime(
+		skillRegistry,
+		{ modelRouter, serena },
+		{},
+	);
+	return {
+		sessionId: createSessionId(),
+		workspaceRoot: resolveWorkspaceRoot(),
+		executionState: {
+			instructionStack: [],
+			progressRecords: [] as ExecutionProgressRecord[],
+		},
+		sessionStore: isEphemeralMode()
+			? new MemorySessionStore()
+			: new SecureFileSessionStore(),
+		instructionRegistry,
+		skillRegistry,
+		modelRouter,
+		workflowEngine: new WorkflowEngine(),
+		integratedRuntime,
+		serena,
+	};
+}
+
+export function createRequestHandlers(sharedRuntime = createRuntime()) {
+	return {
+		listTools: async () => ({
+			tools: filterToSlimSurface(
+				filterHiddenTools(
+					[
+						...buildPublicToolSurface(sharedRuntime.instructionRegistry),
+						...buildWorkspaceToolSurface(),
+						...MODEL_DISCOVERY_TOOL_DEFINITIONS,
+						...buildVisualizationToolSurface(),
+					],
+					computeEffectiveHiddenTools(),
+				),
+			),
+		}),
+		callTool: async (request: {
+			params: { name: string; arguments?: Record<string, unknown> };
+		}) => {
+			const { name, arguments: args } = request.params;
+			const runtime = sharedRuntime;
+			if (name === MODEL_DISCOVERY_TOOL_NAME) {
+				try {
+					return await dispatchModelDiscoveryToolCall(name, args ?? {});
+				} catch (error) {
+					return formatAuxToolError(name, runtime, error);
+				}
+			}
+			if (name === "graph-visualize") {
+				try {
+					return await dispatchVisualizationToolCall(name, args ?? {});
+				} catch (error) {
+					return formatAuxToolError(name, runtime, error);
+				}
+			}
+			if (resolveWorkspaceToolName(name)) {
+				try {
+					return await dispatchWorkspaceToolCall(name, args ?? {}, runtime);
+				} catch (error) {
+					return formatAuxToolError(name, runtime, error);
+				}
+			}
+			return dispatchToolCall(name, args, runtime);
+		},
+		listResources: async () => ({
+			resources: buildPublicResources(sharedRuntime.sessionId, {
+				workspaceRoot: sharedRuntime.workspaceRoot,
+			}),
+		}),
+		readResource: async (request: { params: { uri: string } }) =>
+			readPublicResource(
+				request.params.uri,
+				sharedRuntime.sessionId,
+				sharedRuntime.sessionStore,
+				{
+					workspaceRoot: sharedRuntime.workspaceRoot,
+				},
+			),
+		listPrompts: async () => ({
+			prompts: buildPublicPrompts(),
+		}),
+		getPrompt: async (request: {
+			params: { name: string; arguments?: Record<string, string> };
+		}) => getPublicPrompt(request.params.name, request.params.arguments),
+	};
+}
+
+export function createServer(sharedRuntime = createRuntime()) {
+	const server = new Server(
+		{
+			name: "mcp-ai-agent-guidelines",
+			version: packageMetadata.version,
+		},
+		{
+			capabilities: {
+				tools: {
+					listChanged: true,
+				},
+				resources: {
+					listChanged: true,
+				},
+				prompts: {
+					listChanged: true,
+				},
+			},
+		},
+	);
+	const handlers = createRequestHandlers(sharedRuntime);
+
+	server.setRequestHandler(ListToolsRequestSchema, handlers.listTools);
+	server.setRequestHandler(CallToolRequestSchema, handlers.callTool);
+	server.setRequestHandler(ListResourcesRequestSchema, handlers.listResources);
+	server.setRequestHandler(ReadResourceRequestSchema, handlers.readResource);
+	server.setRequestHandler(ListPromptsRequestSchema, handlers.listPrompts);
+	server.setRequestHandler(GetPromptRequestSchema, handlers.getPrompt);
+
+	return { server, runtime: sharedRuntime };
+}
+
+/**
+ * Phase C: Anchor state storage to the MCP client's workspace root.
+ *
+ * When launched via `npx`, `process.cwd()` is typically the user's home
+ * directory (~) or the filesystem root.  The MCP `roots/list` call returns the
+ * actual project directories the client has open, so we redirect all
+ * memory/session/snapshot writes there before bootstrap fires.
+ *
+ * Exported for testability — the function is side-effect-free with respect to
+ * the transport and can be exercised with a mocked Server instance.
+ *
+ * @returns The resolved workspace root path, or `undefined` if no roots were
+ *          available (client doesn't expose roots capability, empty roots list,
+ *          or any error during the roots query).
+ */
+export async function anchorStateToClientRoots(
+	server: Server,
+	runtime: WorkflowExecutionRuntime,
+): Promise<string | undefined> {
+	try {
+		const clientCaps = server.getClientCapabilities();
+		if (!clientCaps?.roots) {
+			return undefined;
+		}
+		const { roots } = await server.listRoots();
+		if (roots.length === 0) {
+			return undefined;
+		}
+		const firstRootUri = roots[0].uri;
+		const firstRoot = firstRootUri.startsWith("file://")
+			? fileURLToPath(firstRootUri)
+			: firstRootUri;
+		if (!isAbsolute(firstRoot)) {
+			process.stderr.write(
+				`[warn] Skipping non-filesystem workspace root URI: ${firstRootUri}\n`,
+			);
+			return undefined;
+		}
+		runtime.workspaceRoot = firstRoot;
+		// Reset the orchestration config cache so it reloads from the correct
+		// project path (it may have cached a stale home-dir path during
+		// modelRouter.initialize() before roots were known).
+		try {
+			resetConfigCache();
+			loadOrchestrationConfig(resolveOrchestrationConfigPath(firstRoot));
+		} catch (configErr) {
+			process.stderr.write(
+				`[warn] Failed to reload orchestration config from ${firstRoot}: ${toErrorMessage(configErr)}\n`,
+			);
+			// Ensure _config is never permanently null after the reset.
+			loadOrchestrationConfig();
+		}
+		await runtime.modelRouter?.reinitialize?.(firstRoot);
+		process.stderr.write(
+			`[info] Workspace root resolved from client roots: ${firstRoot}\n`,
+		);
+		return firstRoot;
+	} catch (err: unknown) {
+		process.stderr.write(
+			`[warn] Could not resolve workspace root from client roots: ${toErrorMessage(err)}\n`,
+		);
+		return undefined;
+	}
+}
+
+export async function main() {
+	const { server, runtime } = createServer();
+	ValidationService.initialize();
+
+	await runtime.modelRouter.initialize().catch((err: unknown) => {
+		const msg = err instanceof Error ? err.message : String(err);
+		process.stderr.write(`[warn] Model router initialization failed: ${msg}\n`);
+	});
+
+	// Phase B: Set up contextReady BEFORE connecting transport so the promise
+	// is always defined when the first tool-call handler fires.
+	let resolveContextReady!: () => void;
+	runtime.contextReady = new Promise<void>((resolve) => {
+		resolveContextReady = resolve;
+	});
+
+	const transport = new StdioServerTransport();
+	await server.connect(transport);
+
+	// Phase C: Anchor state storage to the MCP client's workspace root.
+	await anchorStateToClientRoots(server, runtime);
+
+	// Best-effort sweep of orphaned temp files left by interrupted atomic writes.
+	if (runtime.workspaceRoot) {
+		void sweepStaleTempFiles(
+			join(runtime.workspaceRoot, DEFAULT_SESSION_STATE_DIR),
+		).catch(() => {});
+	}
+
+	void (async () => {
+		resolveContextReady();
+
+		// Emit a codebase-specific orientation message after context is ready so
+		// the log reflects the actual loaded state (skills, sessions, model mode).
+		const mode = runtime.modelRouter.getAvailabilityMode();
+		const modelStatus =
+			mode === "advisory"
+				? "advisory mode (using defaults)"
+				: "configured mode";
+		process.stderr.write(
+			`\nmcp-ai-agent-guidelines ready — ` +
+				`${runtime.instructionRegistry.getAll().length} instructions, ` +
+				`${runtime.skillRegistry.getAll().length} skills, ` +
+				`models: ${modelStatus}, ` +
+				`session: ${runtime.sessionId}\n`,
+		);
+	})();
+
+	// Phase 2: Graceful shutdown — close the optional Serena client.
+	const shutdown = async () => {
+		await runtime.serena?.close?.().catch(() => {});
+		process.exit(0);
+	};
+	process.once("SIGTERM", () => void shutdown());
+	process.once("SIGINT", () => void shutdown());
+
+	if (!isValidSessionId(runtime.sessionId)) {
+		process.stderr.write(
+			`Warning: Generated invalid session ID: ${runtime.sessionId}\n`,
+		);
+	}
+}
+
+export function isDirectExecutionEntry(
+	entryPath = process.argv[1],
+	moduleUrl = import.meta.url,
+) {
+	if (entryPath === undefined) {
+		return false;
+	}
+
+	try {
+		return realpathSync(entryPath) === realpathSync(fileURLToPath(moduleUrl));
+	} catch {
+		return moduleUrl === pathToFileURL(entryPath).href;
+	}
+}
+
+const isDirectExecution = isDirectExecutionEntry();
+
+if (isDirectExecution) {
+	main().catch((error) => {
+		process.stderr.write(`Fatal: ${toErrorMessage(error)}\n`);
+		process.exit(1);
+	});
+}

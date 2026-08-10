@@ -1,0 +1,1 @@
+Core commands: npm run build (tsc), npm run start (build then node dist/index.js), npm run dev (tsc --watch), npm test (vitest), npm run test:coverage, npm run type-check, npm run check, npm run check:fix, npm run quality, python3 scripts/generate-tool-definitions.py. Useful system commands on Darwin: git, ls, cd, find, grep, rg, sed, awk, python3, node, npm.

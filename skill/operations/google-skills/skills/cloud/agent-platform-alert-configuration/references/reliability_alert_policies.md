@@ -85,10 +85,10 @@ the instructions corresponding to the availability of historical metrics data:
 
 *   **Case 1: No historical metrics data available (e.g., brand new agent)**:
     You MUST read and follow:
-    [no_historical_traffic_data.md](references/no_historical_traffic_data.md)
+    [no_historical_traffic_data.md](no_historical_traffic_data.md)
 *   **Case 2: Historical metrics data available (e.g., active agent with
     traffic)**: You MUST read and follow:
-    [has_historical_traffic_data.md](references/has_historical_traffic_data.md)
+    [has_historical_traffic_data.md](has_historical_traffic_data.md)
 
 ## Critical Rules
 
@@ -97,7 +97,7 @@ the instructions corresponding to the availability of historical metrics data:
     expect (Steady, Seasonal, or Bursty) in your response. If immediate setup is
     requested, ask the question but proceed using the default Steady/Consistent
     (Short-Window Z-Score) pattern. Follow
-    [no_historical_traffic_data.md](references/no_historical_traffic_data.md).
+    [no_historical_traffic_data.md](no_historical_traffic_data.md).
 *   **Query Types for Reliability (No MQL or Threshold Filters)**:
     *   For latency and container SLO error rate metrics, you MUST use
         `condition_prometheus_query_language` with PromQL.

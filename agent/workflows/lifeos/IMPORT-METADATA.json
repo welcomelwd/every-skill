@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "repository": "danielmiessler/LifeOS",
+  "source_url": "https://github.com/danielmiessler/LifeOS",
+  "ref": "main",
+  "resolved_commit": "58381b3df66252d7cc0cddf8b0d4e735fac35109",
+  "category": "agent",
+  "subcategory": "workflows",
+  "slug": "lifeos",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-10T23:07:17+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 1879,
+  "copied_bytes": 17199173,
+  "excluded_files": [
+    "LifeOS/install/LIFEOS/PULSE/MenuBar/icon.png: binary content",
+    "LifeOS/install/LIFEOS/PULSE/MenuBar/icon@2x.png: binary content",
+    "LifeOS/install/LIFEOS/PULSE/Observability/out/lifeos-logo.png: binary content",
+    "LifeOS/install/LIFEOS/PULSE/Observability/out/_next/static/media/0b78ff376f6b9734-s.p.woff2: binary content",
+    "LifeOS/install/LIFEOS/PULSE/Observability/out/_next/static/media/723e11e5093b8e80.p.woff2: binary content",
+    "LifeOS/install/LIFEOS/PULSE/Observability/public/lifeos-logo.png: binary content",
+    "images/lifeos-7.0.0-release-art.png: file exceeds 2097152 bytes",
+    "images/lifeos-core-components.png: file exceeds 2097152 bytes",
+    "images/lifeos-install.png: binary content",
+    "images/lifeos-logo-full.png: binary content",
+    "images/lifeos-logo.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

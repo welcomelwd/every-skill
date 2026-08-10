@@ -1,0 +1,1 @@
+When finishing work, run the existing repository checks rather than ad hoc validation. Primary completion command is npm run quality, and runtime/test changes should also pass npm test. Regenerate generated files after changing .github/skills or .github/instructions with python3 scripts/generate-tool-definitions.py.

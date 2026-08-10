@@ -1,0 +1,60 @@
+---
+title: task-bootstrap
+description: First Contact — orient the agent, load project context, identify scope and unknowns before any implementation starts.
+sidebar:
+  label: task-bootstrap
+  badge:
+    text: "Zero-Cost"
+    variant: "success"
+---
+
+import { Badge } from "@astrojs/starlight/components";
+import ToolIcon from "../../../components/ToolIcon.astro";
+
+<div class="tool-header-icon"><ToolIcon icon="Zap" size={28} aria-hidden="true" /><span><Badge text="Zero-Cost" variant="success" /> <Badge text="discovery" variant="note" /></span></div>
+
+## Mission
+
+Orient the agent, load project context, identify scope and unknowns before any implementation starts.
+
+## When to Use
+
+Use when starting a new task with unclear scope, before any implementation begins, when requirements are vague or ambiguous, or when the agent needs to orient itself on what the user actually wants.
+
+**Triggers**: "start this task", "I need help with", "unclear requirements", "orient yourself", "what should we do"
+
+## Chain-To
+
+After scope is locked, `task-bootstrap` auto-chains to the highest-confidence downstream instruction:
+
+- `system-design`
+- `feature-implement`
+- `evidence-research`
+- `code-review`
+- `strategy-plan`
+- `issue-debug`
+- `code-refactor`
+- `test-verify`
+- `agent-orchestrate`
+- `policy-govern`
+- `enterprise-strategy`
+
+## Required Pre-Conditions
+
+Before scope analysis, prime context through the agent's existing MCP surface:
+- `agent-workspace` (`list` / `read`) for source files in scope
+- Serena MCP tools (`mcp__serena__list_memories`, `mcp__serena__get_symbols_overview`) — every `task-bootstrap` response ends with a 🧭 Serena enrichment footer naming the exact call to make. See [Serena Integration](/mcp-ai-agent-guidelines/concepts/serena-integration/).
+
+## Reactivation Policy
+
+`periodic` — reactivated periodically in continuous/agent sessions to catch stale context before it causes routing errors.
+
+## Example
+
+```json
+{
+  "request": "I need to add OAuth2 to the admin portal but I'm not sure where to start"
+}
+```
+
+**Output**: Scope document listing known requirements, open unknowns, suggested next instruction (`system-design` or `feature-implement`), and context gaps to resolve.

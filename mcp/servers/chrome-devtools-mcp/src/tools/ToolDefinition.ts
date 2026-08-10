@@ -17,7 +17,12 @@ import type {
   Dialog,
   ElementHandle,
   Extension,
+  GetPWAStateOptions,
+  InstallPWAOptions,
+  LaunchPWAOptions,
+  PWAState,
   ScreenRecorder,
+  UninstallPWAOptions,
   Viewport,
   DevTools,
   Protocol,
@@ -195,6 +200,10 @@ export type SupportedExtensions =
  */
 export type Context = Readonly<{
   validatePath(filePath?: string): Promise<void>;
+  installPWA(options: InstallPWAOptions): Promise<string>;
+  uninstallPWA(options: UninstallPWAOptions): Promise<void>;
+  launchPWA(options: LaunchPWAOptions): Promise<Page>;
+  getPWAState(options: GetPWAStateOptions): Promise<PWAState>;
   ensureExtension<Extension extends `.${string}`>(
     filePath: string,
     extension: Extension,
@@ -315,6 +324,7 @@ export type ContextPage = Readonly<{
     action: () => Promise<unknown>,
     options?: {
       timeout?: number;
+      waitForStableDom?: boolean;
       handleDialog?:
         DialogAction | Partial<Record<Protocol.Page.DialogType, DialogAction>>;
     },

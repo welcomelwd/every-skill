@@ -1,0 +1,286 @@
+[
+  {
+    "name": "adv-aco-router",
+    "description": "Use when a user wants workflow routing to improve automatically based on which paths have historically produced the best results. Triggers: \"self-optimising workflow\", \"adaptive routing\", \"learn which path works best\", \"pheromone routing\", \"ant colony\", \"workflow that gets smarter\", \"reinforce good paths\", \"dynamic edge weights\", user has a prompt-flow-builder workflow and says \"I want it to prefer routes that work\". Also trigger when a user wants to shift traffic toward better-performing agents without hardcoding which ones those are."
+  },
+  {
+    "name": "adv-annealing-optimizer",
+    "description": "Use when a user wants to automatically discover the optimal workflow configuration — agent count, model selection, chain depth, parallelism — without manual tuning. Triggers: \"find the best workflow config\", \"optimise my pipeline automatically\", \"too expensive / too slow — fix it\", \"simulated annealing\", \"Boltzmann\", \"explore workflow topologies\", \"auto-tune the orchestrator\". Also trigger when a user is frustrated they don't know how many agents to use or which model tier to pick."
+  },
+  {
+    "name": "adv-benchmark-analyzer",
+    "description": "Use this skill when the user wants to work on Analyzing benchmark results to identify quality trends, regressions, and performance signals. Triggers include \"analyze benchmark results\", \"interpret my eval results\", \"quality trends from benchmarks\". Do NOT use when design the benchmark (use core-eval-design)."
+  },
+  {
+    "name": "adv-blind-comparison",
+    "description": "Use this skill when the user wants to work on Running blind pairwise comparisons between AI outputs to remove bias from evaluation. Triggers include \"blind comparison of outputs\", \"pairwise eval without bias\", \"A/B test my prompts blindly\". Do NOT use when design the eval suite (use adv-eval-suite-designer)."
+  },
+  {
+    "name": "adv-capability-mapping",
+    "description": "Use this skill when the user wants to work on Mapping current and target AI capabilities across an organisation to identify gaps and priorities. Triggers include \"map our AI capabilities\", \"capability gap analysis\", \"what AI capabilities do we have vs need\". Do NOT use when frame enterprise architecture (use adv-digital-enterprise-architect)."
+  },
+  {
+    "name": "adv-clone-mutate",
+    "description": "Use when workflow quality degrades over time or a specific node produces worse outputs than it used to, and the user wants automatic recovery without manual prompt tweaking. Triggers: \"self-healing prompt\", \"auto-fix broken agent\", \"evolve the prompt when it fails\", \"immune system for workflows\", \"clonal selection\", \"mutate and compete\", \"adaptive prompt improvement\", workflow \"used to work but now it doesn't\" and user wants automated recovery."
+  },
+  {
+    "name": "adv-digital-enterprise-architect",
+    "description": "Use this skill when the user wants to work on Designing enterprise-wide AI platform strategies, capability maps, and governance frameworks. Triggers include \"design our enterprise AI platform\", \"AI-first enterprise architecture\", \"enterprise transformation with AI\". Do NOT use when design a single system (use core-system-design)."
+  },
+  {
+    "name": "adv-eval-suite-designer",
+    "description": "Use this skill when the user wants to work on Designing comprehensive evaluation suites covering multiple dimensions of AI system quality. Triggers include \"design a comprehensive eval suite\", \"multi-dimensional evaluation framework\", \"end-to-end eval suite for my AI system\". Do NOT use when run individual benchmarks (use core-prompt-benchmarking)."
+  },
+  {
+    "name": "adv-executive-technical-briefing",
+    "description": "Use this skill when the user wants to work on Preparing executive-level technical briefings that translate AI strategy into business terms. Triggers include \"prepare an executive briefing on AI\", \"translate AI strategy for leadership\", \"C-suite AI presentation\". Do NOT use when use for engineering teams (use adv-staff-engineering-mentor)."
+  },
+  {
+    "name": "adv-hebbian-router",
+    "description": "Use when a user wants agent collaboration to improve automatically based on which pairings have historically produced the best results. Triggers: \"agents that learn to work together\", \"strengthen good agent pairs\", \"Hebbian learning\", \"synaptic weights for agents\", \"discover which agents complement each other\", \"adaptive multi-agent routing\". Also trigger when someone has 4+ agents and doesn't know the optimal collaboration pattern, or says their orchestration \"feels random\" and they want it to converge on better pairings."
+  },
+  {
+    "name": "adv-homeostatic-controller",
+    "description": "Use when a user wants their workflow to automatically maintain target levels of quality, speed, and cost — compensating when any metric drifts out of range. Triggers: \"maintain quality automatically\", \"workflow that stays within budget\", \"auto-scale agents\", \"feedback control for LLM pipeline\", \"PID controller\", \"homeostasis\", \"setpoint-driven orchestration\", \"keep latency below X\", \"don't let quality drop below Y\". Also trigger when someone defines SLOs and asks how to enforce them automatically, or says they want a workflow that \"self-regulates\"."
+  },
+  {
+    "name": "adv-l9-distinguished-engineer",
+    "description": "Use this skill when the user wants to work on Providing distinguished-engineer-level technical guidance on AI system architecture and strategy. Triggers include \"distinguished engineer perspective\", \"senior technical guidance on AI architecture\", \"L9 engineering review\". Do NOT use when use for everyday code review (use core-quality-review)."
+  },
+  {
+    "name": "adv-membrane-orchestrator",
+    "description": "Use when a user needs to enforce strict data boundaries, access controls, or transformation rules between workflow stages — especially in multi-tenant, multi-clearance, or regulatory contexts. Triggers: \"data should not cross between stages\", \"compartmentalised workflow\", \"membrane computing\", \"P-systems\", \"nested security zones\", \"data isolation between agents\", \"HIPAA/GDPR workflow boundaries\", \"each agent should only see its own data\". Also trigger for healthcare, finance, or government workflows requiring formal data-flow controls stronger than prompt instructions."
+  },
+  {
+    "name": "adv-physarum-router",
+    "description": "Use when a user wants workflow routing topology to self-prune — automatically removing underperforming paths and reinforcing high-throughput ones. Triggers: \"self-pruning workflow\", \"slime mould optimisation\", \"Physarum\", \"reinforce busy paths\", \"prune unused routes\", \"adaptive network topology\", \"workflow that removes dead ends\". Best for flows with 6+ edges. Also trigger when a user notices some workflow paths are never used and wants the system to consolidate onto paths that matter."
+  },
+  {
+    "name": "adv-quorum-coordinator",
+    "description": "Use when a user wants agent task assignment to emerge from agent availability signals rather than central dispatch. Triggers: \"decentralised agent coordination\", \"quorum sensing\", \"agents that self-organise\", \"emergent task assignment\", \"no central scheduler\", \"agents claim tasks when ready\", \"load-based routing\". Also trigger when a user has 5+ agents and is frustrated that a central orchestrator is a bottleneck or single point of failure, or when someone wants a workflow that scales horizontally without redesign."
+  },
+  {
+    "name": "adv-redundant-voter",
+    "description": "Use when a user wants to reduce hallucination rates or add fault-tolerance by running a node multiple times and voting on the result. Triggers: \"make this more reliable\", \"reduce hallucinations\", \"run N times and pick the best\", \"Byzantine fault tolerance\", \"majority vote on agent output\", \"ISS-style redundancy\", \"N-modular redundancy\", outputs are \"inconsistent\" or \"sometimes wrong\" and the user wants a structural fix not a prompt tweak."
+  },
+  {
+    "name": "adv-replay-consolidator",
+    "description": "Use when a user wants their orchestrator to learn from past runs and improve routing strategy over time without retraining a model. Triggers: \"learn from past runs\", \"workflow memory\", \"consolidate experience\", \"reflection loop\", \"meta-learning for orchestrator\", \"hippocampal replay\", \"improve routing from history\", \"make the orchestrator smarter over time\", orchestrator \"keeps making the same mistakes\". Also trigger when someone wants a scheduled review of their workflow performance logs."
+  },
+  {
+    "name": "adv-staff-engineering-mentor",
+    "description": "Use this skill when the user wants to work on Providing staff-engineer-level mentoring on technical decisions, influence, and career growth. Triggers include \"staff engineering mentoring\", \"how do I grow as a staff engineer\", \"technical influence without authority\". Do NOT use when use for standard technical guidance (use architecture-design)."
+  },
+  {
+    "name": "adv-transformation-roadmap",
+    "description": "Triggers include \"AI transformation roadmap\", \"phase our AI transformation\", \"enterprise AI maturity model\". Do NOT use when map capabilities first (use adv-capability-mapping)."
+  },
+  {
+    "name": "core-acceptance-criteria",
+    "description": "Use this skill when the user wants to work on Generating clear, testable, and eval-ready acceptance criteria from requirements. Triggers include \"write acceptance criteria\", \"turn requirements into testable criteria\", \"generate success criteria\". Do NOT use when extract requirements first (use core-requirements-analysis)."
+  },
+  {
+    "name": "core-agent-orchestrator",
+    "description": "Use this skill when the user wants to work on Coordinating multiple specialized agents on a shared task with explicit routing and control. Triggers include \"coordinate multiple agents\", \"set up agent coordination\", \"orchestrate specialized agents\". Do NOT use when design a single-agent pipeline (use core-workflow-orchestrator)."
+  },
+  {
+    "name": "core-ambiguity-detection",
+    "description": "Use this skill when the user wants to work on Identifying underspecified, conflicting, or ambiguous requirements before implementation. Triggers include \"find ambiguities in this spec\", \"what is unclear in these requirements\", \"flag missing constraints\". Do NOT use when extract the requirements first (use core-requirements-analysis)."
+  },
+  {
+    "name": "core-api-documentation",
+    "description": "Use this skill when the user wants to work on Generating schema-driven API reference documentation with examples and contracts. Triggers include \"document this API\", \"generate API reference docs\", \"OpenAPI documentation\". Do NOT use when generate general project docs (use core-documentation-generator)."
+  },
+  {
+    "name": "core-code-analysis",
+    "description": "Use this skill when the user wants to work on Analyzing code structure, coupling, complexity, and maintainability across a codebase. Triggers include \"analyze this codebase\", \"measure code complexity\", \"find coupling issues\". Do NOT use when review for security vulnerabilities (use core-security-review)."
+  },
+  {
+    "name": "core-comparative-analysis",
+    "description": "Use this skill when the user wants to work on Comparing tools, models, frameworks, or approaches across explicit evaluation axes. Triggers include \"compare these approaches\", \"comparison matrix for these tools\", \"trade study between options\". Do NOT use when gather information first (use core-research-assistant)."
+  },
+  {
+    "name": "core-context-handoff",
+    "description": "Use this skill when the user wants to work on Structuring and transferring relevant context between workflow steps and agents. Triggers include \"how do I pass context between steps\", \"manage context window across steps\", \"context handoff strategy\". Do NOT use when design the full pipeline (use core-workflow-orchestrator)."
+  },
+  {
+    "name": "core-debugging-assistant",
+    "description": "Use this skill when the user wants to work on Providing structured triage and diagnosis for bugs, errors, crashes, and unexpected AI behaviour. Triggers include \"triage this error\", \"help me debug this\", \"something is broken\". Do NOT use when do a full root cause analysis (use core-root-cause-analysis)."
+  },
+  {
+    "name": "core-delegation-strategy",
+    "description": "Use this skill when the user wants to work on Defining how and when tasks are delegated to specialist subagents. Triggers include \"how should I delegate tasks to subagents\", \"delegation strategy for my agent system\", \"route by capability boundary\". Do NOT use when design the overall multi-agent architecture (use core-multi-agent-design)."
+  },
+  {
+    "name": "core-documentation-generator",
+    "description": "Use this skill when the user wants to work on Generating structured, audience-targeted technical documentation from code or specs. Triggers include \"generate documentation\", \"auto-doc this codebase\", \"create technical docs\". Do NOT use when generate only a README (use core-readme-generator)."
+  },
+  {
+    "name": "core-eval-design",
+    "description": "Use this skill when the user wants to work on Designing high-quality eval datasets with realistic prompts, hard negatives, and discriminative assertions. Triggers include \"design an eval set\", \"build a benchmark dataset\", \"create test cases for my prompt\". Do NOT use when run the evals after designing them (use core-prompt-benchmarking)."
+  },
+  {
+    "name": "core-incident-postmortem",
+    "description": "Use this skill when the user wants to work on Generating structured postmortems with timelines, root causes, impact, and action items. Triggers include \"generate a postmortem\", \"write an incident report\", \"summarize this incident\". Do NOT use when triage the incident first (use core-debugging-assistant)."
+  },
+  {
+    "name": "core-mode-switching",
+    "description": "Use this skill when the user wants to work on Managing transitions between operating modes (plan, code, debug, review) in AI workflows. Triggers include \"switch between plan and execute mode\", \"how do I add a review gate\", \"change agent mode mid-workflow\". Do NOT use when design the full pipeline (use core-workflow-orchestrator)."
+  },
+  {
+    "name": "core-multi-agent-design",
+    "description": "Use this skill when the user wants to work on Designing the architecture and roles of multi-agent systems. Triggers include \"design a multi-agent system\", \"what roles should my agents have\", \"set up specialist agents\". Do NOT use when implement the coordination logic (use core-agent-orchestrator)."
+  },
+  {
+    "name": "core-output-grading",
+    "description": "Use this skill when the user wants to work on Grading AI outputs using rubrics, schema validation, pairwise comparison, and judge models. Triggers include \"grade these outputs\", \"score AI responses\", \"rubric-based grading\". Do NOT use when design the grading criteria first (use core-eval-design)."
+  },
+  {
+    "name": "core-performance-review",
+    "description": "Use this skill when the user wants to work on Reviewing code for performance hotspots, token efficiency, inference cost, and latency. Triggers include \"analyze performance\", \"find performance hotspots\", \"optimize token usage\". Do NOT use when analyze overall code structure (use core-code-analysis)."
+  },
+  {
+    "name": "core-prioritization",
+    "description": "Use this skill when the user wants to work on Ranking AI use cases, features, and technical investments by value, feasibility, and risk. Triggers include \"prioritize our AI use cases\", \"rank these features\", \"opportunity sizing\". Do NOT use when frame the strategic context (use core-strategy-advisor)."
+  },
+  {
+    "name": "core-prompt-benchmarking",
+    "description": "Use this skill when the user wants to work on Running benchmarks to score prompts, compare versions, and detect regressions. Triggers include \"benchmark this prompt\", \"compare prompt versions\", \"detect prompt regressions\". Do NOT use when design the eval first (use core-eval-design)."
+  },
+  {
+    "name": "core-prompt-chaining",
+    "description": "Use this skill when the user wants to work on Sequencing multiple prompts where output from one step feeds into the next. Triggers include \"chain these prompts\", \"pass output from one prompt to another\", \"sequential prompt pipeline\". Do NOT use when coordinate agents (use core-agent-orchestrator)."
+  },
+  {
+    "name": "core-prompt-engineering",
+    "description": "Use this skill when the user wants to work on Creating, templating, and versioning prompt assets for AI models. Triggers include \"write a system prompt\", \"build a prompt template\", \"how do I structure my prompt\". Do NOT use when refine an existing prompt (use core-prompt-refinement)."
+  },
+  {
+    "name": "core-prompt-evaluation",
+    "description": "Use this skill when the user wants to work on Scoring and grading prompts against benchmark datasets and golden test sets. Triggers include \"evaluate this prompt\", \"score my prompt against test cases\", \"benchmark my prompt\". Do NOT use when refine the prompt after evaluation (use core-prompt-refinement)."
+  },
+  {
+    "name": "core-prompt-hierarchy",
+    "description": "Use this skill when the user wants to work on Calibrating AI agent autonomy levels and control surfaces for tasks. Triggers include \"calibrate agent autonomy\", \"how much autonomy should my agent have\", \"set up agent control surfaces\". Do NOT use when design a multi-step pipeline (use core-workflow-orchestrator)."
+  },
+  {
+    "name": "core-prompt-refinement",
+    "description": "Use this skill when the user wants to work on Iteratively improving prompts based on measured failures and eval results. Triggers include \"optimize this prompt\", \"improve my prompt\", \"my prompt keeps hallucinating\". Do NOT use when create a new prompt from scratch (use core-prompt-engineering)."
+  },
+  {
+    "name": "core-quality-review",
+    "description": "Use this skill when the user wants to work on Reviewing code for readability, maintainability, and adherence to quality standards. Triggers include \"review this code for quality\", \"code review for maintainability\", \"check code readability\". Do NOT use when analyze performance (use core-performance-review)."
+  },
+  {
+    "name": "core-readme-generator",
+    "description": "Use this skill when the user wants to work on Generating clear README files optimized for developer onboarding and first successful use. Triggers include \"generate a README\", \"write a README for this project\", \"create an onboarding README\". Do NOT use when document the full API (use core-api-documentation)."
+  },
+  {
+    "name": "core-recommendation-framing",
+    "description": "Use this skill when the user wants to work on Framing evidence-based recommendations with rationale, tradeoffs, and confidence levels. Triggers include \"frame a recommendation\", \"what should we choose and why\", \"evidence-based recommendation\". Do NOT use when gather evidence first (use core-research-assistant)."
+  },
+  {
+    "name": "core-refactoring-priority",
+    "description": "Use this skill when the user wants to work on Ranking and prioritizing code refactoring work using churn, coupling, and business impact signals. Triggers include \"prioritize refactoring\", \"what should I refactor first\", \"technical debt ranking\". Do NOT use when analyze code quality in detail (use core-code-analysis)."
+  },
+  {
+    "name": "core-reliability-design",
+    "description": "Use this skill when the user wants to work on Designing AI systems for workflow consistency, retry logic, fallbacks, and quality gates. Triggers include \"design for reliability\", \"how do I add fallbacks to my agent\", \"quality gates in my pipeline\". Do NOT use when design the initial system (use core-system-design)."
+  },
+  {
+    "name": "core-reproduction-planner",
+    "description": "Use this skill when the user wants to work on Planning minimal reproduction steps for bugs to make them reliably reproducible. Triggers include \"plan reproduction steps\", \"write a repro for this bug\", \"minimal failing test case\". Do NOT use when triage first (use core-debugging-assistant)."
+  },
+  {
+    "name": "core-requirements-analysis",
+    "description": "Use this skill when the user wants to work on Extracting and structuring requirements from vague or incomplete user inputs. Triggers include \"extract requirements from this description\", \"structure these requirements\", \"turn this brief into requirements\". Do NOT use when detect ambiguities (use core-ambiguity-detection)."
+  },
+  {
+    "name": "core-research-assistant",
+    "description": "Use this skill when the user wants to work on Gathering and structuring information from multiple sources into organized research material. Triggers include \"gather research on this topic\", \"collect sources about this subject\", \"research this for me\". Do NOT use when synthesise the gathered material (use core-synthesis-engine)."
+  },
+  {
+    "name": "core-result-synthesis",
+    "description": "Use this skill when the user wants to work on Aggregating and reconciling outputs from multiple agents into one coherent result. Triggers include \"synthesize agent outputs\", \"merge results from multiple agents\", \"reconcile conflicting agent answers\". Do NOT use when design the agent roles (use core-multi-agent-design)."
+  },
+  {
+    "name": "core-roadmap-planning",
+    "description": "Use this skill when the user wants to work on Creating phased AI adoption roadmaps with milestones, maturity models, and capability targets. Triggers include \"create an AI adoption roadmap\", \"phase our AI rollout\", \"build a capability roadmap\". Do NOT use when frame strategy first (use core-strategy-advisor)."
+  },
+  {
+    "name": "core-root-cause-analysis",
+    "description": "Use this skill when the user wants to work on Tracing bugs and incidents back to their root cause using structured causal analysis. Triggers include \"find the root cause\", \"5-whys analysis\", \"causal chain for this bug\". Do NOT use when triage first (use core-debugging-assistant)."
+  },
+  {
+    "name": "core-runbook-generator",
+    "description": "Use this skill when the user wants to work on Creating operational runbooks for AI systems covering incidents, rollbacks, and degraded modes. Triggers include \"write an operational runbook\", \"create a runbook for my AI system\", \"incident response procedures for AI\". Do NOT use when create general docs (use core-documentation-generator)."
+  },
+  {
+    "name": "core-scalability-design",
+    "description": "Use this skill when the user wants to work on Designing AI systems for inference-heavy scalability, latency budgets, and cost efficiency. Triggers include \"how do I scale my AI system\", \"inference scalability\", \"latency budget design\". Do NOT use when design the initial system (use core-system-design)."
+  },
+  {
+    "name": "core-scope-clarification",
+    "description": "Use this skill when the user wants to work on Explicitly bounding work, separating must-haves from nice-to-haves, and preventing scope creep. Triggers include \"clarify the scope\", \"what is in and out of scope\", \"bound the work\". Do NOT use when extract requirements (use core-requirements-analysis)."
+  },
+  {
+    "name": "core-security-design",
+    "description": "Use this skill when the user wants to work on Designing AI workflows to resist prompt injection, tool misuse, and data leakage. Triggers include \"what are the security risks in my architecture\", \"secure my agent system\", \"prompt injection defense in architecture\". Do NOT use when review existing code for security issues (use core-security-review)."
+  },
+  {
+    "name": "core-security-review",
+    "description": "Use this skill when the user wants to work on Reviewing code for security vulnerabilities, secret exposure, and unsafe patterns. Triggers include \"find security issues in my code\", \"security code review\", \"check for vulnerabilities\". Do NOT use when design secure architecture (use core-security-design)."
+  },
+  {
+    "name": "core-strategy-advisor",
+    "description": "Use this skill when the user wants to work on Framing technical strategy for AI adoption, platform design, and operating model decisions. Triggers include \"help me build a technical strategy\", \"AI-first strategy\", \"what is our AI operating model\". Do NOT use when extract requirements first (use core-requirements-analysis)."
+  },
+  {
+    "name": "core-synthesis-engine",
+    "description": "Use this skill when the user wants to work on Synthesising scattered evidence and research material into structured summaries and insights. Triggers include \"synthesise these sources\", \"create a structured summary from these documents\", \"distil key findings\". Do NOT use when gather more material first (use core-research-assistant)."
+  },
+  {
+    "name": "core-system-design",
+    "description": "Use this skill when the user wants to work on Designing AI-native systems with agent layers, memory, retrieval, safety, and observability. Triggers include \"design an AI-native system\", \"architect my agent platform\", \"how do I structure my AI application\". Do NOT use when review existing code quality (use code-analysis-quality)."
+  },
+  {
+    "name": "core-tradeoff-analysis",
+    "description": "Use this skill when the user wants to work on Comparing architectural, model, and workflow alternatives with explicit tradeoff axes. Triggers include \"compare these two approaches\", \"RAG vs fine-tuning tradeoffs\", \"analyze tradeoffs\". Do NOT use when frame the strategy (use core-strategy-advisor)."
+  },
+  {
+    "name": "core-variance-analysis",
+    "description": "Use this skill when the user wants to work on Measuring output variance and flakiness across multiple runs to assess model consistency. Triggers include \"measure output variance\", \"how flaky is my prompt\", \"consistency analysis\". Do NOT use when design the eval first (use core-eval-design)."
+  },
+  {
+    "name": "core-workflow-orchestrator",
+    "description": "Use this skill when the user wants to work on Designing and managing complete multi-step AI task pipelines end-to-end. Triggers include \"design a workflow\", \"orchestrate my AI pipeline\", \"build an end-to-end workflow\". Do NOT use when coordinate multiple distinct agents (use core-agent-orchestrator)."
+  },
+  {
+    "name": "gov-data-guardrails",
+    "description": "Use this skill when the user wants to work on Implementing data handling guardrails: PII protection, secret masking, and data minimisation. Triggers include \"handle PII safely\", \"mask sensitive data in my AI pipeline\", \"data minimisation for agents\". Do NOT use when validate the full workflow compliance (use gov-workflow-compliance)."
+  },
+  {
+    "name": "gov-model-compatibility",
+    "description": "Use this skill when the user wants to work on Assessing compatibility between AI models and existing workflows when upgrading or switching models. Triggers include \"check model compatibility\", \"upgrade model safely\", \"will this model work with my workflow\". Do NOT use when pin the model version (use gov-model-governance)."
+  },
+  {
+    "name": "gov-model-governance",
+    "description": "Use this skill when the user wants to work on Governing model selection, version pinning, lifecycle management, and deployment policy. Triggers include \"govern model versions\", \"how do I pin my model in production\", \"model registry\". Do NOT use when validate workflow compliance (use gov-workflow-compliance)."
+  },
+  {
+    "name": "gov-policy-validation",
+    "description": "Use this skill when the user wants to work on Validating AI workflows and prompts against organisational, regulatory, and compliance policies. Triggers include \"validate against policy\", \"compliance validation for AI\", \"policy-as-code for AI\". Do NOT use when harden against injection (use gov-prompt-injection-hardening)."
+  },
+  {
+    "name": "gov-prompt-injection-hardening",
+    "description": "Use this skill when the user wants to work on Hardening AI workflows against prompt injection, indirect injection, and instruction hijacking. Triggers include \"harden against prompt injection\", \"prompt injection defense\", \"protect my RAG pipeline from injection\". Do NOT use when design secure architecture (use core-security-design)."
+  },
+  {
+    "name": "gov-regulated-workflow-design",
+    "description": "Use this skill when the user wants to work on Designing AI workflows for regulated industries with auditability, approval gates, and compliance trails. Triggers include \"design a compliant AI workflow\", \"regulated AI deployment\", \"auditability requirements for AI\". Do NOT use when validate against policy (use gov-policy-validation)."
+  },
+  {
+    "name": "gov-workflow-compliance",
+    "description": "Use this skill when the user wants to work on Validating AI workflows against policy, compliance, and governance requirements. Triggers include \"validate this workflow against policy\", \"make this workflow compliant\", \"governance check for my AI pipeline\". Do NOT use when harden against injection first (use gov-prompt-injection-hardening)."
+  }
+]

@@ -67,7 +67,7 @@ running the telemetry checking script:
 *   **Detailed Enablement Instructions**: For details on the required
     environment variables, Terraform setups, and project dependencies, you MUST
     read and follow:
-    [telemetry_enablement.md](references/telemetry_enablement.md).
+    [telemetry_enablement.md](telemetry_enablement.md).
 
 #### Provision the Online Monitor
 

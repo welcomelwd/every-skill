@@ -35,7 +35,7 @@ for await (const chunk of stream) {
 }
 ```
 
-:::info
+:::note
 
 Mastra uses the OpenAI-compatible `/chat/completions` endpoint. Some provider-specific features may not be available. Check the [NanoGPT documentation](https://docs.nano-gpt.com) for details.
 
@@ -6449,7 +6449,7 @@ Mastra uses the OpenAI-compatible `/chat/completions` endpoint. Some provider-sp
     "toolUsage": true,
     "reasoning": true,
     "contextWindow": 1048576,
-    "maxOutput": 65535,
+    "maxOutput": 1048576,
     "inputCost": 3,
     "outputCost": 15
   },

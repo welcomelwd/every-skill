@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "repository": "GoPlusSecurity/agentguard",
+  "source_url": "https://github.com/GoPlusSecurity/agentguard",
+  "ref": "main",
+  "resolved_commit": "d18e142a88fe708a6bc7ba7acccf65bf0d858c0c",
+  "category": "knowledge",
+  "subcategory": "security",
+  "slug": "agentguard",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-10T23:07:17+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 164,
+  "copied_bytes": 1384317,
+  "excluded_files": [
+    "assets/logo.png: binary content",
+    "mcpb/icon.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

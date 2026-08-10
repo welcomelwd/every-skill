@@ -1983,6 +1983,8 @@ def test_assoc_const_block_use_does_not_pollute_file_map(
     base = "rs_const_block_use.src"
     assert (f"{base}.foo.other", f"{base}.beta.helper") in calls, calls
     assert (f"{base}.foo.other", f"{base}.alpha.helper") not in calls, calls
+    assert (f"{base}.foo", f"{base}.alpha.helper") in calls, calls
+    assert (f"{base}.foo", f"{base}.beta.helper") not in calls, calls
     imports = _pairs(mock_ingestor, RelationshipType.IMPORTS.value)
     assert (f"{base}.foo", f"{base}.alpha") in imports, imports
     assert (f"{base}.foo", f"{base}.beta") in imports, imports
@@ -2076,6 +2078,60 @@ def test_method_local_mod_use_reaches_its_own_functions(
     base = "rs_method_local_only.src"
     assert (f"{base}.foo.S.inner.g", f"{base}.alpha.helper") in calls, calls
     assert (f"{base}.foo.S.inner.g", f"{base}.foo.helper") not in calls, calls
+
+
+def test_two_impls_method_local_mod_inner_keep_separate_uses(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Two impls of the same type each declare a method-local `mod inner`;
+    # both share the effective scope qn foo.S.inner, but their block-local
+    # uses import different helpers. Each inner's function must bind through
+    # its OWN use, not a merged foo.S.inner import map (#1017 shape 3).
+    project = temp_repo / "rs_two_impls_inner"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_two_impls_inner"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod beta;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                "pub struct S;\n\n"
+                "impl S {\n"
+                "    pub fn m(&self) -> u32 {\n"
+                "        mod inner {\n"
+                "            use crate::alpha::helper;\n\n"
+                "            pub fn gm() -> u32 {\n"
+                "                helper()\n"
+                "            }\n"
+                "        }\n"
+                "        inner::gm()\n"
+                "    }\n"
+                "}\n\n"
+                "impl S {\n"
+                "    pub fn n(&self) -> u32 {\n"
+                "        mod inner {\n"
+                "            use crate::beta::helper;\n\n"
+                "            pub fn gn() -> u32 {\n"
+                "                helper()\n"
+                "            }\n"
+                "        }\n"
+                "        inner::gn()\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_two_impls_inner.src"
+    assert (f"{base}.foo.S.inner.gm", f"{base}.alpha.helper") in calls, calls
+    assert (f"{base}.foo.S.inner.gn", f"{base}.beta.helper") in calls, calls
+    assert (f"{base}.foo.S.inner.gm", f"{base}.beta.helper") not in calls, calls
+    assert (f"{base}.foo.S.inner.gn", f"{base}.alpha.helper") not in calls, calls
 
 
 def test_const_block_mod_function_keeps_first_claimed_span(
@@ -3716,6 +3772,44 @@ def test_initializer_block_use_binds_the_blocks_own_call_at_file_level(
     assert (f"{base}.a", f"{base}.gamma.helper") in calls, calls
     mapping = updater.factory.import_processor.import_mapping.get(f"{base}.a")
     assert not mapping or "helper" not in mapping, mapping
+
+
+def test_enum_discriminant_block_use_binds_the_blocks_own_call(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # An enum discriminant is an expression block outside any function or
+    # const/static item. A use inside it is scoped to that block alone: the
+    # discriminant's own call must bind through it, while a sibling fn keeps
+    # the file-level use and the file import map stays unpolluted (#1016).
+    project = temp_repo / "rs_enum_disc_block"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_enum_disc_block"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod beta;\npub mod gamma;\npub mod a;\n",
+            "src/beta.rs": "pub const fn helper() -> u32 {\n    2\n}\n",
+            "src/gamma.rs": "pub const fn helper() -> u32 {\n    3\n}\n",
+            "src/a.rs": (
+                "use crate::beta::helper;\n\n"
+                "#[repr(u32)]\n"
+                "pub enum E {\n"
+                "    A = { use crate::gamma::helper; helper() },\n"
+                "}\n\n"
+                "pub fn f() -> u32 {\n"
+                "    helper()\n"
+                "}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_enum_disc_block.src"
+    assert (f"{base}.a", f"{base}.gamma.helper") in calls, calls
+    assert (f"{base}.a.f", f"{base}.beta.helper") in calls, calls
+    assert (f"{base}.a.f", f"{base}.gamma.helper") not in calls, calls
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.a")
+    assert mapping and mapping.get("helper") == f"{base}.beta.helper", mapping
 
 
 def test_initializer_block_use_binds_the_blocks_own_call_in_a_fn(
@@ -6116,3 +6210,178 @@ def test_watch_modify_of_an_already_deleted_file_leaves_the_listing_alone(
     )
     assert listing is not None, "the full run should have cached the src listing"
     assert "gamma2.rs" not in listing, sorted(listing)
+
+
+def test_two_bodied_cfg_twin_mods_keep_separate_uses(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Two mutually-exclusive cfg twins declare a bodied `mod run` in one
+    # file; both share the qn foo.run and are indexed unconditionally, but
+    # each twin imports a different helper. A twin's function must bind
+    # through its OWN mod-body use, not the merged foo.run map (#1017).
+    project = temp_repo / "rs_cfg_twin_bodied"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_cfg_twin_bodied"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod beta;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                '#[cfg(feature = "ext")]\n'
+                "pub mod run {\n"
+                "    use crate::alpha::helper;\n\n"
+                "    pub fn ga() -> u32 {\n"
+                "        helper()\n"
+                "    }\n"
+                "}\n\n"
+                '#[cfg(not(feature = "ext"))]\n'
+                "pub mod run {\n"
+                "    use crate::beta::helper;\n\n"
+                "    pub fn gb() -> u32 {\n"
+                "        helper()\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_cfg_twin_bodied.src"
+    assert (f"{base}.foo.run.ga", f"{base}.alpha.helper") in calls, calls
+    assert (f"{base}.foo.run.gb", f"{base}.beta.helper") in calls, calls
+    assert (f"{base}.foo.run.ga", f"{base}.beta.helper") not in calls, calls
+    assert (f"{base}.foo.run.gb", f"{base}.alpha.helper") not in calls, calls
+
+
+def _module_qns(mock_ingestor: MagicMock) -> set[str]:
+    return {
+        props["qualified_name"]
+        for label, props in (
+            c[0] for c in mock_ingestor.ensure_node_batch.call_args_list
+        )
+        if label == "Module"
+    }
+
+
+def test_inline_mod_in_a_trait_body_has_consistent_module_and_defines_qns(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # An inline mod in a trait const initializer keeps the trait scope in its
+    # qn (foo.T.inner). Its Module node, the DEFINES from its enclosing module,
+    # and the DEFINES to its own functions must all agree, or the graph audit
+    # reports an orphan module and a dangling edge (issue #1018).
+    project = temp_repo / "rs_inline_mod_trait"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_inline_mod_trait"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod foo;\n",
+            "src/foo.rs": (
+                "pub trait T {\n"
+                "    const C: u32 = {\n"
+                "        mod inner {\n"
+                "            pub const fn g() -> u32 {\n                1\n            }\n"
+                "        }\n"
+                "        inner::g()\n"
+                "    };\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    base = "rs_inline_mod_trait.src"
+    modules = _module_qns(mock_ingestor)
+    assert f"{base}.foo.T.inner" in modules, modules
+    assert f"{base}.foo.inner" not in modules, modules
+    defines = _pairs(mock_ingestor, RelationshipType.DEFINES.value)
+    assert (f"{base}.foo", f"{base}.foo.T.inner") in defines, defines
+    assert (f"{base}.foo.T.inner", f"{base}.foo.T.inner.g") in defines, defines
+
+
+def test_inline_mod_in_an_impl_body_has_consistent_module_and_defines_qns(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The impl-body variant: the items inside key under the impl target
+    # (foo.S.inner.g), so the inline Module node keys as foo.S.inner too, and
+    # its enclosing-module DEFINES and function DEFINES must agree (issue
+    # #1018).
+    project = temp_repo / "rs_inline_mod_impl"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_inline_mod_impl"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod foo;\n",
+            "src/foo.rs": (
+                "pub struct S;\n\n"
+                "impl S {\n"
+                "    pub const C: u32 = {\n"
+                "        mod inner {\n"
+                "            pub const fn g() -> u32 {\n                1\n            }\n"
+                "        }\n"
+                "        inner::g()\n"
+                "    };\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    base = "rs_inline_mod_impl.src"
+    modules = _module_qns(mock_ingestor)
+    assert f"{base}.foo.S.inner" in modules, modules
+    assert f"{base}.foo.inner" not in modules, modules
+    defines = _pairs(mock_ingestor, RelationshipType.DEFINES.value)
+    assert (f"{base}.foo", f"{base}.foo.S.inner") in defines, defines
+    assert (f"{base}.foo.S.inner", f"{base}.foo.S.inner.g") in defines, defines
+
+
+def test_nested_inline_mods_in_a_trait_body_keep_the_scoped_parent_qn(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A mod nested inside another mod inside a trait body: the inner mod's
+    # enclosing-module DEFINES must point at the outer mod's SCOPED qn
+    # (foo.T.outer), not a mods-only re-walk that drops the trait scope to
+    # foo.outer (a node that does not exist), which would dangle the edge
+    # (CodeRabbit review on PR #1166).
+    project = temp_repo / "rs_nested_inline_mod_trait"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_nested_inline_mod_trait"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod foo;\n",
+            "src/foo.rs": (
+                "pub trait T {\n"
+                "    const C: u32 = {\n"
+                "        mod outer {\n"
+                "            pub mod inner {\n"
+                "                pub const fn g() -> u32 {\n                    1\n                }\n"
+                "            }\n"
+                "        }\n"
+                "        outer::inner::g()\n"
+                "    };\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    base = "rs_nested_inline_mod_trait.src"
+    modules = _module_qns(mock_ingestor)
+    assert f"{base}.foo.T.outer" in modules, modules
+    assert f"{base}.foo.T.outer.inner" in modules, modules
+    assert f"{base}.foo.outer" not in modules, modules
+    defines = _pairs(mock_ingestor, RelationshipType.DEFINES.value)
+    assert (f"{base}.foo", f"{base}.foo.T.outer") in defines, defines
+    assert (f"{base}.foo.T.outer", f"{base}.foo.T.outer.inner") in defines, defines
+    assert (
+        f"{base}.foo.T.outer.inner",
+        f"{base}.foo.T.outer.inner.g",
+    ) in defines, defines

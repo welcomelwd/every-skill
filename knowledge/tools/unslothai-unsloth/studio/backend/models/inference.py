@@ -1019,6 +1019,13 @@ class ChatMessage(BaseModel):
     content: Optional[Union[str, list[ContentPart]]] = Field(
         None, description = "Message content (string or multimodal parts)"
     )
+    reasoning_content: Optional[str] = Field(
+        None,
+        description = (
+            "Assistant reasoning from an earlier turn, replayed to local chat templates "
+            "that consume the OpenAI-compatible reasoning_content field."
+        ),
+    )
     tool_call_id: Optional[str] = Field(
         None,
         description = "OpenAI tool-result messages: id of the tool call this result belongs to.",
@@ -1039,6 +1046,14 @@ class ChatMessage(BaseModel):
             "from assistant messages to replay text-part signatures."
         ),
     )
+
+    @field_validator("reasoning_content", mode = "before")
+    @classmethod
+    def _ignore_non_string_reasoning(cls, value):
+        # This field used to be ignored as an unknown key. Some compatible
+        # gateways send structured reasoning, so declaring the string form must
+        # not turn those previously accepted requests into validation errors.
+        return value if isinstance(value, str) else None
 
     @model_validator(mode = "after")
     def _validate_role_shape(self) -> "ChatMessage":
@@ -3236,7 +3251,9 @@ class VideoLoadRequest(BaseModel):
             "backend's transformer_quant field.",
         )
     )
-    text_encoder_quant: Optional[Literal["fp8", "fp8_dynamic", "int8", "nvfp4"]] = Field(
+    text_encoder_quant: Optional[
+        Literal["auto", "none", "off", "fp8", "fp8_dynamic", "int8", "nvfp4"]
+    ] = Field(
         None,
         description = "Quantise the dense companion text encoder (Gemma3 / UMT5 / Qwen2.5-VL), "
         "which loads bf16 from the base repo regardless of how the DiT was sourced and is often "
@@ -3244,7 +3261,10 @@ class VideoLoadRequest(BaseModel):
         "8.9); fp8_dynamic = torchao per-row fp8 COMPUTE on the tensor cores (cc >= 8.9); int8 = "
         "torchao int8 COMPUTE with per-family keep-bf16 selection (cc >= 8.0; falls back to fp8 "
         "for a family without a measured schedule); nvfp4 = torchao 4-bit weight-only (Blackwell "
-        "sm_100+). null keeps the encoder dense. Mirrors the image backend's field.",
+        "sm_100+). null/auto leaves the choice to the backend, which keeps the encoder dense on "
+        "every family except MiniMax-H3, where it takes the hosted quantized conditioner; "
+        "none/off always keeps the released bf16 encoder, which on MiniMax-H3 is the only way "
+        "to ask for it. Mirrors the image backend's field.",
     )
 
     h3_task: Optional[Literal["fl2va", "ref2va"]] = Field(

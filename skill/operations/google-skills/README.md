@@ -54,6 +54,8 @@ repo to install.
   - [**Migrating from Gemini API in AI Studio to Agent Platform**](./skills/cloud/agent-platform-migrate-from-ai-studio)
   - [**Skill Registry**](./skills/cloud/agent-platform-skill-registry)
 - **Infrastructure**
+  - [**Custom Infrastructure Design and Deployment Skill**](./skills/cloud/design-deploy)
+  - [**Deployment Troubleshooting Skill**](./skills/cloud/design-deploy/references/infra-deployment-debugging)
   - [**GKE AI/ML Inference**](./skills/cloud/gke-inference)
   - [**GKE App Onboarding**](./skills/cloud/gke-app-onboarding)
   - [**GKE Backup & Disaster Recovery**](./skills/cloud/gke-backup-dr)
@@ -78,6 +80,7 @@ repo to install.
   - [**Google Cloud global external Application Load Balancer Configuration Skill**](./skills/cloud/google-cloud-global-frontend-configuration)
   - [**Google Cloud Networking Observability Expert**](./skills/cloud/google-cloud-networking-observability)
   - [**Google Cloud Storage Basics**](./skills/cloud/google-cloud-storage-basics)
+  - [**Simplified GCP Modular Terraform Architect Skill**](./skills/cloud/design-deploy/references/design)
 - **Databases and analytics**
   - [**AlloyDB Basics**](./skills/cloud/alloydb-basics)
   - [**BigFrames (BigQuery DataFrame) basics**](./skills/cloud/bigquery-bigframes)
@@ -140,11 +143,12 @@ repo to install.
 
 ## Additional Google skills
 
--   [**Flutter Skills**](https://github.com/flutter/skills)
--   [**Dart Skills**](https://github.com/dart-lang/skills)
 -   [**Advanced Google Cloud Storage Skills**](https://github.com/gemini-cli-extensions/google-cloud-storage)
 -   [**Agent Development Kit (ADK) Skills**](https://github.com/google/agents-cli)
+-   [**Android Skills**](https://github.com/android/skills)
+-   [**Dart Skills**](https://github.com/dart-lang/skills)
 -   [**Firestore Skills**](https://github.com/firebase/agent-skills/tree/main/skills/firebase-firestore)
+-   [**Flutter Skills**](https://github.com/flutter/skills)
 -   [**Genkit Skills**](https://github.com/genkit-ai/skills)
 
 ## Plugins

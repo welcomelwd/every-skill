@@ -895,6 +895,11 @@ class ImportProcessor:
                 for full_name in self.import_mapping[module_qn].values():
                     if (module_qn, full_name) in self._cpp_declaration_mappings:
                         continue
+                    if full_name == cs.RUST_UNRESOLVABLE_QN:
+                        # The unrepresentable-#[path] sentinel stays in the map
+                        # for name binding but names no module, so it must never
+                        # become a phantom IMPORTS edge (issue #1082).
+                        continue
                     self._deferred_import_edges.append(
                         DeferredImportEdge(
                             module_qn=module_qn,
@@ -912,6 +917,11 @@ class ImportProcessor:
         # Entry point for import shapes discovered outside parse_imports (the
         # CommonJS destructuring fallback); every IMPORTS edge goes through the same
         # deferred verification.
+        if full_name == cs.RUST_UNRESOLVABLE_QN:
+            # The sentinel names a module the qn scheme cannot key (an
+            # unrepresentable #[path] target): it has no referent, so it must
+            # never become a phantom ExternalModule IMPORTS edge (issue #1082).
+            return
         self._deferred_import_edges.append(
             DeferredImportEdge(
                 module_qn=module_qn, full_name=full_name, language=language
@@ -2238,7 +2248,7 @@ class ImportProcessor:
 
     def _rust_walk_mods(
         self, parts: list[str], rest: list[str], dir_backed: bool = False
-    ) -> list[str]:
+    ) -> list[str] | None:
         """Walk a path tail from a resolved module prefix, honouring `#[path]`.
 
         Only the crate ENTRY's redirects are read above, and the tail used to
@@ -2256,12 +2266,15 @@ class ImportProcessor:
                 break
             decls, base = found
             redirect = decls.redirects.get(segment)
-            target = (
-                rs_utils.path_attribute_qn_parts(base, redirect) if redirect else None
-            )
-            if redirect is None or target is None:
+            if redirect is None:
                 out, dir_backed = [*out, segment], False
                 continue
+            target = rs_utils.path_attribute_qn_parts(base, redirect)
+            if target is None:
+                # A #[path] the qn scheme cannot key names a file outside the
+                # indexed tree: no module qn is its referent, so decline
+                # rather than attach the name-derived sibling shadow (#1082).
+                return None
             # A redirect onto a `mod.rs` names the DIRECTORY, and the qn
             # scheme drops the `mod` segment, so the resulting parts are
             # indistinguishable from a plain file module: without this the
@@ -2274,9 +2287,10 @@ class ImportProcessor:
     def _rust_join_mods(
         self, parts: list[str], rest: list[str], dir_backed: bool = False
     ) -> str:
-        return cs.SEPARATOR_DOT.join(
-            [self.project_name, *self._rust_walk_mods(parts, rest, dir_backed)]
-        )
+        walked = self._rust_walk_mods(parts, rest, dir_backed)
+        if walked is None:
+            return cs.RUST_UNRESOLVABLE_QN
+        return cs.SEPARATOR_DOT.join([self.project_name, *walked])
 
     def _rust_attach(
         self, dir_parts: list[str], stem: str, rest: list[str], definitive: bool
@@ -2296,13 +2310,18 @@ class ImportProcessor:
             if redirect := chosen.redirects.get(rest[0]):
                 # The declaration names its backing file outright, and the
                 # module keys under that file, so the declared name never
-                # appears in the qn at all (issue #1035).
-                if target := rs_utils.path_attribute_qn_parts(dir_parts, redirect):
-                    return self._rust_join_mods(
-                        target,
-                        rest[1:],
-                        redirect.rsplit(cs.SEPARATOR_SLASH, 1)[-1] == cs.MOD_RS,
-                    )
+                # appears in the qn at all (issue #1035). A target the qn
+                # scheme cannot key names a file outside the indexed tree:
+                # decline rather than fall through to the name-derived
+                # sibling shadow below (issue #1082).
+                target = rs_utils.path_attribute_qn_parts(dir_parts, redirect)
+                if target is None:
+                    return cs.RUST_UNRESOLVABLE_QN
+                return self._rust_join_mods(
+                    target,
+                    rest[1:],
+                    redirect.rsplit(cs.SEPARATOR_SLASH, 1)[-1] == cs.MOD_RS,
+                )
             if rest[0] in file_mods:
                 return self._rust_join_mods([*dir_parts, rest[0]], rest[1:])
             if rest[0] in items:
@@ -2375,6 +2394,8 @@ class ImportProcessor:
         if not rest:
             return base_qn
         walked = self._rust_walk_mods(parts, rest)
+        if walked is None:
+            return cs.RUST_UNRESOLVABLE_QN
         if walked == [*parts, *rest]:
             # No redirect fired, so keep base_qn verbatim rather than
             # rebuilding it from project_name, which re-splits differently
@@ -3240,16 +3261,20 @@ class ImportProcessor:
         self._rust_pending_mod_scope_uses.setdefault(module_qn, []).append(
             (effective_qn, pure_chain, resolved_imports)
         )
-        if not pure_chain:
-            # A fn-local mod can lose the shared-key arbitration to a pure
-            # twin (issue #1017: one qn, two modules), yet its own functions
-            # still see this use: fan it out to their spans so the weak
-            # fn-scope map answers for them instead of whatever the key
-            # ends up holding.
-            for line, col in rs_utils.enclosing_mod_fn_spans(use_node):
-                self._rust_pending_fn_scope_uses.setdefault(module_qn, []).append(
-                    (line, col, resolved_imports, True)
-                )
+        # Fan every inline-mod use out to its own functions' spans as weak
+        # fn-scope entries, so a function binds through its enclosing mod
+        # body even when the shared qn key is corrupted (issue #1017: one
+        # qn, two modules). A fn-local mod can lose the shared-key
+        # arbitration to a pure twin, and two pure cfg/macro twins merge
+        # onto one key and overwrite each other; either way the span-gated
+        # fn-scope map answers for each function instead of whatever the key
+        # ends up holding. enclosing_mod_fn_spans is empty unless the use
+        # sits directly in an inline `mod {}` body, so file-level uses are
+        # untouched.
+        for line, col in rs_utils.enclosing_mod_fn_spans(use_node):
+            self._rust_pending_fn_scope_uses.setdefault(module_qn, []).append(
+                (line, col, resolved_imports, True)
+            )
 
     def retract_rust_mod_scope_uses(self, module_qn: str) -> None:
         # Reverse replay so a key shadowing another file's entries (the
