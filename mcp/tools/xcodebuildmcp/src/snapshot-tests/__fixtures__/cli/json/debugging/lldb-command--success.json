@@ -1,0 +1,12 @@
+{
+  "schema": "xcodebuildmcp.output.debug-command-result",
+  "schemaVersion": "2",
+  "didError": false,
+  "error": null,
+  "data": {
+    "command": "breakpoint list",
+    "outputLines": [
+      "No breakpoints currently set."
+    ]
+  }
+}

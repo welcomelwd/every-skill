@@ -1,0 +1,12 @@
+
+📦 Swift Package Build
+
+   Package: <TMPDIR>/spm/NONEXISTENT
+
+Errors (1):
+
+  ✗ chdir error: No such file or directory (2): <TMPDIR>/spm/NONEXISTENT
+
+❌ Build failed. (⏱️ <DURATION>)
+  └ Files:
+     └ Build Logs: ~/Library/Developer/XcodeBuildMCP/workspaces/XcodeBuildMCP-<HASH>/logs/build_spm_<TIMESTAMP>_pid<PID>.log

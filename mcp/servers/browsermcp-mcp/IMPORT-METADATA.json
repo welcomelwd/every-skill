@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "repository": "BrowserMCP/mcp",
+  "source_url": "https://github.com/BrowserMCP/mcp",
+  "ref": "main",
+  "resolved_commit": "9db12f2b4f61294f0bc11708986abc47db539d6c",
+  "category": "mcp",
+  "subcategory": "servers",
+  "slug": "browsermcp-mcp",
+  "license": null,
+  "source_date": null,
+  "imported_at": "2026-08-10T07:54:13+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 17,
+  "copied_bytes": 31252,
+  "excluded_files": [
+    ".github/images/banner.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

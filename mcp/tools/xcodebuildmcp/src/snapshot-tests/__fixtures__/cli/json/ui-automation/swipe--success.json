@@ -1,0 +1,58 @@
+{
+  "schema": "xcodebuildmcp.output.ui-action-result",
+  "schemaVersion": "2",
+  "didError": false,
+  "error": null,
+  "data": {
+    "summary": {
+      "status": "SUCCEEDED"
+    },
+    "action": {
+      "type": "swipe",
+      "withinElementRef": "<ELEMENT_REF>",
+      "direction": "up",
+      "from": {
+        "x": 201,
+        "y": 468
+      },
+      "to": {
+        "x": 201,
+        "y": 406
+      }
+    },
+    "artifacts": {
+      "simulatorId": "<UUID>"
+    },
+    "capture": {
+      "type": "runtime-snapshot",
+      "rs": "1",
+      "screenHash": "<SCREEN_HASH>",
+      "seq": 1,
+      "count": 99999,
+      "targets": [],
+      "scroll": [
+        "<REF>|swipe|scroll-view|||snapshot-scroll-surface"
+      ],
+      "text": [
+        "<REF>|text|text|Snapshot row 0||",
+        "<REF>|text|text|Snapshot row 1||",
+        "<REF>|text|text|Snapshot row 2||",
+        "<REF>|text|text|Snapshot row 3||",
+        "<REF>|text|text|Snapshot row 4||",
+        "<REF>|text|text|Snapshot row 5||",
+        "<REF>|text|text|Snapshot row 6||",
+        "<REF>|text|text|Snapshot row 7||",
+        "<REF>|text|text|Snapshot row 8||",
+        "<REF>|text|text|Snapshot row 9||",
+        "<REF>|text|text|Snapshot row 10||",
+        "<REF>|text|text|Snapshot row 11||",
+        "<REF>|text|text|Snapshot row 12||",
+        "<REF>|text|text|Snapshot row 13||"
+      ],
+      "udid": "<UUID>"
+    }
+  },
+  "nextSteps": [
+    "<POST_SWIPE_NEXT_STEP>"
+  ]
+}

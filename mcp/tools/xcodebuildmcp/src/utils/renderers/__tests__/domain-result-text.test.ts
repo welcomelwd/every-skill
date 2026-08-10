@@ -1,0 +1,223 @@
+import { describe, expect, it } from 'vitest';
+import type {
+  BuildResultDomainResult,
+  LaunchResultDomainResult,
+  TestResultDomainResult,
+  UiActionResultDomainResult,
+} from '../../../types/domain-results.ts';
+import { renderDomainResultTextItems } from '../domain-result-text.ts';
+
+function buildResultWithDiagnostics(): BuildResultDomainResult {
+  return {
+    kind: 'build-result',
+    didError: false,
+    error: null,
+    summary: { status: 'SUCCEEDED' },
+    artifacts: { scheme: 'MyScheme' },
+    diagnostics: {
+      warnings: [{ message: 'unused variable "foo"', location: 'App.swift:12' }],
+      errors: [{ message: 'cannot find "bar" in scope', location: 'App.swift:20' }],
+    },
+  };
+}
+
+function sectionTitles(items: ReturnType<typeof renderDomainResultTextItems>): string[] {
+  return items.flatMap((item) => (item.type === 'section' ? [item.title] : []));
+}
+
+function uiActionResult(action: UiActionResultDomainResult['action']): UiActionResultDomainResult {
+  return {
+    kind: 'ui-action-result',
+    didError: false,
+    error: null,
+    summary: { status: 'SUCCEEDED' },
+    action,
+    artifacts: { simulatorId: 'SIM-123' },
+  };
+}
+
+function launchResult(
+  artifacts: LaunchResultDomainResult['artifacts'],
+  error: string,
+): LaunchResultDomainResult {
+  return {
+    kind: 'launch-result',
+    didError: true,
+    error,
+    summary: { status: 'FAILED' },
+    artifacts,
+    diagnostics: { warnings: [], errors: [] },
+  };
+}
+
+describe('renderDomainResultTextItems', () => {
+  it('renders macOS launch errors from artifacts instead of exact error text', () => {
+    expect(
+      renderDomainResultTextItems(
+        launchResult({ appPath: '/tmp/Test.app' }, 'Custom launch failure.'),
+      ),
+    ).toMatchInlineSnapshot(`
+      [
+        {
+          "operation": "Launch macOS App",
+          "params": [
+            {
+              "label": "App",
+              "value": "/tmp/Test.app",
+            },
+          ],
+          "type": "header",
+        },
+        {
+          "level": "error",
+          "message": "Custom launch failure.",
+          "type": "status",
+        },
+      ]
+    `);
+  });
+
+  it('does not classify targetless simulator launch errors as macOS without app artifacts', () => {
+    expect(
+      renderDomainResultTextItems(
+        launchResult({ bundleId: 'com.example.App' }, 'Failed to launch app.'),
+      ),
+    ).toMatchInlineSnapshot(`
+      [
+        {
+          "operation": "Launch App",
+          "params": [
+            {
+              "label": "Bundle ID",
+              "value": "com.example.App",
+            },
+          ],
+          "type": "header",
+        },
+        {
+          "level": "error",
+          "message": "Failed to launch app.",
+          "type": "status",
+        },
+      ]
+    `);
+  });
+
+  it('renders drag UI action results', () => {
+    expect(
+      renderDomainResultTextItems(
+        uiActionResult({
+          type: 'drag',
+          elementRef: 'e3',
+          direction: 'up',
+          durationSeconds: 0.5,
+        }),
+      ),
+    ).toMatchInlineSnapshot(`
+      [
+        {
+          "operation": "Drag",
+          "params": [
+            {
+              "label": "Simulator",
+              "value": "SIM-123",
+            },
+          ],
+          "type": "header",
+        },
+        {
+          "level": "success",
+          "message": "Drag up from elementRef e3 duration=0.5s simulated successfully.",
+          "type": "status",
+        },
+      ]
+    `);
+  });
+
+  it('renders build warnings by default', () => {
+    const titles = sectionTitles(renderDomainResultTextItems(buildResultWithDiagnostics()));
+
+    expect(titles).toContain('Warnings (1):');
+    expect(titles).toContain('Errors (1):');
+  });
+
+  it('omits build warnings when suppressWarnings is set, keeping errors', () => {
+    const titles = sectionTitles(
+      renderDomainResultTextItems(buildResultWithDiagnostics(), undefined, {
+        suppressWarnings: true,
+      }),
+    );
+
+    expect(titles).not.toContain('Warnings (1):');
+    expect(titles).toContain('Errors (1):');
+  });
+
+  it('renders prepared test artifacts in build and test results', () => {
+    const buildResult: BuildResultDomainResult = {
+      kind: 'build-result',
+      didError: false,
+      error: null,
+      summary: { status: 'SUCCEEDED' },
+      artifacts: {
+        testProductsPath: 'artifacts/App.xctestproducts',
+        xctestrunPaths: ['artifacts/App.xctestproducts/App.xctestrun'],
+      },
+      diagnostics: { warnings: [], errors: [] },
+    };
+    const testResult: TestResultDomainResult = {
+      kind: 'test-result',
+      didError: false,
+      error: null,
+      summary: { status: 'SUCCEEDED' },
+      artifacts: {
+        testProductsPath: 'artifacts/App.xctestproducts',
+        xcresultPath: 'artifacts/test.xcresult',
+      },
+      diagnostics: { warnings: [], errors: [], testFailures: [] },
+    };
+
+    expect(renderDomainResultTextItems(buildResult)).toContainEqual({
+      type: 'detail-tree',
+      items: [
+        { label: 'Test Products', path: 'artifacts/App.xctestproducts' },
+        { label: 'XCTest Run', path: 'artifacts/App.xctestproducts/App.xctestrun' },
+      ],
+    });
+    expect(renderDomainResultTextItems(testResult)).toContainEqual({
+      type: 'detail-tree',
+      items: [
+        { label: 'Result Bundle', path: 'artifacts/test.xcresult' },
+        { label: 'Test Products', path: 'artifacts/App.xctestproducts' },
+      ],
+    });
+  });
+
+  it('renders batch UI action results', () => {
+    expect(
+      renderDomainResultTextItems(
+        uiActionResult({
+          type: 'batch',
+          stepCount: 2,
+        }),
+      ),
+    ).toMatchInlineSnapshot(`
+      [
+        {
+          "operation": "Batch UI Actions",
+          "params": [
+            {
+              "label": "Simulator",
+              "value": "SIM-123",
+            },
+          ],
+          "type": "header",
+        },
+        {
+          "level": "success",
+          "message": "Batch UI automation completed successfully (2 steps).",
+          "type": "status",
+        },
+      ]
+    `);
+  });
+});

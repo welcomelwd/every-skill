@@ -1,0 +1,84 @@
+---
+title: Code2Prompt Documentation
+description: Official Code2prompt Documentation
+template: splash
+hero:
+  tagline: Transform Your Code into AI-Optimized Prompts in Seconds
+  image:
+    file: ../../../assets/logo_dark_v0.0.1.svg
+  actions:
+    - text: Get Started 🚀
+      link: /docs/tutorials/getting_started
+    - text: Installation 📥
+      link: /docs/how_to/install
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+import { LinkCard } from "@astrojs/starlight/components";
+
+## Quick Start
+
+<LinkCard title="Getting Started 🚀" href="/docs/tutorials/getting_started" />
+<LinkCard title="Installation 📥" href="/docs/how_to/install" />
+<LinkCard title="API Reference" href="/docs/how_to/install" />
+<LinkCard title="Learn Filtering 🔍" href="/docs/tutorials/learn_filters" />
+<LinkCard title="Learn Templating 📝" href="/docs/tutorials/learn_templates" />
+<LinkCard title="Vision 🔮" href="/docs/vision" />
+
+`code2prompt` is a powerful code ingestion tool designed to generate prompts for code analysis, generation, and other tasks. It works by traversing directories, building a tree structure, and gathering informations about each file.
+
+It simplifies the process of combining and formatting code, making it easy to analyze, document, or refactor code using LLMs
+
+You can use `code2prompt` the following ways:
+
+<CardGrid>
+  <Card title="Core" icon="seti:rust">
+    Core library blazingly fast for code ingestion
+  </Card>
+  <Card title="CLI" icon="seti:powershell">
+    Command Line Interface specially designed for humans
+  </Card>
+  <Card title="SDK" icon="seti:python">
+    Software Development Kit for AI agents and automation scripts
+  </Card>
+  <Card title="MCP" icon="seti:folder">
+    Model Context Protocol server for LLMs on steroids
+  </Card>
+</CardGrid>
+---
+
+## Key Features
+
+- **Generate LLM Prompts**: Quickly convert entire codebases into structured LLM prompts.
+- **Glob Pattern Filtering**: Include or exclude specific files and directories using glob patterns.
+- **Customizable Templates**: Tailor prompt generation with Handlebars templates.
+- **Token Counting**: Analyze token usage and optimize for LLMs with varying context windows.
+- **Git Integration**: Include Git diffs and commit messages in prompts for code reviews.
+- **Respects `.gitignore`**: Automatically ignores files listed in `.gitignore` to streamline prompt generation.
+
+---
+
+## Why `code2prompt`?
+
+Instead of just blindly concatenating files together, `code2prompt` is built to curate the perfect context window for your LLM, saving you money and preventing model hallucination.
+
+1. **Smart Data Extraction**: Stop blowing up your token limits on raw data. When `code2prompt` encounters a .csv, .tsv, .jsonl, or Jupyter Notebook (.ipynb), it intelligently extracts only the structural schema and sample rows/cells, giving the LLM the context it needs without the bloat.
+
+2. **Precision Context Filtering**: It natively respects your .gitignore and uses an advanced glob pattern engine (--include and --exclude) so you can isolate exactly which modules you want to send.
+
+3. **Zero-Overhead Token Math**: It uses native Tiktoken encodings (like o200k and cl100k) to calculate exact token counts locally before you send a massive payload to an API.
+
+4. **Template-Driven Workflows**: Use powerful Handlebars templates to automatically inject your project's directory tree, git diffs, and source code into specialized, repeatable prompts.
+
+5. **Built for Any Environment**: Navigate visually with the built-in TUI, automate tasks via the CLI, or give LLM agents direct repository access using the MCP server.
+
+---
+
+## Example Use Cases
+- **One-Shot PR & Commit Generation**: Leverage built-in Git integration to compare branch diffs and let your LLM write highly detailed, context-aware PR descriptions automatically.
+
+- **CTF & Security Analysis**: Use built-in templates explicitly designed for Web, Cryptography, or Binary Exploitation CTF solving, handing the LLM the exact file constraints it needs to spot vulnerabilities.
+
+- **Architectural Refactoring**: Feed a specific module—along with the visual directory tree—into a cleanup template to get refactoring suggestions that respect your project's overall structure.
+
+- **Instant Onboarding & Documentation**: Generate a full repository token map and structural overview to quickly understand massive new codebases, or auto-generate robust README.md files.

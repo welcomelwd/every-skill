@@ -1,0 +1,39 @@
+name: Warden watchdog
+
+on:
+  workflow_run:
+    workflows: [Warden]
+    # GitHub omits `requested` for reruns, so reruns are caught when they enter `in_progress`.
+    types: [requested, in_progress]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  enforce-timeout:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      (github.event.action == 'requested' || github.event.workflow_run.run_attempt > 1)
+    runs-on: ubuntu-latest
+    timeout-minutes: 11
+    concurrency:
+      group: warden-watchdog-${{ github.event.workflow_run.id }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Enforce Warden timeout
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TARGET_RUN_ID: ${{ github.event.workflow_run.id }}
+          TARGET_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          WARDEN_MAX_RUNTIME_SECONDS: 600
+          WARDEN_POLL_SECONDS: 15
+        run: node scripts/warden-watchdog.mjs

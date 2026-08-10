@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "repository": "modelcontextprotocol/go-sdk",
+  "source_url": "https://github.com/modelcontextprotocol/go-sdk",
+  "ref": "main",
+  "resolved_commit": "e9a85e285f42799bf7e85ff0e7654788bafd272c",
+  "category": "mcp",
+  "subcategory": "clients",
+  "slug": "modelcontextprotocol-go-sdk",
+  "license": null,
+  "source_date": null,
+  "imported_at": "2026-08-10T07:54:13+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 220,
+  "copied_bytes": 2133033,
+  "excluded_files": [
+    "examples/server/everything/mcp.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

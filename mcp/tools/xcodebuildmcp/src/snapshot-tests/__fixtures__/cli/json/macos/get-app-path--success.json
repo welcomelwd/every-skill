@@ -1,0 +1,24 @@
+{
+  "schema": "xcodebuildmcp.output.app-path",
+  "schemaVersion": "2",
+  "didError": false,
+  "error": null,
+  "data": {
+    "request": {
+      "scheme": "MCPTest",
+      "projectPath": "example_projects/macOS/MCPTest.xcodeproj",
+      "platform": "macOS"
+    },
+    "summary": {
+      "status": "SUCCEEDED",
+      "target": "macos"
+    },
+    "artifacts": {
+      "appPath": "<TMPDIR>/DerivedData/Build/Products/Debug/MCPTest.app"
+    }
+  },
+  "nextSteps": [
+    "Get bundle ID: xcodebuildmcp macos get-macos-bundle-id --app-path <TMPDIR>/DerivedData/Build/Products/Debug/MCPTest.app",
+    "Launch app: xcodebuildmcp macos launch --app-path <TMPDIR>/DerivedData/Build/Products/Debug/MCPTest.app"
+  ]
+}

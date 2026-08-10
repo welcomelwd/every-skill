@@ -1,0 +1,111 @@
+//! Output widget for displaying generated prompt with scrolling capability.
+
+use crate::model::Model;
+use ratatui::{
+    prelude::*,
+    widgets::{Block, Borders, Paragraph, Wrap},
+};
+
+/// State for the output widget - no longer needed, read directly from Model
+pub type OutputState = ();
+
+/// Widget for output display with scrolling
+pub struct OutputWidget<'a> {
+    pub model: &'a Model,
+}
+
+impl<'a> OutputWidget<'a> {
+    pub fn new(model: &'a Model) -> Self {
+        Self { model }
+    }
+}
+
+impl<'a> StatefulWidget for OutputWidget<'a> {
+    type State = OutputState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, _state: &mut Self::State) {
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Info bar
+                Constraint::Min(0),    // Prompt content
+                Constraint::Length(3), // Controls
+            ])
+            .split(area);
+
+        // Simplified status bar - focus only on prompt availability
+        let info_text = if self.model.prompt_output.analysis_in_progress {
+            "Generating prompt...".to_string()
+        } else if let Some(error) = &self.model.prompt_output.analysis_error {
+            format!("Generation failed: {}", error)
+        } else if self.model.prompt_output.result.is_some() {
+            "✓ Prompt ready! Copy (C) or Save (S)".to_string()
+        } else {
+            "Press Enter to generate prompt from selected files".to_string()
+        };
+
+        let info_widget = Paragraph::new(info_text)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Generated Prompt"),
+            )
+            .style(if self.model.prompt_output.analysis_error.is_some() {
+                Style::default().fg(Color::Red)
+            } else if self.model.prompt_output.analysis_in_progress {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default().fg(Color::Green)
+            });
+        Widget::render(info_widget, layout[0], buf);
+
+        // Prompt content
+        let content = if self.model.prompt_output.analysis_in_progress {
+            "Generating prompt...".to_string()
+        } else if let Some(result) = &self.model.prompt_output.result {
+            result.prompt.clone()
+        } else {
+            "Press <Enter> to run analysis and generate prompt.\n\nSelected files will be processed according to your settings.".to_string()
+        };
+
+        // Compute viewport-aware scroll
+        let content_height = layout[1].height.saturating_sub(2).max(1) as usize; // borders
+        let (display_scroll, scroll_info) = if let Some(result) = &self.model.prompt_output.result {
+            let total_lines = result.prompt.lines().count();
+            let max_scroll = total_lines.saturating_sub(content_height);
+            let ds = self
+                .model
+                .prompt_output
+                .output_scroll
+                .min(max_scroll as u16);
+            let current_line = ds as usize + 1;
+            (
+                ds,
+                format!("Generated Prompt (Line {}/{})", current_line, total_lines),
+            )
+        } else {
+            (
+                self.model.prompt_output.output_scroll,
+                "Generated Prompt".to_string(),
+            )
+        };
+
+        let prompt_widget = Paragraph::new(content)
+            .block(Block::default().borders(Borders::ALL).title(scroll_info))
+            .wrap(Wrap { trim: false })
+            .scroll((display_scroll, 0));
+        Widget::render(prompt_widget, layout[1], buf);
+
+        // Controls
+        let controls_text = if self.model.prompt_output.result.is_some() {
+            "↑↓/PgUp/PgDn: Scroll | C: Copy | S: Save | Enter: Re-run"
+        } else {
+            "Enter: Run Analysis"
+        };
+
+        let controls_widget = Paragraph::new(controls_text)
+            .block(Block::default().borders(Borders::ALL).title("Controls"))
+            .style(Style::default().fg(Color::Gray));
+        Widget::render(controls_widget, layout[2], buf);
+    }
+}

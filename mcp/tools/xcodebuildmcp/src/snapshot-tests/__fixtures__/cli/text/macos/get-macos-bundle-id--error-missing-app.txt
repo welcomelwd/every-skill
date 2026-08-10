@@ -1,0 +1,10 @@
+
+🔍 Get macOS Bundle ID
+
+   App: <TMPDIR>/missing.app
+
+Errors (1):
+
+  ✗ File not found: '<TMPDIR>/missing.app'. Please check the path and try again.
+
+❌ Failed to get macOS bundle ID.

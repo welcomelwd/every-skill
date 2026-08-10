@@ -1,0 +1,69 @@
+# yaml-language-server: $schema=https://schema.buildwithfern.dev/generators-yml.json
+api:
+  specs:
+    - openapi: ../docs/api-reference/openapi.json
+      overrides: overrides.yml
+      origin: https://api.klavis.ai/openapi.json
+      settings:
+        title-as-schema-name: true
+        type-dates-as-strings: true
+        object-query-parameters: false
+        idiomatic-request-names: false
+        respect-nullable-schemas: false
+        wrap-references-to-nullable-in-optional: true
+        coerce-optional-schemas-to-nullable: true
+        inline-path-parameters: false
+        coerce-enums-to-literals: true
+groups:
+  python-sdk:
+    generators:
+      - name: fernapi/fern-python-sdk
+        version: 4.32.2
+        output:
+          location: pypi
+          package-name: klavis
+          token: ${PYPI_TOKEN}
+          metadata:
+            keywords:
+              - mcp
+              - model-context-protocol
+              - router
+              - ai
+              - llm
+              - tools
+            documentation-link: https://www.klavis.ai/docs/introduction
+            homepage-link: https://www.klavis.ai/
+        github:
+          repository: Klavis-AI/python-sdk
+        config:
+          client_class_name: Klavis
+          pydantic_config:
+            enum_type: python_enums
+        metadata:
+          package-description: Open Source MCP Integration for AI applications
+          license: Apache-2.0
+        smart-casing: true
+  ts-sdk:
+    generators:
+      - name: fernapi/fern-typescript-node-sdk
+        version: 1.7.0
+        output:
+          location: npm
+          package-name: klavis
+          token: ${NPM_TOKEN}
+        github:
+          repository: Klavis-AI/typescript-sdk
+        config:
+          namespaceExport: Klavis
+          allowCustomFetcher: true
+          skipResponseValidation: true
+          includeApiReference: true
+          noSerdeLayer: true
+          extraDevDependencies:
+            msw: 2.11.2
+        metadata:
+          package-description: Official TypeScript SDK for Klavis AI
+          email: contact@klavis.ai
+          reference-url: https://www.klavis.ai/docs
+          license: Apache-2.0
+        smart-casing: true

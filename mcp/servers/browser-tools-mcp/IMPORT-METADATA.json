@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "repository": "AgentDeskAI/browser-tools-mcp",
+  "source_url": "https://github.com/AgentDeskAI/browser-tools-mcp",
+  "ref": "main",
+  "resolved_commit": "d298068137c3dfd01e7a6f24038a6c199790da1e",
+  "category": "mcp",
+  "subcategory": "servers",
+  "slug": "browser-tools-mcp",
+  "license": null,
+  "source_date": null,
+  "imported_at": "2026-08-10T07:54:13+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 28,
+  "copied_bytes": 498914,
+  "excluded_files": [
+    ".DS_Store: binary content"
+  ],
+  "execution": "never run by this importer"
+}

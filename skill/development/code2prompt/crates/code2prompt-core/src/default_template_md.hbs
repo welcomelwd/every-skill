@@ -1,0 +1,36 @@
+Project Path: {{ absolute_code_path }}
+
+Source Tree:
+
+```txt
+{{ source_tree }}
+```
+
+{{#if code_map}}
+Code Map:
+
+{{#each code_map}}
+`{{path}}`:
+{{#each entities}}
+  - {{kind}} {{name}}{{#if signature}} `{{signature}}`{{/if}} (lines {{start_line}}-{{end_line}})
+{{/each}}
+
+{{/each}}
+{{/if}}
+{{#each files}}
+{{#if code}}
+`{{path}}`:
+
+{{#unless ../no_codeblock}}```{{extension}}
+{{code}}
+```{{else}}
+{{code}}
+{{/unless}}
+
+{{/if}}
+{{/each}}
+
+{{#if git_diff}}
+Git Diff:
+{{ git_diff }}
+{{/if}}

@@ -1,0 +1,9 @@
+
+🐛 LLDB Command
+
+   Command: breakpoint list
+
+✅ Command executed
+
+Output:
+  No breakpoints currently set.

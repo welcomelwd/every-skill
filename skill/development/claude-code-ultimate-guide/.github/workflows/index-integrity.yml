@@ -1,0 +1,98 @@
+name: Index Integrity
+
+on:
+  pull_request:
+    paths:
+      - "guide/**"
+      - "examples/**"
+      - "machine-readable/**"
+      # The gates themselves live here. Without this the workflow could not fire
+      # on a change that breaks a gate, only later on an unrelated content edit.
+      - "scripts/**"
+      - ".github/workflows/index-integrity.yml"
+  push:
+    branches: ["main"]
+    paths:
+      - "guide/**"
+      - "examples/**"
+      - "machine-readable/**"
+      # The gates themselves live here. Without this the workflow could not fire
+      # on a change that breaks a gate, only later on an unrelated content edit.
+      - "scripts/**"
+      - ".github/workflows/index-integrity.yml"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check reference.yaml structural integrity
+        run: |
+          # Hard gate, currently at zero. Covers what the ratchet below cannot:
+          # YAML parseability, anchor resolution against real headings, path
+          # existence, line-reference bounds, and section_maps validity. Anchors
+          # do not drift when lines are inserted above them, so this gate stays
+          # cheap to keep green. If it fails, something is actually broken.
+          python3 scripts/validate-reference-yaml.py --ci
+
+      - name: Check the reference-repair tooling still works
+        run: |
+          # The tool is what everything below trusts. Its own traps are covered by
+          # tests that fail on bad input: counter-valued integers, a counter guard
+          # too broad to spare real references, CommonMark fence tracking, the
+          # URL-as-path false positive, and the declared-anchor hard check.
+          python3 scripts/test-resync-reference-yaml.py
+
+      - name: Check reference.yaml positional-reference backlog
+        run: |
+          # The backlog is at zero as of 2026-07-29, down from 383 then 145. No
+          # ceiling left: --max-broken defaults to 0, so any new imprecise
+          # reference fails the build on the commit that introduces it.
+          #
+          # Prefer `path#anchor` over `path:N`: the guide gained lines three times
+          # during this work, twice from a concurrent session, and the drift figures
+          # moved between runs of the same script. Anchors do not have that failure
+          # mode. Where a bare integer must stay (the landing turns every deep_dive
+          # string starting with `guide/` into a Cmd+K entry, so converting ~90 of
+          # them would add ~90 entries pointing into a 26K-line file), declare the
+          # heading in the trailing comment as `# anchor: some-slug`. That is
+          # machine-checked here and auto-repaired by --apply when lines shift.
+          python3 scripts/resync-reference-yaml.py --check
+
+      - name: Check every guide file is reachable from the index
+        run: |
+          # Coverage, the mirror of the integrity gate above. That one asks "do
+          # the references still resolve?"; this one asks "did anything land in
+          # guide/ that reference.yaml never learned about?". A page nobody
+          # indexed is invisible to the MCP server and to the landing's Cmd+K
+          # palette, and the only signal today is an anchor audit months later.
+          #
+          # Hard gate at zero: coverage was 92/92 when this was added on
+          # 2026-07-29, so there is no backlog to ratchet down.
+          python3 scripts/check-index-coverage.py --check --max-missing 0
+
+      - name: Check the MCP server's bundled content mirrors machine-readable/
+        run: |
+          # mcp-server/content/ is a hand-copied bundle published to npm as
+          # claude-code-ultimate-guide-mcp. Nothing regenerates it and nothing
+          # checked it, so it drifted silently before, and it drifted again during
+          # this pass the moment reference.yaml was repaired. Same failure class as
+          # the reference rot itself: a copy nobody verifies.
+          fail=0
+          for f in reference.yaml claude-code-releases.yaml llms.txt; do
+            if ! diff -q "mcp-server/content/$f" "machine-readable/$f" >/dev/null; then
+              echo "DRIFTED: mcp-server/content/$f differs from machine-readable/$f"
+              echo "  fix with: cp machine-readable/$f mcp-server/content/$f"
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: Check examples-data.ts is in sync with examples/
+        run: python3 scripts/generate-examples-data.py --check
+
+      - name: Check VERSION is in sync across docs
+        run: ./scripts/sync-version.sh --check

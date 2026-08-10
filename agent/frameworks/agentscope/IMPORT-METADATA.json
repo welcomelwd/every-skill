@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "repository": "agentscope-ai/agentscope",
+  "source_url": "https://github.com/agentscope-ai/agentscope",
+  "ref": "main",
+  "resolved_commit": "495d2876f348d74fed36928621b19db90a7ab5a8",
+  "category": "agent",
+  "subcategory": "frameworks",
+  "slug": "agentscope",
+  "license": null,
+  "source_date": null,
+  "imported_at": "2026-08-10T07:54:13+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 930,
+  "copied_bytes": 7706299,
+  "excluded_files": [
+    "assets/images/agentscope.png: binary content",
+    "assets/images/bg_tool.gif: binary content",
+    "assets/images/dingtalk_qr_code.png: binary content",
+    "assets/images/permission_bypass.gif: binary content",
+    "assets/images/task.gif: binary content",
+    "assets/images/team.gif: binary content",
+    "scripts/model_examples/test.jpeg: binary, archive, media, or generated artifact"
+  ],
+  "execution": "never run by this importer"
+}

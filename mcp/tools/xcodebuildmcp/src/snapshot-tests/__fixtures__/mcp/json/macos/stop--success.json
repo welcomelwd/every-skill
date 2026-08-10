@@ -1,0 +1,19 @@
+{
+  "schema": "xcodebuildmcp.output.stop-result",
+  "schemaVersion": "2",
+  "didError": false,
+  "error": null,
+  "data": {
+    "summary": {
+      "status": "SUCCEEDED"
+    },
+    "artifacts": {
+      "processId": 99999,
+      "appName": "PID <PID>"
+    },
+    "diagnostics": {
+      "warnings": [],
+      "errors": []
+    }
+  }
+}

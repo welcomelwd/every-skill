@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "repository": "MinishLab/semble",
+  "source_url": "https://github.com/MinishLab/semble",
+  "ref": "main",
+  "resolved_commit": "b491200bc39ef1df751dd4b2bea830ee0eeb1da0",
+  "category": "mcp",
+  "subcategory": "tools",
+  "slug": "semble",
+  "license": null,
+  "source_date": null,
+  "imported_at": "2026-08-10T07:54:13+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 178,
+  "copied_bytes": 2523295,
+  "excluded_files": [
+    "assets/images/semble_logo.png: binary content",
+    "assets/images/speed_vs_ndcg_cold.png: binary content",
+    "assets/images/speed_vs_ndcg_warm.png: binary content",
+    "assets/images/token_efficiency.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

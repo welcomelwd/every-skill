@@ -1,0 +1,30 @@
+{
+  "schema": "xcodebuildmcp.output.build-result",
+  "schemaVersion": "3",
+  "didError": false,
+  "error": null,
+  "data": {
+    "request": {
+      "scheme": "CalculatorApp",
+      "workspacePath": "example_projects/iOS_Calculator/CalculatorApp.xcworkspace",
+      "derivedDataPath": "<TMPDIR>",
+      "platform": "iOS Simulator",
+      "simulatorId": "<UUID>"
+    },
+    "summary": {
+      "status": "SUCCEEDED",
+      "durationMs": 1234,
+      "target": "simulator"
+    },
+    "artifacts": {
+      "buildLogPath": "~/Library/Developer/XcodeBuildMCP/workspaces/XcodeBuildMCP-<HASH>/logs/build_sim_<TIMESTAMP>_pid<PID>.log"
+    },
+    "diagnostics": {
+      "warnings": [],
+      "errors": []
+    }
+  },
+  "nextSteps": [
+    "Get built app path in simulator derived data: xcodebuildmcp simulator get-app-path --simulator-id <UUID> --scheme CalculatorApp --platform 'iOS Simulator' --derived-data-path <TMPDIR>"
+  ]
+}

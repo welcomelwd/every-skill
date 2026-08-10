@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "repository": "getsentry/XcodeBuildMCP",
+  "source_url": "https://github.com/getsentry/XcodeBuildMCP",
+  "ref": "main",
+  "resolved_commit": "e6ef59b49b44012c824f0a0de261c96142e37390",
+  "category": "mcp",
+  "subcategory": "tools",
+  "slug": "xcodebuildmcp",
+  "license": null,
+  "source_date": null,
+  "imported_at": "2026-08-10T07:54:13+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 1816,
+  "copied_bytes": 7943445,
+  "excluded_files": [
+    "assets/banner-transparent.png: binary content",
+    "assets/banner.png: binary content",
+    "assets/logo-text.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

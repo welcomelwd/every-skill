@@ -1,0 +1,15 @@
+
+🚀 Swift Package Run
+
+✅ Build succeeded. (⏱️ <DURATION>)
+✅ Build & Run complete
+  ├ Process ID: <PID>
+  └ Files:
+     ├── <TMPDIR>/spm/.build/<TARGET_TRIPLE>/debug/spm — App Path
+     └── ~/Library/Developer/XcodeBuildMCP/workspaces/XcodeBuildMCP-<HASH>/logs/build_run_spm_<TIMESTAMP>_pid<PID>.log — Build Logs
+
+Output
+  Hello, world!
+
+Next steps:
+1. Stop Swift package run: swift_package_stop()

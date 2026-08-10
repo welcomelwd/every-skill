@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "repository": "skills/secure-code-game",
+  "source_url": "https://github.com/skills/secure-code-game",
+  "ref": "main",
+  "resolved_commit": "8448a41c5e1b42d84a48fdde7aeee96ee69ae395",
+  "category": "skill",
+  "subcategory": "security",
+  "slug": "secure-code-game",
+  "license": null,
+  "source_date": null,
+  "imported_at": "2026-08-10T07:54:13+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 195,
+  "copied_bytes": 814942,
+  "excluded_files": [
+    "Season-1/Level-3/assets/prof_picture.png: binary content",
+    "Season-1/Level-3/assets/tax_form.pdf: binary content",
+    "Season-2/Level-3/.env.production: sensitive filename"
+  ],
+  "execution": "never run by this importer"
+}

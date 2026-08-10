@@ -1,0 +1,10 @@
+
+👆 Swipe
+
+Recovery
+  Code: TARGET_NOT_ACTIONABLE
+  Message: Element ref '<REF>' does not support 'swipeWithin'.
+  Element: <REF>
+  Hint: Choose an elementRef that lists the required action, or refresh with snapshot_ui.
+
+❌ Element ref '<REF>' does not support 'swipeWithin'.

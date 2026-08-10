@@ -1,0 +1,73 @@
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Claude Code (ignore personal config, but keep shared commands, agents, and hooks)
+# Must be `.claude/*` and not `.claude/`: git never descends into an excluded
+# directory, so the negations below are dead if the directory itself is excluded.
+.claude/*
+!.claude/commands/
+!.claude/agents/
+!.claude/hooks/
+# Rules stay personal by default. index-sync.md is the exception: it documents a
+# repo convention enforced by a tracked hook and a tracked CI step, so it ships.
+!.claude/rules/
+.claude/rules/*
+!.claude/rules/index-sync.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node (if any tooling added later)
+node_modules/
+npm-debug.log*
+
+# Python
+__pycache__/
+*.pyc
+
+# Misc
+*.log
+*.tmp
+*.bak
+*.wav
+*.mp3
+*.onnx
+
+# Personal notes & temp files
+to-ignore/
+docs/drafts/
+.grepai/
+whitepapers/
+claudedocs/
+.mcp.json
+
+# Book (work in progress, not public yet)
+book/
+
+# Guide export artifacts (generated files, not committed)
+dist/
+.build-exports/
+*.epub
+
+# Translation cache (chunked intermediate files, auto-cleaned on success)
+.translation-cache/
+
+# Multi-provider (will be moved to dedicated repo)
+examples/multi-provider/
+
+# MCP server build output
+mcp-server/dist/
+mcp-server/node_modules/
+
+# Vitals provenance data
+.vitals/
+.worktrees/
+.fastembed_cache/
+
+# Serena MCP tool (local project context, not shared)
+.serena/

@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [24.x]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Bundle AXe artifacts
+        run: npm run bundle:axe
+
+      - name: Build
+        run: npm run build
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm test
+
+      - name: Validate structured JSON fixtures against schemas
+        run: npm run test:schema-fixtures
+
+      - name: Publish preview package for pull requests
+        id: pkg_pr_new_pull_request
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: npx pkg-pr-new publish --comment=update
+
+      - name: Report pull request preview failure
+        if: github.event_name == 'pull_request' && steps.pkg_pr_new_pull_request.outcome == 'failure'
+        continue-on-error: true
+        run: |
+          echo "::warning title=Package preview unavailable::pkg.pr.new failed; build and test validation is unaffected."
+          {
+            echo "## pkg.new preview"
+            echo
+            echo "Preview publication failed. Build and test validation is unaffected."
+            echo
+            echo "See the \`Publish preview package for pull requests\` step for details."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish preview package for main
+        id: pkg_pr_new_main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          npx pkg-pr-new publish --comment=off --json=pkg-pr-new-main.json
+
+      - name: Summarize pkg.new output for main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        env:
+          PUBLISH_OUTCOME: ${{ steps.pkg_pr_new_main.outcome }}
+        run: |
+          set -euo pipefail
+
+          if [ "$PUBLISH_OUTCOME" = "failure" ]; then
+            echo "::warning title=Package preview unavailable::pkg.pr.new failed; build and test validation is unaffected."
+          fi
+
+          {
+            echo "## pkg.new preview for main"
+            echo
+            if [ "$PUBLISH_OUTCOME" = "failure" ]; then
+              echo "Preview publication failed. Build and test validation is unaffected."
+              echo
+            elif [ -f pkg-pr-new-main.json ]; then
+              echo "Install commands and preview links:"
+              echo '```text'
+              jq -r '.. | strings | select(test("pkg\\.pr\\.new|pkg\\.new|npm (i|install) "))' pkg-pr-new-main.json | sort -u
+              echo '```'
+            else
+              echo "No pkg.new JSON output file was produced."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload pkg.new metadata for main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.pkg_pr_new_main.outcome == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg-pr-new-main-${{ github.sha }}
+          path: pkg-pr-new-main.json
+          if-no-files-found: warn

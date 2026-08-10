@@ -1,0 +1,7 @@
+
+👆 Swipe
+
+✅ Swipe up within elementRef <REF> simulated successfully.
+
+Next steps:
+1. <POST_SWIPE_NEXT_STEP>

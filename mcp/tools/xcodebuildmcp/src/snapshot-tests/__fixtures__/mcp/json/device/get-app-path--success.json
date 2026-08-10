@@ -1,0 +1,20 @@
+{
+  "schema": "xcodebuildmcp.output.app-path",
+  "schemaVersion": "2",
+  "didError": false,
+  "error": null,
+  "data": {
+    "summary": {
+      "status": "SUCCEEDED",
+      "target": "device"
+    },
+    "artifacts": {
+      "appPath": "<TMPDIR>/Build/Products/Debug-iphoneos/CalculatorApp.app"
+    }
+  },
+  "nextSteps": [
+    "Get bundle ID: get_app_bundle_id({ appPath: \"<TMPDIR>/Build/Products/Debug-iphoneos/CalculatorApp.app\" })",
+    "Install app on device: install_app_device({ deviceId: \"DEVICE_UDID\", appPath: \"<TMPDIR>/Build/Products/Debug-iphoneos/CalculatorApp.app\" })",
+    "Launch app on device: launch_app_device({ deviceId: \"DEVICE_UDID\", bundleId: \"BUNDLE_ID\" })"
+  ]
+}

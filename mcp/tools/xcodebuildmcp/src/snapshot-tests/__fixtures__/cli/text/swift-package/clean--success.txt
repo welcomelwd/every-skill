@@ -1,0 +1,6 @@
+
+🧹 Swift Package Clean
+
+   Package: <TMPDIR>/spm
+
+✅ Swift package cleaned successfully

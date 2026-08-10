@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "repository": "FlorianBruniaux/claude-code-ultimate-guide",
+  "source_url": "https://github.com/FlorianBruniaux/claude-code-ultimate-guide",
+  "ref": "main",
+  "resolved_commit": "752edfe5ca63ef571e327308b858259634577653",
+  "category": "skill",
+  "subcategory": "development",
+  "slug": "claude-code-ultimate-guide",
+  "license": null,
+  "source_date": null,
+  "imported_at": "2026-08-10T07:54:13+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 1049,
+  "copied_bytes": 15531082,
+  "excluded_files": [
+    "cheatsheet.pdf: binary content",
+    "assets/claude-code-ai-logo.jpg: binary, archive, media, or generated artifact",
+    "assets/screenshots/onboarding-01-language.png: binary content",
+    "assets/screenshots/onboarding-02-goal.png: binary content",
+    "assets/screenshots/onboarding-03-level.png: binary content",
+    "assets/screenshots/onboarding-04-content.png: binary content",
+    "docs/images/session-summary-v3.png: binary content",
+    "exports/deprecated/kimi.pdf: binary content",
+    "exports/deprecated/notebooklm.pdf: file exceeds 2097152 bytes",
+    "guide/images/claude-code-architecture-overview.jpeg: binary, archive, media, or generated artifact"
+  ],
+  "execution": "never run by this importer"
+}

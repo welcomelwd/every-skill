@@ -1,0 +1,19 @@
+{
+  "schema": "xcodebuildmcp.output.bundle-id",
+  "schemaVersion": "2",
+  "didError": true,
+  "error": "Failed to get macOS bundle ID.",
+  "data": {
+    "artifacts": {
+      "appPath": "<TMPDIR>/missing.app"
+    },
+    "diagnostics": {
+      "warnings": [],
+      "errors": [
+        {
+          "message": "File not found: '<TMPDIR>/missing.app'. Please check the path and try again."
+        }
+      ]
+    }
+  }
+}

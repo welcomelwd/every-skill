@@ -1,0 +1,14 @@
+{
+  "name": "inspector-placeholder",
+  "version": "0.0.1",
+  "description": "This is just a placeholder to launch the inspector.",
+  "scripts": {
+    "dev:inspector": "mcp-inspector"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/inspector": "2.0.0"
+  },
+  "overrides": {
+    "shell-quote": "1.8.4"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "repository": "NirDiamant/Prompt_Engineering",
+  "source_url": "https://github.com/NirDiamant/Prompt_Engineering",
+  "ref": "main",
+  "resolved_commit": "083437e06982a87cb9f0f7092c49767845867a15",
+  "category": "skill",
+  "subcategory": "research",
+  "slug": "prompt-engineering",
+  "license": null,
+  "source_date": null,
+  "imported_at": "2026-08-10T07:54:13+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 30,
+  "copied_bytes": 538344,
+  "excluded_files": [
+    "images/book_image.jpeg: binary, archive, media, or generated artifact",
+    "images/coderabbit_Dark_Type_Mark.png: binary content",
+    "images/coderabbit_Light_Type_Mark_Orange.png: binary content",
+    "images/collective-banner.png: file exceeds 2097152 bytes",
+    "images/iGPT-logo-Black.png: binary content",
+    "images/iGPT-logo-white.png: binary content",
+    "images/rag_book_best_seller.png: binary content",
+    "images/substack_image.png: file exceeds 2097152 bytes"
+  ],
+  "execution": "never run by this importer"
+}
