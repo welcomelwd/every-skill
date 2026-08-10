@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "repository": "open-compass/opencompass",
+  "source_url": "https://github.com/open-compass/opencompass",
+  "ref": "default branch",
+  "resolved_commit": "96263b1a16899260586c8e945eea06934c43c225",
+  "category": "knowledge",
+  "subcategory": "tools",
+  "slug": "open-compass-opencompass",
+  "license": "Apache-2.0",
+  "source_date": "2026-08-09",
+  "imported_at": "2026-08-10T06:23:39Z",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 3543,
+  "copied_bytes": 12989539,
+  "excluded_files": [],
+  "execution": "never run by this importer",
+  "metadata_note": "Restored after the imported source tree's ignore rules omitted the importer metadata marker."
+}
