@@ -1,0 +1,289 @@
+#!/usr/bin/env bash
+
+# Test script for create-mcp-use-app
+# Can be run locally or in CI
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+PACKAGE_VERSION="$(node -p 'require("./package.json").version')"
+if [[ "$PACKAGE_VERSION" == *-beta.* ]]; then
+    EXPECTED_DEFAULT_DIST_TAG="beta"
+else
+    EXPECTED_DEFAULT_DIST_TAG="latest"
+fi
+EXPECTED_DEFAULT_MCP_USE_VERSION="$(node -e 'const tag = process.argv[1]; fetch("https://registry.npmjs.org/mcp-use", { headers: { Accept: "application/vnd.npm.install-v1+json" } }).then(response => { if (!response.ok) throw new Error(`npm registry returned ${response.status}`); return response.json(); }).then(metadata => process.stdout.write(metadata["dist-tags"][tag]))' "$EXPECTED_DEFAULT_DIST_TAG")"
+
+# Get script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEST_DIR="${TEST_DIR:-/tmp/create-mcp-use-app-test-$$}"
+
+echo -e "${BLUE}🧪 Testing create-mcp-use-app${NC}"
+echo -e "${BLUE}Test directory: $TEST_DIR${NC}"
+echo ""
+
+# Build and pack the package
+echo -e "${YELLOW}📦 Building package...${NC}"
+cd "$SCRIPT_DIR"
+pnpm build
+PACKAGE_PATH=$(npm pack --json | jq -r '.[0].filename')
+
+if [ ! -f "$PACKAGE_PATH" ]; then
+    echo -e "${RED}❌ Package not found: $PACKAGE_PATH${NC}"
+    exit 1
+fi
+
+PACKAGE_FULL_PATH="$SCRIPT_DIR/$PACKAGE_PATH"
+echo -e "${GREEN}✅ Package created: $PACKAGE_FULL_PATH${NC}"
+echo ""
+
+# Create test directory
+mkdir -p "$TEST_DIR"
+cd "$TEST_DIR"
+
+# Test counter
+TESTS_PASSED=0
+TESTS_FAILED=0
+
+# Function to run a test
+run_test() {
+    local test_name="$1"
+    local pm="$2"
+    local template="$3"
+    local flag="$4"
+    local install="$5"
+    
+    echo -e "${BLUE}🧪 Test: $test_name${NC}"
+    echo -e "   Package Manager: $pm"
+    echo -e "   Template: $template"
+    echo -e "   Flag: ${flag:-none}"
+    echo -e "   Install: ${install:-no}"
+    
+    local app_name="test-app-$(echo $test_name | tr ' ' '-' | tr '[:upper:]' '[:lower:]')"
+    
+    # Remove existing test app
+    rm -rf "$app_name"
+    
+    # Build command
+    local cmd=""
+    
+    case "$pm" in
+        npm)
+            cmd="npx --yes --package=$PACKAGE_FULL_PATH create-mcp-use-app $app_name --template $template $flag --no-skills"
+            ;;
+        pnpm)
+            cmd="pnpm --package=$PACKAGE_FULL_PATH dlx create-mcp-use-app $app_name --template $template $flag --no-skills"
+            ;;
+        bun)
+            cmd="bunx --package=$PACKAGE_FULL_PATH create-mcp-use-app $app_name --template $template $flag --no-skills"
+            ;;
+    esac
+    
+    echo -e "${YELLOW}   Running: $cmd${NC}"
+    
+    # Run command
+    if eval "$cmd" > /tmp/test-output.log 2>&1; then
+        # Verify project was created
+        if [ ! -d "$app_name" ]; then
+            echo -e "${RED}❌ FAILED: Project directory not created${NC}"
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            return 1
+        fi
+        
+        if [ ! -f "$app_name/package.json" ]; then
+            echo -e "${RED}❌ FAILED: package.json not found${NC}"
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            return 1
+        fi
+        
+        if [ ! -f "$app_name/index.ts" ]; then
+            echo -e "${RED}❌ FAILED: index.ts not found${NC}"
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            return 1
+        fi
+        
+        # Check expected package manager command in output
+        if [ -n "$flag" ]; then
+            case "$flag" in
+                --bun)
+                    if ! grep -q "bun run dev" /tmp/test-output.log; then
+                        echo -e "${RED}❌ FAILED: Expected 'bun run dev' in output${NC}"
+                        TESTS_FAILED=$((TESTS_FAILED + 1))
+                        return 1
+                    fi
+                    ;;
+                --npm)
+                    if ! grep -q "npm run dev" /tmp/test-output.log; then
+                        echo -e "${RED}❌ FAILED: Expected 'npm run dev' in output${NC}"
+                        TESTS_FAILED=$((TESTS_FAILED + 1))
+                        return 1
+                    fi
+                    ;;
+                --pnpm)
+                    if ! grep -q "pnpm dev" /tmp/test-output.log; then
+                        echo -e "${RED}❌ FAILED: Expected 'pnpm dev' in output${NC}"
+                        TESTS_FAILED=$((TESTS_FAILED + 1))
+                        return 1
+                    fi
+                    ;;
+            esac
+        fi
+        
+        # If install was requested, verify node_modules
+        if [ "$install" == "yes" ]; then
+            if [ ! -d "$app_name/node_modules" ]; then
+                echo -e "${RED}❌ FAILED: Dependencies not installed${NC}"
+                TESTS_FAILED=$((TESTS_FAILED + 1))
+                return 1
+            fi
+        fi
+        
+        # Verify package versions based on flags
+        if command -v jq > /dev/null 2>&1; then
+            local package_json="$app_name/package.json"
+            if [[ "$(jq -r '(.dependencies // {}) + (.devDependencies // {}) + (.optionalDependencies // {}) + (.peerDependencies // {}) | ."@mcp-use/inspector" // empty' "$package_json")" != "" ]]; then
+                echo -e "${RED}❌ FAILED: Inspector is bundled by mcp-use and must not be a direct dependency${NC}"
+                TESTS_FAILED=$((TESTS_FAILED + 1))
+                return 1
+            fi
+            
+            if grep -q "\-\-dev" <<< "$flag"; then
+                # Check for workspace:* versions
+                local mcp_use_version=$(jq -r '.dependencies."mcp-use"' "$package_json")
+                if [[ "$mcp_use_version" != "workspace:"* ]]; then
+                    echo -e "${RED}❌ FAILED: Expected workspace:* version with --dev, got: $mcp_use_version${NC}"
+                    TESTS_FAILED=$((TESTS_FAILED + 1))
+                    return 1
+                fi
+                echo -e "${GREEN}   ✓ Verified workspace:* versions${NC}"
+            elif grep -q "\-\-sdk-version" <<< "$flag"; then
+                # Check for pinned sdk version (e.g. canary from --sdk-version canary)
+                local expected_version
+                if grep -q "\-\-sdk-version canary" <<< "$flag"; then
+                    expected_version="canary"
+                elif grep -q "\-\-sdk-version 1.0.0" <<< "$flag"; then
+                    expected_version="1.0.0"
+                else
+                    expected_version=""
+                fi
+                local mcp_use_version=$(jq -r '.dependencies."mcp-use"' "$package_json")
+                if [[ -n "$expected_version" && "$mcp_use_version" != "$expected_version" ]]; then
+                    echo -e "${RED}❌ FAILED: Expected $expected_version with $flag, got: $mcp_use_version${NC}"
+                    TESTS_FAILED=$((TESTS_FAILED + 1))
+                    return 1
+                fi
+                echo -e "${GREEN}   ✓ Verified sdk version: $mcp_use_version${NC}"
+            else
+                # The beta scaffolder must default to the exact beta SDK pin.
+                local mcp_use_version=$(jq -r '.dependencies."mcp-use"' "$package_json")
+                if [[ "$mcp_use_version" != "$EXPECTED_DEFAULT_MCP_USE_VERSION" ]]; then
+                    echo -e "${RED}❌ FAILED: Expected mcp-use@$EXPECTED_DEFAULT_MCP_USE_VERSION, got: $mcp_use_version${NC}"
+                    TESTS_FAILED=$((TESTS_FAILED + 1))
+                    return 1
+                fi
+                echo -e "${GREEN}   ✓ Verified mcp-use@$mcp_use_version default${NC}"
+            fi
+
+            echo -e "${GREEN}   ✓ Verified Inspector is provided by mcp-use${NC}"
+        fi
+        
+        echo -e "${GREEN}✅ PASSED${NC}"
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        return 0
+    else
+        echo -e "${RED}❌ FAILED: Command failed${NC}"
+        echo -e "${RED}Output:${NC}"
+        cat /tmp/test-output.log
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        return 1
+    fi
+}
+
+# Run tests
+echo -e "${BLUE}═══════════════════════════════════════════════${NC}"
+echo -e "${BLUE}Running Flag Tests${NC}"
+echo -e "${BLUE}═══════════════════════════════════════════════${NC}"
+echo ""
+
+# Test package manager flags
+run_test "Flag-NPM" npm mcp-server "--npm" ""
+echo ""
+run_test "Flag-PNPM" npm mcp-server "--pnpm" ""
+echo ""
+run_test "Flag-Bun" npm mcp-server "--bun" ""
+echo ""
+run_test "Removed-Flag-Falls-Back-To-NPM" npm mcp-server "--yarn" ""
+if grep -qi "yarn" /tmp/test-output.log; then
+    echo -e "${RED}❌ FAILED: Removed --yarn option appeared in output${NC}"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+else
+    echo -e "${GREEN}✅ Removed --yarn option falls back without Yarn instructions${NC}"
+fi
+echo ""
+
+echo -e "${BLUE}═══════════════════════════════════════════════${NC}"
+echo -e "${BLUE}Running Version Tests${NC}"
+echo -e "${BLUE}═══════════════════════════════════════════════${NC}"
+echo ""
+
+# Test version flags
+run_test "Version-Dev" npm mcp-server "--dev" ""
+echo ""
+run_test "Version-Sdk-Canary" npm mcp-server "--sdk-version canary" ""
+echo ""
+run_test "Version-Sdk-Semver" npm mcp-server "--sdk-version 1.0.0" ""
+echo ""
+run_test "Version-Default-Channel-Server" npm mcp-server "" ""
+echo ""
+run_test "Version-Default-Channel-Apps" npm mcp-apps "" ""
+echo ""
+run_test "Version-Default-Channel-Blank" npm blank "" ""
+echo ""
+
+# Optional: Test with installation (slower)
+if [ "${RUN_INSTALL_TESTS:-no}" == "yes" ]; then
+    echo -e "${BLUE}═══════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}Running Installation Tests (this may take a while)${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════${NC}"
+    echo ""
+    
+    run_test "Install-NPM" npm mcp-server "--npm" "yes"
+    echo ""
+    run_test "Install-Bun" bun mcp-server "--bun" "yes"
+    echo ""
+fi
+
+# Summary
+echo ""
+echo -e "${BLUE}═══════════════════════════════════════════════${NC}"
+echo -e "${BLUE}Test Summary${NC}"
+echo -e "${BLUE}═══════════════════════════════════════════════${NC}"
+echo -e "${GREEN}Passed: $TESTS_PASSED${NC}"
+echo -e "${RED}Failed: $TESTS_FAILED${NC}"
+echo ""
+
+# Cleanup
+echo -e "${YELLOW}🧹 Cleaning up...${NC}"
+cd "$SCRIPT_DIR"
+rm -f "$PACKAGE_PATH"
+if [ "${KEEP_TEST_DIR:-no}" != "yes" ]; then
+    rm -rf "$TEST_DIR"
+    echo -e "${GREEN}✅ Cleaned up test directory${NC}"
+else
+    echo -e "${YELLOW}ℹ️  Test directory preserved: $TEST_DIR${NC}"
+fi
+
+echo ""
+if [ $TESTS_FAILED -eq 0 ]; then
+    echo -e "${GREEN}🎉 All tests passed!${NC}"
+    exit 0
+else
+    echo -e "${RED}❌ Some tests failed${NC}"
+    exit 1
+fi

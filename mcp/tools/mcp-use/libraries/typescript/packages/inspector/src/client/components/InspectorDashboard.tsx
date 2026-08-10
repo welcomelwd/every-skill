@@ -1,0 +1,1098 @@
+import { Badge } from "@/client/components/ui/badge";
+import { Button } from "@/client/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/client/components/ui/dropdown-menu";
+import { NotFound } from "@/client/components/ui/not-found";
+import { MESH_PANEL_FINE_OVERLAY_NOISE_DATA_URL } from "@/client/components/ui/random-gradient-background";
+import { MeshGradientCanvas } from "@/client/components/ui/MeshGradientCanvas";
+import {
+  CONNECT_PANEL_MESH_ANIMATION_PAUSED_KEY,
+  MeshAnimationPauseButton,
+  useMeshAnimationPaused,
+} from "@/client/components/ui/mesh-animation-pause";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/client/components/ui/tooltip";
+import {
+  getPackageVersion,
+  MCPServerAddedEvent,
+  MCPServerConnectionEvent,
+  MCPServerRemovedEvent,
+  captureInspectorEvent,
+  trackInspectorOpen,
+} from "@/client/telemetry";
+import {
+  AlertCircle,
+  Copy,
+  Info,
+  Loader2,
+  MoreVertical,
+  RotateCcw,
+  Settings,
+  Terminal,
+  Trash2,
+} from "lucide-react";
+import {
+  useMcpClient,
+  type McpServer,
+  type McpServerConfig,
+} from "@mcp-use/client/react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { copyToClipboard } from "@/client/utils/browser";
+import {
+  buildOAuthStaticConfig,
+  getDefaultInspectorProxyAddress,
+  getStoredConnectionConfig,
+  protocolNegotiationForMode,
+  toEditableConnectionConfig,
+  type ConnectionMode,
+  type EditableConnectionConfig,
+  type InspectorProtocolMode,
+} from "@/client/utils/connectionUpdates";
+import { getServerDisplayName } from "@/client/utils/servers";
+import {
+  buildLocalInspectorCommand,
+  shouldSuggestLocalInspector,
+} from "@/client/utils/localInspectorRecovery";
+import { useLocation, useNavigate } from "react-router";
+import { toast } from "sonner";
+import { INSPECTOR_RECONNECT_STORAGE_KEY } from "@/client/hooks/useAutoConnect";
+import type { TabType } from "@/client/context/InspectorContext";
+import { ConnectionSettingsForm } from "./ConnectionSettingsForm";
+import type { CustomHeader } from "./CustomHeadersEditor";
+import { ServerIcon } from "./ServerIcon";
+
+const CONNECT_PANEL_MESH_COLORS: string[] = [
+  "#e0eaff",
+  "#f9ffbd",
+  "#dedede",
+  "#ffffff",
+];
+
+/**
+ * Render the MCP Inspector dashboard for managing, testing, and navigating to MCP servers.
+ *
+ * This component displays a list of saved connections, a connection settings form, and controls
+ * for adding, editing, removing, resyncing, and inspecting servers. It adapts older add/update/remove
+ * semantics to the newer client API, persists UI state (timeouts, headers, OAuth fields), tracks
+ * transient connection and navigation state, and opens modals for connection editing and server
+ * capabilities. Telemetry for inspector opens and server additions is emitted.
+ *
+ * Proxy fallback is handled automatically by useMcp's built-in autoProxyFallback feature.
+ *
+ * @returns A JSX element representing the Inspector dashboard UI.
+ */
+export function InspectorDashboard() {
+  const {
+    servers: connections,
+    addServer,
+    removeServer: removeConnection,
+  } = useMcpClient();
+  const inspectorHostname =
+    typeof window === "undefined" ? "" : window.location.hostname;
+
+  // Track which server connections have been reported to telemetry (dedup)
+  const reportedConnectionsRef = useRef<Set<string>>(new Set());
+
+  // Track server connection state transitions for telemetry
+  useEffect(() => {
+    connections.forEach((connection) => {
+      if (
+        connection.state === "ready" &&
+        !reportedConnectionsRef.current.has(connection.id)
+      ) {
+        reportedConnectionsRef.current.add(connection.id);
+        try {
+          captureInspectorEvent(
+            new MCPServerConnectionEvent({
+              serverId: connection.id,
+              serverUrl: connection.url ?? "",
+              success: true,
+              connectionType: "http",
+            })
+          ).catch(() => {});
+        } catch {
+          // ignore telemetry errors
+        }
+      } else if (
+        connection.state === "failed" &&
+        reportedConnectionsRef.current.has(connection.id)
+      ) {
+        reportedConnectionsRef.current.delete(connection.id);
+      }
+    });
+  }, [connections]);
+
+  // Wrapper to track server removal in telemetry
+  const handleRemoveConnection = useCallback(
+    (connectionId: string) => {
+      try {
+        captureInspectorEvent(
+          new MCPServerRemovedEvent({ serverId: connectionId })
+        ).catch(() => {});
+      } catch {
+        // ignore telemetry errors
+      }
+      reportedConnectionsRef.current.delete(connectionId);
+      // Explicit user "remove server" action — forget persisted OAuth creds too.
+      removeConnection(connectionId, { clearCredentials: true });
+    },
+    [removeConnection]
+  );
+
+  // Track concurrent updates to prevent race conditions
+  const [updatingConnections, setUpdatingConnections] = useState<Set<string>>(
+    new Set()
+  );
+  const updatingConnectionsRef = useRef<Set<string>>(new Set());
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    updatingConnectionsRef.current = updatingConnections;
+  }, [updatingConnections]);
+
+  const connectServer = useCallback(
+    async (id: string) => {
+      // Check if already updating this connection
+      if (updatingConnectionsRef.current.has(id)) {
+        console.warn(
+          `[InspectorDashboard] Connection ${id} is already being reconnected, skipping`
+        );
+        return;
+      }
+
+      const server = connections.find((s) => s.id === id);
+      if (!server) return;
+
+      // Mark as updating
+      setUpdatingConnections((prev) => new Set(prev).add(id));
+
+      try {
+        await server.reconnect();
+      } catch (error) {
+        console.error(
+          `[InspectorDashboard] Failed to reconnect server ${id}:`,
+          error
+        );
+      } finally {
+        // Clear the updating flag
+        setUpdatingConnections((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }
+    },
+    [connections]
+  );
+
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [_connectingServers, setConnectingServers] = useState<Set<string>>(
+    new Set()
+  );
+  const [pendingNavigation, setPendingNavigation] = useState<string | null>(
+    null
+  );
+
+  // Track inspector open on mount
+  useEffect(() => {
+    trackInspectorOpen({
+      connectionCount: connections.length,
+    }).catch(() => {
+      // Silently fail - telemetry should not break the application
+    });
+  }, []); // Only run once on mount
+
+  // Form state
+  const [alias, setAlias] = useState("");
+  const [url, setUrl] = useState("");
+  const [connectionMode, setConnectionMode] = useState<ConnectionMode>("auto");
+  const [protocolMode, setProtocolMode] =
+    useState<InspectorProtocolMode>("auto");
+  const [customHeaders, setCustomHeaders] = useState<CustomHeader[]>([]);
+  const [requestTimeout, setRequestTimeout] = useState("10000");
+  const [resetTimeoutOnProgress, setResetTimeoutOnProgress] = useState("True");
+  const [maxTotalTimeout, setMaxTotalTimeout] = useState("60000");
+  const [proxyAddress, setProxyAddress] = useState(
+    getDefaultInspectorProxyAddress()
+  );
+  // OAuth fields
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [scope, setScope] = useState("");
+
+  const connectFormGradientRef = useRef<HTMLDivElement>(null);
+  const { paused: meshAnimationPaused, toggle: toggleMeshAnimationPaused } =
+    useMeshAnimationPaused(CONNECT_PANEL_MESH_ANIMATION_PAUSED_KEY);
+
+  const handleAddConnection = useCallback(() => {
+    if (!url.trim()) return;
+
+    // Validate URL format and auto-add https:// if protocol is missing
+    let normalizedUrl = url.trim();
+    try {
+      const parsedUrl = new URL(normalizedUrl);
+      const isValid =
+        parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:";
+
+      if (!isValid) {
+        toast.error("Invalid URL protocol. Please use http:// or https://");
+        return;
+      }
+    } catch (error) {
+      // If parsing fails, try adding https:// prefix
+      try {
+        const urlWithHttps = `https://${normalizedUrl}`;
+        const parsedUrl = new URL(urlWithHttps);
+        const isValid =
+          parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:";
+
+        if (!isValid) {
+          toast.error("Invalid URL protocol. Please use http:// or https://");
+          return;
+        }
+        // Use the normalized URL with https://
+        normalizedUrl = urlWithHttps;
+      } catch (retryError) {
+        toast.error("Invalid URL format. Please enter a valid URL.");
+        return;
+      }
+    }
+
+    // Convert custom headers array to object
+    const headersObject = customHeaders.reduce(
+      (acc, header) => {
+        if (header.name && header.value) {
+          acc[header.name] = header.value;
+        }
+        return acc;
+      },
+      {} as Record<string, string>
+    );
+
+    // Prepare proxy configuration for forced proxy mode
+    const proxyConfig =
+      connectionMode === "proxy" && proxyAddress.trim()
+        ? {
+            proxyAddress: proxyAddress.trim(),
+            headers: headersObject,
+          }
+        : undefined;
+    const autoProxyFallback =
+      connectionMode === "auto"
+        ? proxyAddress.trim()
+          ? { enabled: true, proxyAddress: proxyAddress.trim() }
+          : false
+        : false;
+
+    const oauthConfig = buildOAuthStaticConfig(clientId, clientSecret, scope);
+
+    // Build server configuration with proper typing
+    const serverConfig: McpServerConfig = {
+      url: normalizedUrl,
+      displayName: alias.trim() || normalizedUrl,
+      connectionMode,
+      protocolNegotiation: protocolNegotiationForMode(protocolMode),
+      autoProxyFallback,
+      ...(proxyConfig ? { proxyConfig } : {}),
+      ...(Object.keys(headersObject).length > 0 && !proxyConfig
+        ? { headers: headersObject }
+        : {}),
+      ...(oauthConfig ? { oauth: oauthConfig } : {}),
+    };
+
+    // Add server directly - useMcp handles proxy fallback automatically via autoProxyFallback
+    addServer(normalizedUrl, serverConfig);
+
+    // Track server added
+    captureInspectorEvent(
+      new MCPServerAddedEvent({
+        serverId: url.trim(),
+        serverUrl: url.trim(),
+        connectionType: "http",
+        viaProxy: !!proxyConfig?.proxyAddress,
+      })
+    ).catch(() => {
+      // Silently fail - telemetry should not break the application
+    });
+
+    // Reset form
+    setAlias("");
+    setUrl("");
+    setCustomHeaders([]);
+    setConnectionMode("auto");
+    setProtocolMode("auto");
+    setClientId("");
+    setClientSecret("");
+    setScope("");
+
+    toast.success("Server added successfully");
+  }, [
+    url,
+    alias,
+    connectionMode,
+    protocolMode,
+    proxyAddress,
+    customHeaders,
+    clientId,
+    clientSecret,
+    scope,
+    addServer,
+  ]);
+
+  const handleClearAllConnections = () => {
+    // Remove all connections
+    connections.forEach((connection) => {
+      handleRemoveConnection(connection.id);
+    });
+  };
+
+  const handleCopyError = async (errorMessage: string) => {
+    try {
+      await copyToClipboard(errorMessage);
+      toast.success("Error message copied to clipboard");
+    } catch {
+      toast.error("Failed to copy error message");
+    }
+  };
+
+  const handleCopyConnectionConfig = async (connection: McpServer) => {
+    try {
+      const storedConfig = getStoredConnectionConfig<EditableConnectionConfig>(
+        connection.id
+      );
+      const config = toEditableConnectionConfig(connection, storedConfig);
+      await copyToClipboard(JSON.stringify(config, null, 2));
+      toast.success("Connection configuration copied to clipboard");
+    } catch {
+      toast.error("Failed to copy connection configuration");
+    }
+  };
+
+  const handleActionClick = (e: React.MouseEvent, action: () => void) => {
+    e.stopPropagation();
+    action();
+  };
+
+  const navigateToServerTab = (connection: McpServer, tab: TabType) => {
+    const urlParams = new URLSearchParams(location.search);
+    const tunnelUrl = urlParams.get("tunnelUrl");
+    const params = new URLSearchParams();
+    params.set("server", connection.id);
+    params.set("tab", tab);
+    if (tunnelUrl) params.set("tunnelUrl", tunnelUrl);
+    navigate(`/?${params.toString()}`);
+  };
+
+  const handleServerClick = (connection: any) => {
+    // Failed connections use the reload button on the dashboard tile instead.
+    if (connection.state === "failed") {
+      return;
+    }
+
+    // Preserve tunnelUrl and tab parameters if present
+    const urlParams = new URLSearchParams(location.search);
+    const tunnelUrl = urlParams.get("tunnelUrl");
+    const tab = urlParams.get("tab");
+    const params = new URLSearchParams();
+    params.set("server", connection.id);
+    if (tunnelUrl) params.set("tunnelUrl", tunnelUrl);
+    if (tab) params.set("tab", tab);
+    navigate(`/?${params.toString()}`);
+  };
+
+  const handleReconnect = (connection: any) => {
+    console.log("[InspectorDashboard] Reconnecting server:", connection.id);
+    if (connection.state === "failed" && connection.retry) {
+      connection.retry();
+    } else {
+      connectServer(connection.id);
+    }
+  };
+
+  // Monitor connecting servers and remove them from the set when they connect or fail
+  useEffect(() => {
+    setConnectingServers((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+      prev.forEach((serverId) => {
+        const connection = connections.find((c) => c.id === serverId);
+        if (
+          connection &&
+          (connection.state === "ready" || connection.state === "failed")
+        ) {
+          next.delete(serverId);
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [connections]);
+
+  // Monitor pending navigation and navigate when server becomes ready
+  useEffect(() => {
+    if (!pendingNavigation) return;
+
+    const connection = connections.find((c) => c.id === pendingNavigation);
+    const hasData =
+      (connection?.tools?.length || 0) > 0 ||
+      (connection?.resources?.length || 0) > 0 ||
+      (connection?.prompts?.length || 0) > 0;
+
+    // Navigate if connection is ready OR if it has loaded some data (partial success)
+    if (
+      connection &&
+      (connection.state === "ready" ||
+        (hasData && connection.state !== "discovering"))
+    ) {
+      setPendingNavigation(null);
+      // Preserve tunnelUrl and tab parameters if present
+      const urlParams = new URLSearchParams(location.search);
+      const tunnelUrl = urlParams.get("tunnelUrl");
+      const tab = urlParams.get("tab");
+      const params = new URLSearchParams();
+      params.set("server", connection.id);
+      if (tunnelUrl) params.set("tunnelUrl", tunnelUrl);
+      if (tab) params.set("tab", tab);
+      navigate(`/?${params.toString()}`);
+    }
+    // Only cancel navigation if connection truly failed with no data loaded
+    else if (
+      connection &&
+      connection.state === "failed" &&
+      !hasData &&
+      connection.error
+    ) {
+      console.warn(
+        "[InspectorDashboard] Connection failed with no data, canceling navigation"
+      );
+      setPendingNavigation(null);
+    }
+  }, [connections, pendingNavigation, navigate]);
+
+  return (
+    <div className="flex flex-col lg:flex-row items-start justify-start gap-4 h-auto lg:h-full relative">
+      <div
+        data-testid="connected-servers-scroll"
+        className="w-full px-3 pt-6 pb-6 sm:px-6 sm:pt-3 sm:pb-6 overflow-visible lg:overflow-auto"
+      >
+        <div className="flex mb-3 md:mb-0 flex-col sm:flex-row items-center sm:items-center gap-3 relative z-10">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <a
+                  href="https://github.com/mcp-use/mcp-use"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-block order-1 sm:order-2"
+                >
+                  <Badge
+                    variant="secondary"
+                    className="text-xs cursor-pointer hover:bg-secondary/80 transition-colors"
+                  >
+                    v{getPackageVersion()}
+                  </Badge>
+                </a>
+              }
+              nativeButton={false}
+            />
+            <TooltipContent>
+              <p>Visit GitHub</p>
+            </TooltipContent>
+          </Tooltip>
+          <h2 className="text-2xl font-medium tracking-tight text-center sm:text-left order-2 sm:order-1">
+            MCP Inspector
+          </h2>
+        </div>
+        <p className="text-muted-foreground relative z-10 text-center sm:text-left">
+          Inspect and debug MCP (Model Context Protocol) servers
+        </p>
+
+        <div className="space-y-4 mt-4 sm:mt-8">
+          <div className="flex flex-col sm:flex-row items-center sm:items-center justify-between gap-3">
+            <h3 className="hidden sm:block text-base font-medium text-center sm:text-left">
+              Connected Servers
+            </h3>
+            <div className="hidden sm:flex items-center gap-3 justify-center sm:justify-start">
+              {connections.length > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleClearAllConnections}
+                >
+                  Clear All
+                </Button>
+              )}
+            </div>
+          </div>
+          {connections.length === 0 ? (
+            <NotFound message="No servers connected yet. Add a server above to get started." />
+          ) : (
+            <div className="grid gap-3">
+              {[...connections].reverse().map((connection) => (
+                <div
+                  key={connection.id}
+                  data-testid={`server-tile-${connection.id}`}
+                  onClick={() => handleServerClick(connection)}
+                  className={`group rounded-lg bg-zinc-100 dark:bg-white/10 p-4 transition-colors ${
+                    connection.state === "ready"
+                      ? "hover:bg-zinc-200 dark:hover:bg-white/15 cursor-pointer"
+                      : ""
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-3">
+                        <ServerIcon server={connection} size="md" />
+                        <h4 className="font-semibold text-sm">
+                          {getServerDisplayName(connection)}
+                        </h4>
+                        <div className="flex items-center gap-2">
+                          {updatingConnections.has(connection.id) ? (
+                            <Loader2 className="w-3 h-3 animate-spin text-blue-500" />
+                          ) : connection.error &&
+                            connection.state !== "ready" ? (
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <button
+                                    type="button"
+                                    data-testid={`server-tile-status-${connection.state}`}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleCopyError(connection.error!);
+                                    }}
+                                    className={`w-2 h-2 rounded-full transition-colors ${
+                                      (connection.error.includes("401") ||
+                                        connection.error.includes(
+                                          "Unauthorized"
+                                        )) &&
+                                      connection.error.includes(
+                                        "does not support OAuth"
+                                      )
+                                        ? "bg-yellow-500 animate-status-pulse-yellow hover:bg-yellow-600"
+                                        : "bg-rose-500 animate-status-pulse-red hover:bg-rose-600"
+                                    }`}
+                                    title="Click to copy error message"
+                                    aria-label="Copy error message to clipboard"
+                                  />
+                                }
+                                nativeButton
+                              />
+                              <TooltipContent>
+                                <p className="max-w-xs">{connection.error}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          ) : (
+                            <div
+                              data-testid={`server-tile-status-${connection.state}`}
+                              className={`w-2 h-2 rounded-full ${
+                                connection.state === "ready"
+                                  ? "bg-emerald-600 animate-status-pulse"
+                                  : connection.state === "failed"
+                                    ? "bg-rose-600 animate-status-pulse-red"
+                                    : "bg-yellow-500 animate-status-pulse-yellow"
+                              }`}
+                            />
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <p className="text-xs text-muted-foreground dark:text-zinc-400 font-mono">
+                          {connection.url}
+                        </p>
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <button
+                                type="button"
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  try {
+                                    await copyToClipboard(connection.url ?? "");
+                                    toast.success("URL copied to clipboard");
+                                  } catch {
+                                    toast.error("Failed to copy URL");
+                                  }
+                                }}
+                                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-white/10 rounded"
+                                title="Copy URL"
+                              >
+                                <Copy className="w-3 h-3 text-muted-foreground" />
+                              </button>
+                            }
+                            nativeButton
+                          />
+                          <TooltipContent>
+                            <p>Copy URL</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
+                    </div>
+                    {/* Desktop: Show all action buttons */}
+                    <div className="hidden lg:flex items-center gap-1 flex-shrink-0">
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              data-testid="server-tile-copy-config"
+                              variant="secondary"
+                              size="sm"
+                              onClick={(e) =>
+                                handleActionClick(e, () =>
+                                  handleCopyConnectionConfig(connection)
+                                )
+                              }
+                              className="h-8 w-8 p-0"
+                            >
+                              <Copy className="w-4 h-4" />
+                            </Button>
+                          }
+                          nativeButton
+                        />
+                        <TooltipContent>
+                          <p>Copy connection config</p>
+                        </TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              data-testid="server-tile-info"
+                              variant="secondary"
+                              size="sm"
+                              onClick={(e) =>
+                                handleActionClick(e, () =>
+                                  navigateToServerTab(
+                                    connection,
+                                    "server-metadata"
+                                  )
+                                )
+                              }
+                              className="h-8 w-8 p-0"
+                            >
+                              <Info className="w-4 h-4" />
+                            </Button>
+                          }
+                          nativeButton
+                        />
+                        <TooltipContent>
+                          <p>View server info</p>
+                        </TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              data-testid="server-tile-settings"
+                              variant="secondary"
+                              size="sm"
+                              onClick={(e) =>
+                                handleActionClick(e, () =>
+                                  navigateToServerTab(
+                                    connection,
+                                    "connection-settings"
+                                  )
+                                )
+                              }
+                              className="h-8 w-8 p-0"
+                            >
+                              <Settings className="w-4 h-4" />
+                            </Button>
+                          }
+                          nativeButton
+                        />
+                        <TooltipContent>
+                          <p>Edit connection settings</p>
+                        </TooltipContent>
+                      </Tooltip>
+                      {(connection.state === "ready" ||
+                        connection.state === "failed" ||
+                        connection.state === "discovering") && (
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                data-testid="server-tile-reconnect"
+                                variant="secondary"
+                                size="sm"
+                                onClick={(e) =>
+                                  handleActionClick(e, () =>
+                                    handleReconnect(connection)
+                                  )
+                                }
+                                className="h-8 w-8 p-0"
+                              >
+                                <RotateCcw className="w-4 h-4" />
+                              </Button>
+                            }
+                            nativeButton
+                          />
+                          <TooltipContent>
+                            <p>
+                              {connection.state === "failed"
+                                ? "Retry connection"
+                                : connection.state === "discovering"
+                                  ? "Reconnect"
+                                  : "Resync connection"}
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              data-testid="server-tile-remove"
+                              variant="secondary"
+                              size="sm"
+                              onClick={(e) =>
+                                handleActionClick(e, () =>
+                                  handleRemoveConnection(connection.id)
+                                )
+                              }
+                              className="h-8 w-8 p-0"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          }
+                          nativeButton
+                        />
+                        <TooltipContent>
+                          <p>Remove connection</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                    {/* Mobile: Show 3-dots overflow menu */}
+                    <div className="lg:hidden flex-shrink-0">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          render={
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 w-8 p-0"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          }
+                          nativeButton
+                        />
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCopyConnectionConfig(connection);
+                            }}
+                          >
+                            <Copy className="h-4 w-4 mr-2" />
+                            Copy connection config
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigateToServerTab(
+                                connection,
+                                "server-metadata"
+                              );
+                            }}
+                          >
+                            <Info className="h-4 w-4 mr-2" />
+                            View server info
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigateToServerTab(
+                                connection,
+                                "connection-settings"
+                              );
+                            }}
+                          >
+                            <Settings className="h-4 w-4 mr-2" />
+                            Edit connection settings
+                          </DropdownMenuItem>
+                          {(connection.state === "ready" ||
+                            connection.state === "failed" ||
+                            connection.state === "discovering") && (
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleReconnect(connection);
+                              }}
+                            >
+                              <RotateCcw className="h-4 w-4 mr-2" />
+                              {connection.state === "failed"
+                                ? "Retry connection"
+                                : connection.state === "discovering"
+                                  ? "Reconnect"
+                                  : "Resync connection"}
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRemoveConnection(connection.id);
+                            }}
+                            className="text-destructive focus:text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4 mr-2" />
+                            Remove connection
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </div>
+                  {(connection.state === "pending_auth" ||
+                    connection.state === "authenticating") && (
+                    <div className="text-sm text-yellow-600 dark:text-yellow-400 mt-2">
+                      {connection.state === "authenticating" ? (
+                        <Button
+                          size="sm"
+                          className="bg-yellow-500/20 border-0 dark:bg-yellow-400/10 text-yellow-800 dark:text-yellow-500"
+                          variant="outline"
+                          disabled
+                        >
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Authenticating...
+                        </Button>
+                      ) : connection.authenticate ? (
+                        <Button
+                          data-testid="server-tile-authenticate"
+                          size="sm"
+                          className="bg-yellow-500/20 border-0 dark:bg-yellow-400/10 text-yellow-800 dark:text-yellow-500"
+                          variant="outline"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            // Store connection config so trySessionReconnect() can
+                            // resume after an OAuth redirect (when ?autoConnect is absent).
+                            try {
+                              sessionStorage.setItem(
+                                INSPECTOR_RECONNECT_STORAGE_KEY,
+                                JSON.stringify({
+                                  url: connection.url,
+                                  name:
+                                    connection.name || "Auto-connected Server",
+                                  transportType:
+                                    (connection as any).transportType || "http",
+                                  connectionMode: "auto",
+                                })
+                              );
+                            } catch {
+                              /* sessionStorage unavailable — best-effort */
+                            }
+                            // Generate a fresh request instead of navigating a
+                            // persisted opaque auth URL whose callback and
+                            // verifier can no longer be proven current.
+                            void connection.authenticate();
+                          }}
+                        >
+                          Authenticate
+                        </Button>
+                      ) : connection.authUrl ? (
+                        <Button
+                          data-testid="server-tile-authenticate"
+                          size="sm"
+                          className="bg-yellow-500/20 border-0 dark:bg-yellow-400/10 text-yellow-800 dark:text-yellow-500"
+                          variant="outline"
+                          render={
+                            <a
+                              href={connection.authUrl}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                try {
+                                  sessionStorage.setItem(
+                                    INSPECTOR_RECONNECT_STORAGE_KEY,
+                                    JSON.stringify({
+                                      url: connection.url,
+                                      name:
+                                        connection.name ||
+                                        "Auto-connected Server",
+                                      transportType:
+                                        (connection as any).transportType ||
+                                        "http",
+                                      connectionMode: "auto",
+                                    })
+                                  );
+                                } catch {
+                                  /* sessionStorage unavailable — best-effort */
+                                }
+                              }}
+                            />
+                          }
+                          nativeButton={false}
+                        >
+                          Authenticate
+                        </Button>
+                      ) : null}
+                    </div>
+                  )}
+                  {connection.state === "failed" && connection.error && (
+                    <div
+                      role="alert"
+                      data-testid="server-tile-error"
+                      className="mt-3 rounded-md border border-rose-500/25 bg-rose-500/10 p-3 text-rose-900 dark:border-rose-400/25 dark:bg-rose-400/10 dark:text-rose-300"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <div className="flex items-start gap-2">
+                        <AlertCircle
+                          className="mt-0.5 h-4 w-4 flex-shrink-0"
+                          aria-hidden="true"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-xs font-semibold">
+                              Connection failed
+                            </p>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 flex-shrink-0 px-2 text-xs hover:bg-rose-500/10"
+                              onClick={() => handleCopyError(connection.error!)}
+                            >
+                              <Copy className="mr-1 h-3 w-3" />
+                              Copy error
+                            </Button>
+                          </div>
+                          <p className="mt-1 max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed">
+                            {connection.error}
+                          </p>
+                          {shouldSuggestLocalInspector(
+                            connection.error,
+                            inspectorHostname
+                          ) && (
+                            <div
+                              data-testid="server-tile-local-recovery"
+                              className="mt-3 rounded border border-rose-500/20 bg-background/60 p-2.5 text-foreground"
+                            >
+                              <div className="flex items-center gap-1.5 text-xs font-semibold">
+                                <Terminal
+                                  className="h-3.5 w-3.5"
+                                  aria-hidden="true"
+                                />
+                                Run the Inspector locally
+                              </div>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                This OAuth server rejected the hosted callback.
+                                Start the Inspector on localhost and retry:
+                              </p>
+                              <div className="mt-2 flex items-start gap-2">
+                                <code className="min-w-0 flex-1 select-all break-all rounded bg-muted px-2 py-1.5 text-[11px] leading-relaxed">
+                                  {buildLocalInspectorCommand(
+                                    connection.url ?? ""
+                                  )}
+                                </code>
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  size="sm"
+                                  className="h-7 flex-shrink-0 px-2 text-xs"
+                                  onClick={async () => {
+                                    try {
+                                      await copyToClipboard(
+                                        buildLocalInspectorCommand(
+                                          connection.url ?? ""
+                                        )
+                                      );
+                                      toast.success(
+                                        "Local Inspector command copied"
+                                      );
+                                    } catch {
+                                      toast.error("Failed to copy command");
+                                    }
+                                  }}
+                                >
+                                  <Copy className="mr-1 h-3 w-3" />
+                                  Copy command
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div
+        ref={connectFormGradientRef}
+        className="w-full relative overflow-hidden h-auto lg:h-full py-4 px-4 sm:py-6 sm:px-6 lg:p-10 items-center justify-center flex"
+      >
+        <div className="absolute inset-0 z-0 overflow-hidden dark:opacity-60 pointer-events-none">
+          <MeshGradientCanvas
+            className="h-full w-full"
+            colors={CONNECT_PANEL_MESH_COLORS}
+            distortion={0.8}
+            swirl={0.1}
+            grainMixer={0}
+            grainOverlay={0.2}
+            speed={meshAnimationPaused ? 0 : 1}
+          />
+        </div>
+        <div
+          className="absolute inset-0 z-[1] pointer-events-none opacity-[0.07] mix-blend-soft-light dark:opacity-[0.06]"
+          aria-hidden
+        >
+          <div
+            className="absolute inset-0 noise"
+            style={{
+              background: `url("${MESH_PANEL_FINE_OVERLAY_NOISE_DATA_URL}")`,
+              filter: "contrast(150%) brightness(550%)",
+            }}
+          />
+        </div>
+        <MeshAnimationPauseButton
+          paused={meshAnimationPaused}
+          onToggle={toggleMeshAnimationPaused}
+          className="absolute bottom-3 right-3 sm:bottom-5 sm:right-5"
+        />
+        <div className="relative w-full max-w-xl mx-auto z-10 flex flex-col gap-3 rounded-3xl p-4 sm:p-6 bg-black/70 dark:bg-black/90 shadow-2xl shadow-black/50 backdrop-blur-md">
+          <ConnectionSettingsForm
+            alias={alias}
+            setAlias={setAlias}
+            url={url}
+            setUrl={setUrl}
+            connectionMode={connectionMode}
+            setConnectionMode={setConnectionMode}
+            protocolMode={protocolMode}
+            setProtocolMode={setProtocolMode}
+            customHeaders={customHeaders}
+            setCustomHeaders={setCustomHeaders}
+            requestTimeout={requestTimeout}
+            setRequestTimeout={setRequestTimeout}
+            resetTimeoutOnProgress={resetTimeoutOnProgress}
+            setResetTimeoutOnProgress={setResetTimeoutOnProgress}
+            maxTotalTimeout={maxTotalTimeout}
+            setMaxTotalTimeout={setMaxTotalTimeout}
+            proxyAddress={proxyAddress}
+            setProxyAddress={setProxyAddress}
+            clientId={clientId}
+            setClientId={setClientId}
+            clientSecret={clientSecret}
+            setClientSecret={setClientSecret}
+            scope={scope}
+            setScope={setScope}
+            onConnect={handleAddConnection}
+            variant="styled"
+            showConnectButton={true}
+            showExportButton={true}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}

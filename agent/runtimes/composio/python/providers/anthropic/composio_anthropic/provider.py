@@ -1,0 +1,95 @@
+import typing as t
+
+from anthropic.types.beta.beta_tool_use_block import BetaToolUseBlock
+from anthropic.types.message import Message as ToolsBetaMessage
+from anthropic.types.tool_param import ToolParam
+from anthropic.types.tool_use_block import ToolUseBlock
+
+from composio.core.provider import NonAgenticProvider
+from composio.types import Modifiers, Tool, ToolExecutionResponse
+from composio.utils.shared import (
+    ToolSchemaAliases,
+    alias_tool_input_schema,
+    normalize_tool_arguments,
+)
+
+
+class AnthropicProvider(
+    NonAgenticProvider[ToolParam, list[ToolParam]],
+    name="anthropic",
+):
+    """
+    Composio toolset for Anthropic Claude platform.
+    """
+
+    def __init__(self, **kwargs: t.Any) -> None:
+        super().__init__(**kwargs)
+        self._aliases: dict[str, ToolSchemaAliases] = {}
+
+    def wrap_tool(self, tool: Tool) -> ToolParam:
+        aliases = alias_tool_input_schema(tool.input_parameters or {})
+        self._aliases[tool.slug] = aliases
+        return ToolParam(
+            input_schema=aliases.schema,
+            name=tool.slug,
+            description=tool.description,
+        )
+
+    def wrap_tools(self, tools: t.Sequence[Tool]) -> list[ToolParam]:
+        return [self.wrap_tool(tool) for tool in tools]
+
+    def execute_tool_call(
+        self,
+        user_id: str,
+        tool_call: ToolUseBlock,
+        modifiers: t.Optional[Modifiers] = None,
+    ) -> ToolExecutionResponse:
+        """
+        Execute a tool call.
+
+        :param user_id: User ID to use for executing function calls.
+        :param tool_call: Tool call metadata.
+        :param modifiers: Modifiers to use for executing function calls.
+        :return: Object containing output data from the tool call.
+        """
+        # Models occasionally emit tool input as a JSON string rather than a dict (issue #2406).
+        arguments = normalize_tool_arguments(tool_call.input)
+        aliases = self._aliases.get(tool_call.name)
+        if aliases is not None:
+            arguments = aliases.restore_arguments(arguments)
+        return self.execute_tool(
+            slug=tool_call.name,
+            arguments=arguments,
+            modifiers=modifiers,
+            user_id=user_id,
+        )
+
+    def handle_tool_calls(
+        self,
+        user_id: str,
+        response: t.Union[dict, ToolsBetaMessage],
+        modifiers: t.Optional[Modifiers] = None,
+    ) -> t.List[ToolExecutionResponse]:
+        """
+        Handle tool calls from Anthropic Claude chat completion object.
+
+        :param response: Chat completion object from
+            `anthropic.Anthropic.beta.tools.messages.create` function call.
+        :param user_id: User ID to use for executing function calls.
+        :param modifiers: Modifiers to use for executing function calls.
+        :return: A list of output objects from the tool calls.
+        """
+        if isinstance(response, dict):
+            response = ToolsBetaMessage(**response)
+
+        outputs = []
+        for content in response.content:
+            if isinstance(content, (ToolUseBlock, BetaToolUseBlock)):
+                outputs.append(
+                    self.execute_tool_call(
+                        user_id=user_id,
+                        tool_call=content,
+                        modifiers=modifiers,
+                    )
+                )
+        return outputs

@@ -1,0 +1,56 @@
+{
+  "name": "create-mcp-use-app",
+  "version": "2.0.2",
+  "type": "module",
+  "description": "Create MCP-Use apps with one command",
+  "author": "mcp-use, Inc.",
+  "license": "MIT",
+  "homepage": "https://github.com/mcp-use/mcp-use#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mcp-use/mcp-use.git",
+    "directory": "libraries/typescript/packages/create-mcp-use-app"
+  },
+  "bugs": {
+    "url": "https://github.com/mcp-use/mcp-use/issues"
+  },
+  "keywords": [
+    "mcp-use",
+    "mcp",
+    "model-context-protocol",
+    "create",
+    "scaffold",
+    "cli",
+    "init",
+    "mcp-server",
+    "template"
+  ],
+  "bin": {
+    "create-mcp-use-app": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "npm run clean && tsup src/index.ts --format esm && tsc --emitDeclarationOnly --declaration && npm run copy-templates",
+    "clean": "rimraf dist tsconfig.tsbuildinfo",
+    "copy-templates": "node scripts/copy-templates.js",
+    "dev": "tsc --build --watch",
+    "test": "vitest --run --passWithNoTests",
+    "test:cli": "./test-cli.sh",
+    "test:cli:full": "RUN_INSTALL_TESTS=yes ./test-cli.sh",
+    "lint": "eslint ."
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.22.2"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@clack/prompts": "^1.7.0",
+    "vitest": "^4.1.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

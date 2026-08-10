@@ -1,0 +1,295 @@
+// SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+package controllers
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	mcpv1beta1 "github.com/stacklok/toolhive/cmd/thv-operator/api/v1beta1"
+	"github.com/stacklok/toolhive/cmd/thv-operator/api/v1beta1/v1beta1test"
+	"github.com/stacklok/toolhive/cmd/thv-operator/internal/testutil"
+)
+
+func TestToolConfigReconciler_EdgeCases(t *testing.T) {
+	t.Parallel()
+
+	t.Run("reconcile non-existent toolconfig", func(t *testing.T) {
+		t.Parallel()
+		ctx := t.Context()
+
+		scheme := testutil.NewScheme(t)
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			Build()
+
+		r := &ToolConfigReconciler{
+			Client: fakeClient,
+			Scheme: scheme,
+		}
+
+		// Try to reconcile a non-existent MCPToolConfig
+		req := reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      "non-existent",
+				Namespace: "default",
+			},
+		}
+
+		result, err := r.Reconcile(ctx, req)
+		assert.NoError(t, err)
+		assert.False(t, result.RequeueAfter > 0)
+	})
+
+	t.Run("reconcile with status update", func(t *testing.T) {
+		t.Parallel()
+		ctx := t.Context()
+
+		scheme := testutil.NewScheme(t)
+
+		toolConfig := &mcpv1beta1.MCPToolConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-config",
+				Namespace: "default",
+			},
+			Spec: mcpv1beta1.MCPToolConfigSpec{
+				ToolsFilter: []string{"tool1", "tool2"},
+				ToolsOverride: map[string]mcpv1beta1.ToolOverride{
+					"tool1": {
+						Name:        "renamed-tool1",
+						Description: "Custom description",
+					},
+				},
+			},
+		}
+
+		mcpServer := v1beta1test.NewMCPServer("test-server", "default",
+			v1beta1test.WithImage("test-image"),
+			v1beta1test.WithToolConfigRef("test-config"),
+		)
+
+		fakeClient := withToolConfigRefIndex(fake.NewClientBuilder().WithScheme(scheme)).
+			WithObjects(toolConfig, mcpServer).
+			WithStatusSubresource(&mcpv1beta1.MCPToolConfig{}).
+			Build()
+
+		r := &ToolConfigReconciler{
+			Client: fakeClient,
+			Scheme: scheme,
+		}
+
+		req := reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      toolConfig.Name,
+				Namespace: toolConfig.Namespace,
+			},
+		}
+
+		// First reconciliation adds finalizer
+		result, err := r.Reconcile(ctx, req)
+		require.NoError(t, err)
+		assert.Greater(t, result.RequeueAfter, time.Duration(0))
+
+		// Second reconciliation updates status
+		result, err = r.Reconcile(ctx, req)
+		require.NoError(t, err)
+		assert.Equal(t, time.Duration(0), result.RequeueAfter)
+
+		// Verify status was updated
+		var updatedConfig mcpv1beta1.MCPToolConfig
+		err = fakeClient.Get(ctx, req.NamespacedName, &updatedConfig)
+		require.NoError(t, err)
+		assert.NotEmpty(t, updatedConfig.Status.ConfigHash)
+	})
+
+	t.Run("reconcile with changed spec", func(t *testing.T) {
+		t.Parallel()
+		ctx := t.Context()
+
+		scheme := testutil.NewScheme(t)
+
+		toolConfig := &mcpv1beta1.MCPToolConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "test-config",
+				Namespace:  "default",
+				Finalizers: []string{ToolConfigFinalizerName},
+			},
+			Spec: mcpv1beta1.MCPToolConfigSpec{
+				ToolsFilter: []string{"tool1"},
+			},
+			Status: mcpv1beta1.MCPToolConfigStatus{
+				ConfigHash: "oldhash",
+			},
+		}
+
+		fakeClient := withToolConfigRefIndex(fake.NewClientBuilder().WithScheme(scheme)).
+			WithObjects(toolConfig).
+			WithStatusSubresource(&mcpv1beta1.MCPToolConfig{}).
+			Build()
+
+		r := &ToolConfigReconciler{
+			Client: fakeClient,
+			Scheme: scheme,
+		}
+
+		// Update the spec
+		err := fakeClient.Get(ctx, client.ObjectKeyFromObject(toolConfig), toolConfig)
+		require.NoError(t, err)
+		toolConfig.Spec.ToolsFilter = append(toolConfig.Spec.ToolsFilter, "tool2")
+		err = fakeClient.Update(ctx, toolConfig)
+		require.NoError(t, err)
+
+		// Reconcile
+		req := reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      toolConfig.Name,
+				Namespace: toolConfig.Namespace,
+			},
+		}
+		result, err := r.Reconcile(ctx, req)
+		require.NoError(t, err)
+		assert.Equal(t, time.Duration(0), result.RequeueAfter)
+
+		// Verify hash was updated
+		var updatedConfig mcpv1beta1.MCPToolConfig
+		err = fakeClient.Get(ctx, req.NamespacedName, &updatedConfig)
+		require.NoError(t, err)
+		assert.NotEqual(t, "oldhash", updatedConfig.Status.ConfigHash)
+		assert.NotEmpty(t, updatedConfig.Status.ConfigHash)
+	})
+}
+
+func TestToolConfigReconciler_ErrorScenarios(t *testing.T) {
+	t.Parallel()
+
+	t.Run("error listing workloads during deletion", func(t *testing.T) {
+		t.Parallel()
+		ctx := t.Context()
+
+		scheme := testutil.NewScheme(t)
+
+		// Object under deletion: it carries the finalizer and a deletion
+		// timestamp, so Reconcile routes into handleDeletion, which recomputes
+		// the referencing workloads on demand (the only remaining caller of the
+		// referrer lookup now that the status list is no longer stored).
+		toolConfig := &mcpv1beta1.MCPToolConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "test-config",
+				Namespace:         "default",
+				Finalizers:        []string{ToolConfigFinalizerName},
+				DeletionTimestamp: &metav1.Time{Time: time.Unix(0, 0)},
+			},
+			Spec: mcpv1beta1.MCPToolConfigSpec{
+				ToolsFilter: []string{"tool1"},
+			},
+		}
+
+		// Create a fake client that returns an error when listing MCPServers,
+		// so the deletion-time referrer lookup fails.
+		fakeClient := &errorClient{
+			Client: fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(toolConfig).
+				WithStatusSubresource(&mcpv1beta1.MCPToolConfig{}).
+				Build(),
+			listError: errors.New("list error"),
+		}
+
+		r := &ToolConfigReconciler{
+			Client: fakeClient,
+			Scheme: scheme,
+		}
+
+		req := reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      toolConfig.Name,
+				Namespace: toolConfig.Namespace,
+			},
+		}
+
+		result, err := r.Reconcile(ctx, req)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to list MCPServers by toolConfigRef")
+		assert.Equal(t, time.Duration(0), result.RequeueAfter)
+	})
+}
+
+// errorClient is a fake client that can simulate errors
+type errorClient struct {
+	client.Client
+	listError error
+}
+
+func (c *errorClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if c.listError != nil {
+		return c.listError
+	}
+	return c.Client.List(ctx, list, opts...)
+}
+
+func TestToolConfigReconciler_ComplexScenarios(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty MCPToolConfig spec", func(t *testing.T) {
+		t.Parallel()
+		ctx := t.Context()
+
+		scheme := testutil.NewScheme(t)
+
+		// MCPToolConfig with completely empty spec
+		toolConfig := &mcpv1beta1.MCPToolConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "empty-config",
+				Namespace: "default",
+			},
+			Spec: mcpv1beta1.MCPToolConfigSpec{
+				// Empty spec - no filters, no overrides
+			},
+		}
+
+		fakeClient := withToolConfigRefIndex(fake.NewClientBuilder().WithScheme(scheme)).
+			WithObjects(toolConfig).
+			WithStatusSubresource(&mcpv1beta1.MCPToolConfig{}).
+			Build()
+
+		r := &ToolConfigReconciler{
+			Client: fakeClient,
+			Scheme: scheme,
+		}
+
+		req := reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      toolConfig.Name,
+				Namespace: toolConfig.Namespace,
+			},
+		}
+
+		// First reconciliation adds finalizer
+		result, err := r.Reconcile(ctx, req)
+		require.NoError(t, err)
+		assert.Greater(t, result.RequeueAfter, time.Duration(0))
+
+		// Second reconciliation should succeed even with empty spec
+		result, err = r.Reconcile(ctx, req)
+		require.NoError(t, err)
+		assert.Equal(t, time.Duration(0), result.RequeueAfter)
+
+		// Verify hash was generated even for empty spec
+		var updatedConfig mcpv1beta1.MCPToolConfig
+		err = fakeClient.Get(ctx, req.NamespacedName, &updatedConfig)
+		require.NoError(t, err)
+		assert.NotEmpty(t, updatedConfig.Status.ConfigHash)
+	})
+}

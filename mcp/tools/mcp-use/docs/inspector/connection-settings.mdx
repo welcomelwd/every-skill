@@ -1,0 +1,99 @@
+---
+title: "Connection settings"
+description: "Choose how the Inspector connects to an MCP server."
+icon: "settings"
+---
+
+{/* TODO: Add Inspector media when a screenshot or short clip would clarify the workflow. */}
+
+Most servers work with only a transport and URL. Change connection settings when the browser cannot reach the server directly, when you want clearer names for saved servers, when OAuth needs pre-registered credentials, or when long-running tools need more time.
+
+## Choose Auto, Direct, or Via Proxy
+
+The Inspector uses **Auto** mode by default: it tries a direct browser connection first, then falls back to the configured Inspector proxy if direct access fails because of CORS or network policy.
+
+| Connection mode | Use it when | Avoid it when |
+| --- | --- | --- |
+| **Auto** | You want the Inspector to try Direct first and fall back to the proxy when needed. | You need to test one specific connection path. |
+| **Direct** | The server is local, public, or reachable from your browser. | The browser blocks the request because of CORS or network policy. |
+| **Via Proxy** | The browser is blocked by CORS, or you need to test proxy behavior. | The server works directly; proxying adds another moving part. |
+
+## Name saved servers
+
+Set a display name when several saved servers have similar URLs.
+
+Changing only the display name updates labels in the dashboard, server list, header, command palette, and server picker. It does not reconnect the server or clear auth tokens.
+
+## Add headers only when the server requires them
+
+Use custom headers for server-specific requirements such as bearer tokens, API keys, or version headers.
+
+Header values are used for the live connection only. They are intentionally not
+saved or restored after a reload, so supply them again at runtime. Prefer OAuth
+when the server supports it.
+
+<Warning>
+  Copy Config includes current form values. Remove OAuth tokens, API keys, and
+  other secrets before sharing exported configuration.
+</Warning>
+
+## Configure OAuth
+
+By default the inspector relies on Dynamic Client Registration (DCR), so no credentials are needed. Use the Authentication dialog when the upstream auth server doesn't expose `registration_endpoint` (common for proxy-mode servers fronting Slack, WorkOS, or GitHub). OAuth client secrets are runtime-only and are not restored after a reload.
+
+| Field | When to set it |
+| --- | --- |
+| Client ID | Use a pre-registered OAuth client instead of DCR. |
+| Client Secret | Use a confidential client; the SDK switches token endpoint auth away from `none`. |
+| Scope | Request a provider-specific space-separated scope list. |
+
+When a server requires OAuth, the connection enters `pending_auth`. Click **Authenticate**, complete the provider flow, and return to the Inspector. If a popup is blocked, use the open-auth-page fallback link.
+
+Browser OAuth session values are encrypted at rest with AES-256-GCM. The
+non-extractable origin key is kept in IndexedDB, while versioned ciphertext
+envelopes remain in localStorage so popup storage events and reload persistence
+continue to work.
+
+## Configuration Import/Export
+
+Use **Copy Config** to export the current connection form as JSON. Paste JSON into the URL field to populate the form in another Inspector instance.
+
+Example configuration:
+
+```json
+{
+  "url": "https://mcp.example.com/mcp",
+  "transportType": "http",
+  "connectionMode": "auto",
+  "headers": {
+    "Authorization": "Bearer token123"
+  },
+  "requestTimeout": 10000,
+  "resetTimeoutOnProgress": true,
+  "maxTotalTimeout": 60000,
+  "oauth": {
+    "clientId": "your-client-id",
+    "clientSecret": "your-client-secret",
+    "scope": "read write"
+  }
+}
+```
+
+<Note>
+  The paste detection only works in the URL field. Remove OAuth tokens, API keys, and other secrets before sharing a copied config.
+</Note>
+
+## URL and tabs
+
+The Inspector keeps the active tab in the page URL (`?tab=...`). Switching tabs updates the query string so a refresh or shared link restores the same view.
+
+## Tune timeouts for long work
+
+Use timeout settings only when a valid tool call or resource read needs more time.
+
+| Setting | Default | What it controls |
+| --- | --- | --- |
+| Request timeout | `10000` ms | Time allowed for one request. |
+| Maximum total timeout | `60000` ms | Total time allowed across retries and progress updates. |
+
+If a request times out, first confirm the server eventually responds. Then raise the timeout to match the expected tool runtime.

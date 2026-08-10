@@ -1,0 +1,120 @@
+import { DEFAULT_OLLAMA_BASE_URL, type ProviderName } from "@mcp-use/agent";
+
+export interface MessageAttachment {
+  type: "image" | "file";
+  data: string; // base64 encoded
+  mimeType: string;
+  name?: string;
+  size?: number;
+}
+
+export interface Message {
+  id: string;
+  role: "user" | "assistant";
+  content: string | Array<{ index: number; type: string; text: string }>;
+  timestamp: number;
+  attachments?: MessageAttachment[];
+  parts?: Array<{
+    type: "text" | "tool-invocation";
+    text?: string;
+    toolInvocation?: {
+      toolCallId?: string;
+      toolName: string;
+      args: Record<string, unknown>;
+      result?: any;
+      state?: "pending" | "streaming" | "result" | "error";
+      /** Best-effort parsed partial arguments while the LLM is still generating */
+      partialArgs?: Record<string, unknown>;
+    };
+  }>;
+  toolCalls?: Array<{
+    toolName: string;
+    args: Record<string, unknown>;
+    result?: any;
+  }>;
+}
+
+export interface ChatSerializedMessage {
+  role: string;
+  content: unknown;
+  attachments?: unknown;
+}
+
+export interface ChatBodyContext {
+  disabledTools: string[];
+  widgetModelContext?: string;
+}
+
+export type ChatBodyBuilder = (
+  messages: ChatSerializedMessage[],
+  context: ChatBodyContext
+) => unknown;
+
+export interface SendMessageOptions {
+  throwOnError?: boolean;
+  onAccepted?: () => void;
+}
+
+export interface LLMConfig {
+  provider: ProviderName;
+  apiKey: string;
+  model: string;
+  temperature?: number;
+  baseUrl?: string;
+  credentials?: RequestCredentials;
+}
+
+export interface AuthConfig {
+  type: "none" | "basic" | "bearer" | "oauth";
+  username?: string;
+  password?: string;
+  token?: string;
+  oauthTokens?: {
+    access_token?: string;
+    refresh_token?: string;
+    token_type?: string;
+  };
+}
+
+export interface MCPServerConfig {
+  url?: string;
+  transport?: "http" | "sse";
+  headers?: Record<string, string>;
+  authToken?: string;
+  auth_token?: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  preferSse?: boolean;
+}
+
+export interface MCPConfig {
+  mcpServers: Record<string, MCPServerConfig>;
+}
+
+export type StreamProtocol = "sse" | "data-stream";
+
+export const DEFAULT_MODELS: Record<ProviderName, string> = {
+  openai: "gpt-5.6-terra",
+  "openai-compatible": "",
+  anthropic: "claude-haiku-4-5-20251001",
+  google: "gemini-2.5-flash",
+  openrouter: "meta-llama/llama-3.1-8b-instruct:free",
+  ollama: "qwen3",
+};
+
+const DEFAULT_BASE_URLS: Partial<Record<ProviderName, string>> = {
+  ollama: DEFAULT_OLLAMA_BASE_URL,
+};
+
+export function providerRequiresApiKey(provider: ProviderName): boolean {
+  return provider !== "ollama" && provider !== "openai-compatible";
+}
+
+export function providerSupportsBaseUrl(provider: ProviderName): boolean {
+  return provider === "ollama" || provider === "openai-compatible";
+}
+
+export function getDefaultBaseUrl(provider: ProviderName): string {
+  return DEFAULT_BASE_URLS[provider] ?? "";
+}

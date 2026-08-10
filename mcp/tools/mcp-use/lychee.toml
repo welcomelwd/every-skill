@@ -1,0 +1,53 @@
+# Accept redirects (302, 307) as valid - these are fine
+accept = ["100..=103", "200..=299", "302", "307"]
+
+# Exclude patterns - links that are known to be okay or not checkable in CI
+exclude = [
+  
+  # npmjs.com - 403s are rate limiting, packages exist
+  "^https://www\\.npmjs\\.com",
+  "^https://npmjs\\.com",
+  "npmjs\\.com",
+  
+  # OpenAI platform docs - requires authentication
+  "^https://platform\\.openai\\.com/docs/apps",
+  
+  # Auth0 dashboard - redirects are fine
+  "^https://manage\\.auth0\\.com",
+  
+  # WorkOS - some redirects and network issues in CI
+  "^https://dashboard\\.workos\\.com",
+  "^https://community\\.workos\\.com",
+  
+  # Lychee GitHub repository - self-reference
+  "^https://github\\.com/lycheeverse/lychee",
+
+  # Langfuse Cloud API endpoints - 403s from bot protection in CI, valid defaults
+  "^https://(us\\.|jp\\.|hipaa\\.)?cloud\\.langfuse\\.com",
+  "cloud\\.langfuse\\.com",
+  
+  # Example/template URLs
+  "^https://github\\.com/your-org/",
+
+  # GitHub /stargazers pages return 404 to non-browser clients (bot mitigation);
+  # they load fine in a browser. Verified against other repos' stargazers pages too.
+  "^https://github\\.com/[^/]+/[^/]+/stargazers$",
+
+  # star-history.com badge API intermittently returns 500s; the badge is decorative
+  "^https://api\\.star-history\\.com/svg(\\?|$)",
+
+]
+
+# Skip generated changelogs - historical release notes reference docs URLs
+# that were valid at release time; rewriting them is misleading
+exclude_path = [
+  "libraries/typescript/packages/cli/CHANGELOG\\.md$",
+  "libraries/typescript/packages/create-mcp-use-app/CHANGELOG\\.md$",
+  "libraries/typescript/packages/inspector/CHANGELOG\\.md$",
+  "libraries/typescript/packages/mcp-use/CHANGELOG\\.md$",
+]
+
+exclude_loopback = true
+exclude_link_local = true
+# Maximum number of redirects to follow
+max_redirects = 5

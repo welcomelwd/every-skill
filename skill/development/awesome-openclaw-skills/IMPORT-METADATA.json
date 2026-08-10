@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "repository": "VoltAgent/awesome-openclaw-skills",
+  "source_url": "https://github.com/VoltAgent/awesome-openclaw-skills",
+  "ref": "default branch",
+  "resolved_commit": "517a94d8d3e6cd27039ceefdbad36f19d4b73389",
+  "category": "skill",
+  "subcategory": "development",
+  "slug": "awesome-openclaw-skills",
+  "license": null,
+  "source_date": null,
+  "imported_at": "2026-08-10T07:29:55+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 35,
+  "copied_bytes": 942767,
+  "excluded_files": [],
+  "execution": "never run by this importer"
+}

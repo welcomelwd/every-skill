@@ -1,0 +1,216 @@
+import { completeChat } from "@mcp-use/agent";
+import type { ProviderMessage } from "@mcp-use/agent";
+import type { Resource } from "@mcp-use/client/react";
+import { useCallback } from "react";
+import type { LLMConfig } from "../components/chat/types";
+
+interface UsePropsLLMProps {
+  llmConfig: LLMConfig | null;
+}
+
+interface GeneratePropsParams {
+  resource: Resource;
+  resourceAnnotations?: Record<string, unknown>;
+  propsSchema?: any;
+}
+
+interface GeneratedProp {
+  key: string;
+  value: string;
+}
+
+/** Extract the outermost JSON object from LLM response (handles markdown code blocks and nested JSON). */
+function extractOutermostJsonObject(
+  text: string
+): Record<string, unknown> | null {
+  let raw = text.trim();
+  const codeBlockMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (codeBlockMatch) {
+    raw = codeBlockMatch[1].trim();
+  }
+  const start = raw.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  for (let i = start; i < raw.length; i++) {
+    if (raw[i] === "{") depth++;
+    else if (raw[i] === "}") {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(raw.slice(start, i + 1)) as Record<string, unknown>;
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+export function usePropsLLM({ llmConfig }: UsePropsLLMProps) {
+  const generateProps = useCallback(
+    async ({
+      resource,
+      resourceAnnotations,
+      propsSchema,
+    }: GeneratePropsParams): Promise<GeneratedProp[]> => {
+      if (!llmConfig) {
+        throw new Error("LLM config is not available");
+      }
+
+      const resourceType =
+        resource.mimeType || resourceAnnotations?.mimeType || "unknown";
+      const resourceDescription =
+        resource.description || resourceAnnotations?.description || "N/A";
+
+      if (propsSchema?.properties) {
+        const propNames = Object.keys(propsSchema.properties);
+        const propDescriptions = propNames
+          .map((key) => {
+            const prop = propsSchema.properties[key];
+            const base = `  - ${key} (${prop.type || "string"})`;
+            const desc = prop.description ? `: ${prop.description}` : "";
+            let itemsHint = "";
+            if (
+              prop.type === "array" &&
+              prop.items?.type === "object" &&
+              prop.items?.properties
+            ) {
+              const itemKeys = Object.keys(prop.items.properties).join(", ");
+              itemsHint = ` — array of objects with keys: {${itemKeys}}`;
+            }
+            return `${base}${itemsHint}${desc}`;
+          })
+          .join("\n");
+
+        const systemPrompt = `You are helping a developer configure props for a UI widget. The widget has a defined schema with specific props. Generate appropriate values for ONLY the props listed in the schema. Return ONLY a JSON object with these exact keys. For array props, each item must match the specified structure.`;
+        const userPrompt = `Widget: ${resource.name || resource.uri}
+Description: ${resourceDescription}
+
+Props Schema:
+${propDescriptions}
+
+Generate appropriate default/example values for these props. Return ONLY a JSON object with the exact prop names as keys.
+Example: {"query": "example search term", "results": [{"fruit": "Apple", "color": "red"}]}`;
+
+        const messages: ProviderMessage[] = [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ];
+        const text = await completeChat({
+          config: {
+            provider: llmConfig.provider,
+            model: llmConfig.model,
+            apiKey: llmConfig.apiKey,
+            temperature: llmConfig.temperature,
+            baseUrl: llmConfig.baseUrl,
+          },
+          messages,
+        });
+
+        const parsed = extractOutermostJsonObject(text);
+        if (parsed) {
+          return Object.entries(parsed).map(([key, value]) => ({
+            key,
+            value:
+              typeof value === "object" && value !== null
+                ? JSON.stringify(value)
+                : String(value),
+          }));
+        }
+        throw new Error("Could not parse props from LLM response");
+      }
+
+      // Fallback: sample structuredContent for widget preview (no propsSchema).
+      const isViewResource =
+        resource.uri?.startsWith("ui://") ||
+        resource.mimeType === "text/html;profile=mcp-app" ||
+        !!(resourceAnnotations as Record<string, unknown> | undefined)?.ui;
+
+      const systemPrompt = isViewResource
+        ? `You are helping preview an MCP App widget in the inspector.
+Generate sample tool result data (structuredContent) that the widget receives via useToolContext().
+Return ONLY a JSON object with realistic sample data the widget needs to render — query strings, item arrays, IDs, labels, etc.
+Do NOT generate UI styling props like theme, width, height, or showFilters unless explicitly required.
+For search/list widgets, always include the collection array (e.g. "items") with at least 2 sample entries.`
+        : `You are helping a developer configure props for a UI widget/resource.
+Analyze the provided information and suggest appropriate props in key-value format.
+Return ONLY a JSON object with key-value pairs, where both keys and values are strings.
+Example format: {"theme": "dark", "width": "400", "title": "My Widget"}`;
+
+      const userPrompt = isViewResource
+        ? `Widget: ${resource.name || resource.uri}
+Description: ${resourceDescription}
+
+Generate sample structuredContent for previewing this widget in the inspector.
+Include every data field the widget likely reads from toolOutput (arrays must be non-empty).
+Example for a fruit search widget: {"query": "apple", "items": [{"id": "apple", "name": "Apple"}, {"id": "banana", "name": "Banana"}]}
+Return ONLY JSON.`
+        : `Resource Information:
+- URI: ${resource.uri}
+- Name: ${resource.name || "N/A"}
+- Type: ${resourceType}
+- Description: ${resourceDescription}
+
+Based on this information, suggest 3-5 common customizable properties like theme, dimensions, colors, titles, or configuration options that would be useful for this type of resource. Keep it simple and practical.`;
+
+      const messages: ProviderMessage[] = [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ];
+      const text = await completeChat({
+        config: {
+          provider: llmConfig.provider,
+          model: llmConfig.model,
+          apiKey: llmConfig.apiKey,
+          temperature: llmConfig.temperature,
+          baseUrl: llmConfig.baseUrl,
+        },
+        messages,
+      });
+
+      try {
+        const parsed = extractOutermostJsonObject(text);
+        if (parsed) {
+          return Object.entries(parsed).map(([key, value]) => ({
+            key,
+            value:
+              typeof value === "object" && value !== null
+                ? JSON.stringify(value)
+                : String(value),
+          }));
+        }
+
+        const lines = text.split("\n");
+        const props: GeneratedProp[] = [];
+        for (const line of lines) {
+          const match = line.match(
+            /^\s*["']?(\w+)["']?\s*[:=]\s*["']?(.+?)["']?\s*,?\s*$/
+          );
+          if (match) {
+            props.push({
+              key: match[1].trim(),
+              value: match[2].trim().replace(/^["']|["']$/g, ""),
+            });
+          }
+        }
+        if (props.length > 0) return props;
+        throw new Error("Could not parse props from LLM response");
+      } catch (parseError) {
+        console.error(
+          "[usePropsLLM] Failed to parse LLM response:",
+          parseError
+        );
+        throw new Error(
+          `Failed to parse props from LLM response: ${text.slice(0, 100)}...`
+        );
+      }
+    },
+    [llmConfig]
+  );
+
+  return {
+    generateProps,
+    isAvailable: llmConfig !== null,
+  };
+}

@@ -1,0 +1,404 @@
+import {
+  Button,
+  buttonExecuteClass,
+  buttonToolbarClass,
+} from "@/client/components/ui/button";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogHeader,
+  DialogJsonSection,
+  DialogTitle,
+} from "@/client/components/ui/dialog";
+import { Spinner } from "@/client/components/ui/spinner";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/client/components/ui/tooltip";
+import type { Tool } from "@mcp-use/client/react";
+import {
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Code,
+  Copy,
+  Play,
+  Save,
+  X,
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { copyToClipboard } from "@/client/utils/browser";
+import { cn } from "@/client/lib/utils";
+import { JSONDisplay } from "../shared/JSONDisplay";
+import { ToolInputForm } from "./ToolInputForm";
+
+interface ToolExecutionPanelProps {
+  selectedTool: Tool | null;
+  toolArgs: Record<string, unknown>;
+  payloadToSend?: Record<string, unknown>;
+  isExecuting: boolean;
+  isConnected: boolean;
+  onArgChange: (key: string, value: string) => void;
+  onExecute: () => void;
+  onSave: () => void;
+  onCancel?: () => void;
+  onBulkPaste?: (pastedText: string, fieldKey: string) => Promise<boolean>;
+  autoFilledFields?: Set<string>;
+  setFields?: Set<string>;
+  sendEmptyFields?: Set<string>;
+  onToggleEmpty?: (
+    key: string,
+    expectedType: "string" | "object" | "array",
+    pressed: boolean
+  ) => void;
+}
+
+export function ToolExecutionPanel({
+  selectedTool,
+  toolArgs,
+  payloadToSend,
+  isExecuting,
+  isConnected,
+  onArgChange,
+  onExecute,
+  onSave,
+  onCancel,
+  onBulkPaste,
+  autoFilledFields,
+  setFields,
+  sendEmptyFields,
+  onToggleEmpty,
+}: ToolExecutionPanelProps) {
+  const compactLabelClass = "hidden @[700px]/tool-exec:inline";
+  const compactShortcutClass =
+    "hidden @[700px]/tool-exec:inline shrink-0 text-[10px] leading-none border border-current/30 p-1 rounded-full";
+  // Match label hide to the panel container, not the viewport — otherwise a
+  // narrow split panel on a wide window drops text but keeps pill padding.
+  const compactIconOnlyClass =
+    "@max-[699px]/tool-exec:size-8 @max-[699px]/tool-exec:min-w-8 @max-[699px]/tool-exec:shrink-0 @max-[699px]/tool-exec:gap-0 @max-[699px]/tool-exec:rounded-full @max-[699px]/tool-exec:!px-0 @max-[699px]/tool-exec:!py-0";
+  const compactExecuteIconOnlyClass = "@max-[699px]/tool-exec:!pr-0";
+  const [showCancelButton, setShowCancelButton] = useState(false);
+  const [showMetadata, setShowMetadata] = useState(false);
+  const [copiedPayload, setCopiedPayload] = useState(false);
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
+  const [isDescriptionTruncated, setIsDescriptionTruncated] = useState(false);
+  const descriptionRef = useRef<HTMLParagraphElement>(null);
+
+  // Check if description needs truncation (more than 3 lines)
+  useEffect(() => {
+    if (descriptionRef.current && selectedTool?.description) {
+      const element = descriptionRef.current;
+      const lineHeight = parseFloat(getComputedStyle(element).lineHeight);
+      const height = element.scrollHeight;
+      const lines = Math.round(height / lineHeight);
+      setIsDescriptionTruncated(lines > 3);
+      setIsDescriptionExpanded(false);
+    }
+  }, [selectedTool?.description]);
+
+  // Copy metadata to clipboard
+  const copyMetadataToClipboard = async () => {
+    if (!selectedTool) return;
+    await copyToClipboard(JSON.stringify(selectedTool, null, 2));
+  };
+
+  // Copy payload to clipboard (use payloadToSend when provided - reflects what will actually be sent)
+  const copyPayloadToClipboard = async () => {
+    if (!selectedTool) return;
+    try {
+      const payload = payloadToSend ?? toolArgs;
+      await copyToClipboard(JSON.stringify(payload, null, 2));
+      setCopiedPayload(true);
+      setTimeout(() => setCopiedPayload(false), 2000);
+    } catch {
+      // Silently fail - no toast in this component
+    }
+  };
+
+  // Execute from a single-line tool argument with Enter. Textareas keep Enter
+  // for newlines and continue to use Cmd/Ctrl + Enter for execution.
+  useEffect(() => {
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape" && isExecuting && onCancel) {
+        event.preventDefault();
+        onCancel();
+        return;
+      }
+
+      if (event.key !== "Enter") return;
+
+      const isCommandEnter = event.metaKey || event.ctrlKey;
+      const isBareEnter =
+        !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
+      const target = event.target;
+      const isToolArgumentInput =
+        target instanceof HTMLInputElement &&
+        target.dataset.toolArgumentInput === "true";
+
+      // Only execute if a tool is selected and not already executing. Bare
+      // Enter is limited to single-line argument inputs; Command/Ctrl + Enter
+      // remains available everywhere, including textareas.
+      if (
+        (isCommandEnter || (isBareEnter && isToolArgumentInput)) &&
+        selectedTool &&
+        !isExecuting &&
+        isConnected
+      ) {
+        event.preventDefault();
+        onExecute();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [selectedTool, isExecuting, isConnected, onExecute, onCancel]);
+
+  if (!selectedTool) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full p-4 text-center">
+        <p className="text-gray-500 dark:text-gray-400 mb-2">
+          Select a tool to get started
+        </p>
+        <p className="text-xs text-gray-400 dark:text-gray-500">
+          Choose a tool from the list to view its details and execute it
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-full @container/tool-exec">
+      <div className="shrink-0 p-3 sm:p-5 pt-3 sm:pt-4 pb-2 sm:pb-2 sm:pr-4">
+        <div>
+          <div className="flex flex-row items-center justify-between mb-0 gap-2">
+            <h3
+              className="text-base sm:text-lg font-semibold"
+              data-testid="tool-execution-title"
+            >
+              {selectedTool.name}
+            </h3>
+            <div className="flex gap-2 shrink-0">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      data-testid="tool-execution-metadata-button"
+                      variant={showMetadata ? "default" : "outline"}
+                      onClick={() => setShowMetadata(!showMetadata)}
+                      disabled={isExecuting}
+                      size="sm"
+                      className={cn(buttonToolbarClass, compactIconOnlyClass)}
+                      title="View tool metadata"
+                    >
+                      <Code />
+                      <span className={compactLabelClass}>Metadata</span>
+                    </Button>
+                  }
+                  nativeButton
+                />
+                <TooltipContent>
+                  <p>View tool definition metadata</p>
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      data-testid="tool-execution-copy-payload-button"
+                      variant="outline"
+                      onClick={copyPayloadToClipboard}
+                      disabled={isExecuting}
+                      size="sm"
+                      className={cn(buttonToolbarClass, compactIconOnlyClass)}
+                      title="Copy payload as JSON"
+                    >
+                      {copiedPayload ? (
+                        <Check className="text-green-600" />
+                      ) : (
+                        <Copy />
+                      )}
+                      <span className={compactLabelClass}>
+                        {copiedPayload ? "Copied!" : "Payload"}
+                      </span>
+                    </Button>
+                  }
+                  nativeButton
+                />
+                <TooltipContent>
+                  <p>Copy payload as JSON</p>
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      data-testid="tool-execution-save-button"
+                      variant="outline"
+                      onClick={onSave}
+                      disabled={isExecuting}
+                      size="sm"
+                      className={cn(buttonToolbarClass, compactIconOnlyClass)}
+                      title="Save request"
+                    >
+                      <Save />
+                      <span className={compactLabelClass}>Save</span>
+                    </Button>
+                  }
+                  nativeButton
+                />
+                <TooltipContent>
+                  <p>Save request</p>
+                </TooltipContent>
+              </Tooltip>
+              {isExecuting && onCancel ? (
+                <Tooltip open={showCancelButton ? undefined : false}>
+                  <TooltipTrigger
+                    render={
+                      <div
+                        onMouseEnter={() => setShowCancelButton(true)}
+                        onMouseLeave={() => setShowCancelButton(false)}
+                        className="relative"
+                      >
+                        <Button
+                          data-testid="tool-execution-cancel-button"
+                          onClick={onCancel}
+                          variant={showCancelButton ? "destructive" : "default"}
+                          size="sm"
+                          className={cn(
+                            buttonExecuteClass,
+                            compactIconOnlyClass,
+                            compactExecuteIconOnlyClass,
+                            "transition-all"
+                          )}
+                        >
+                          {showCancelButton ? (
+                            <>
+                              <X />
+                              <span className={compactLabelClass}>Cancel</span>
+                              <span className={compactShortcutClass}>Esc</span>
+                            </>
+                          ) : (
+                            <>
+                              <Spinner />
+                              <span className={compactLabelClass}>
+                                Executing...
+                              </span>
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    }
+                    nativeButton={false}
+                  />
+                  <TooltipContent>
+                    <p>Hover to cancel (or press Esc)</p>
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
+                <Button
+                  data-testid="tool-execution-execute-button"
+                  onClick={onExecute}
+                  disabled={isExecuting || !isConnected}
+                  size="sm"
+                  className={cn(
+                    buttonExecuteClass,
+                    compactIconOnlyClass,
+                    compactExecuteIconOnlyClass
+                  )}
+                >
+                  {isExecuting ? (
+                    <>
+                      <Spinner />
+                      <span className={compactLabelClass}>Executing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Play />
+                      <span className={compactLabelClass}>Execute</span>
+                      <span className={compactShortcutClass}>⌘↵</span>
+                    </>
+                  )}
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-3 sm:px-5 pb-4 pr-3">
+        {selectedTool.description && (
+          <div className="relative mb-6">
+            <div className="relative">
+              <p
+                ref={descriptionRef}
+                data-testid="tool-execution-description"
+                className={`text-sm text-gray-600 dark:text-gray-400 leading-relaxed transition-all duration-300 ${
+                  !isDescriptionExpanded && isDescriptionTruncated
+                    ? "line-clamp-3"
+                    : ""
+                }`}
+              >
+                {selectedTool.description}
+              </p>
+              {isDescriptionTruncated && !isDescriptionExpanded && (
+                <div className="absolute bottom-0 left-0 right-0 h-[1.4em] bg-linear-to-t from-white/95 dark:from-black/95 via-white/55 dark:via-black/55 to-transparent pointer-events-none" />
+              )}
+            </div>
+            {isDescriptionTruncated && (
+              <div className="flex justify-end">
+                <button
+                  onClick={() =>
+                    setIsDescriptionExpanded(!isDescriptionExpanded)
+                  }
+                  className="relative z-10 inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 mt-1 transition-colors"
+                >
+                  {isDescriptionExpanded ? (
+                    <>
+                      Show less
+                      <ChevronUp className="h-3 w-3" />
+                    </>
+                  ) : (
+                    <>
+                      Show more
+                      <ChevronDown className="h-3 w-3" />
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        <ToolInputForm
+          selectedTool={selectedTool}
+          toolArgs={toolArgs}
+          onArgChange={onArgChange}
+          onBulkPaste={onBulkPaste}
+          autoFilledFields={autoFilledFields}
+          setFields={setFields}
+          sendEmptyFields={sendEmptyFields}
+          onToggleEmpty={onToggleEmpty}
+        />
+      </div>
+
+      <Dialog open={showMetadata} onOpenChange={setShowMetadata}>
+        <DialogContent scrollable className="max-w-3xl max-h-[80vh]">
+          <DialogHeader sticky>
+            <DialogTitle>Tool Definition</DialogTitle>
+          </DialogHeader>
+
+          <DialogBody>
+            <DialogJsonSection onCopy={copyMetadataToClipboard}>
+              <JSONDisplay
+                data={selectedTool}
+                filename={`tool-definition-${selectedTool.name}-${Date.now()}.json`}
+              />
+            </DialogJsonSection>
+          </DialogBody>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

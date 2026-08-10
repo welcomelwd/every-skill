@@ -1,0 +1,65 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "rules": {
+    "optionalPeerDependencies": "off",
+    "exports": "warn",
+    "types": "warn"
+  },
+  "ignoreWorkspaces": [
+    "packages/client/examples/**",
+    "packages/create-mcp-use-app/src/templates/**",
+    "packages/server/examples/**",
+    "test_app"
+  ],
+  "workspaces": {
+    ".": {
+      "project": ["*.{js,ts}"]
+    },
+    "packages/server": {
+      "entry": ["src/oauth/**/*.ts", "tests/**/*.{ts,tsx}"],
+      "project": ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"],
+      "ignoreUnresolved": ["#mcp-use-node-http", "#mcp-use-skills-loader"]
+    },
+    "packages/agent": {
+      "entry": ["tests/**/*.ts", "examples/**/*.ts"],
+      "project": ["src/**/*.ts", "tests/**/*.ts", "examples/**/*.ts"]
+    },
+    "packages/tunnel": {
+      "entry": ["tests/**/*.ts"],
+      "project": ["src/**/*.ts", "tests/**/*.ts"]
+    },
+    "packages/cli": {
+      "entry": ["tests/**/*.{mjs,ts,tsx}"],
+      "project": ["src/**/*.{ts,tsx}", "tests/**/*.{mjs,ts,tsx}"],
+      "ignoreDependencies": [
+        "@tailwindcss/vite",
+        "@vitejs/plugin-react",
+        "@types/react-dom",
+        "mcp-use",
+        "react-dom",
+        "tailwindcss"
+      ]
+    },
+    "packages/client": {
+      "entry": ["tests/**/*.{ts,tsx}"],
+      "project": ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"]
+    },
+    "packages/inspector": {
+      "entry": [
+        "src/server/*.ts",
+        "start-auth-servers.ts",
+        "tests/e2e/**/*.{ts,tsx,mjs}"
+      ],
+      "project": ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"],
+      "ignoreDependencies": [
+        "inspector-rate-limiter-memory",
+        "tailwindcss",
+        "tw-animate-css"
+      ]
+    },
+    "packages/create-mcp-use-app": {
+      "entry": ["scripts/**/*.{js,mjs,ts}"],
+      "project": ["src/**/*.{ts,tsx}"]
+    }
+  }
+}

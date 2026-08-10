@@ -1,0 +1,414 @@
+/**
+ * Widget Debug Context
+ *
+ * Manages debugging state for MCP Apps widgets.
+ * Tracks CSP violations, widget state, host context, and playground settings.
+ *
+ * Follows the same React Context pattern as InspectorContext (not Zustand).
+ */
+
+import type { ReactNode } from "react";
+import {
+  createContext,
+  use,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type { WidgetModelContext } from "@/client/components/chat/widget-model-context";
+import type { ViewAppToolConnection } from "@mcp-use/client/react";
+
+type WidgetProtocol = "mcp-apps";
+
+export interface CspViolation {
+  directive: string;
+  effectiveDirective: string;
+  blockedUri: string;
+  sourceFile?: string;
+  lineNumber?: number;
+  columnNumber?: number;
+  timestamp: number;
+  originalPolicy?: string;
+}
+
+export interface WidgetDeclaredCsp {
+  connectDomains?: string[];
+  resourceDomains?: string[];
+  frameDomains?: string[];
+  baseUriDomains?: string[];
+}
+
+export interface WidgetInfo {
+  toolName: string;
+  protocol: WidgetProtocol;
+  modelContextScope?: string;
+  hostContext?: any;
+  cspViolations: CspViolation[];
+  declaredCsp?: WidgetDeclaredCsp;
+  effectivePolicy?: string;
+  modelContext?: WidgetModelContext;
+  widgetState?: any;
+  appToolConnection?: ViewAppToolConnection;
+}
+
+export type DeviceType = "mobile" | "desktop";
+
+export interface PlaygroundSettings {
+  deviceType: DeviceType;
+  customViewport: { width: number; height: number };
+  cspMode: "permissive" | "widget-declared";
+  displayModeOverride: "inline" | "pip" | "fullscreen" | null;
+  capabilities: { hover: boolean; touch: boolean };
+  safeAreaInsets: { top: number; right: number; bottom: number; left: number };
+  locale: string;
+  timeZone: string;
+}
+
+interface WidgetDebugState {
+  activeWidgetId: string | null;
+  widgets: Map<string, WidgetInfo>;
+  playground: PlaygroundSettings;
+}
+
+interface WidgetDebugContextType extends WidgetDebugState {
+  setActiveWidget: (widgetId: string | null) => void;
+  addWidget: (
+    widgetId: string,
+    info: Omit<WidgetInfo, "cspViolations">
+  ) => void;
+  removeWidget: (widgetId: string) => void;
+  getWidget: (widgetId: string) => WidgetInfo | undefined;
+  addCspViolation: (widgetId: string, violation: CspViolation) => void;
+  clearCspViolations: (widgetId: string) => void;
+  setWidgetModelContext: (
+    widgetId: string,
+    context: WidgetInfo["modelContext"]
+  ) => void;
+  setWidgetState: (widgetId: string, state: any) => void;
+  setWidgetDeclaredCsp: (
+    widgetId: string,
+    csp: WidgetDeclaredCsp | undefined,
+    effectivePolicy?: string
+  ) => void;
+  setWidgetAppToolConnection: (
+    widgetId: string,
+    connection: ViewAppToolConnection | null
+  ) => void;
+  updatePlaygroundSettings: (settings: Partial<PlaygroundSettings>) => void;
+  clearAllWidgets: () => void;
+  getAllModelContexts: () => Map<string, WidgetInfo["modelContext"]>;
+  getModelContexts: (scope: string) => Map<string, WidgetInfo["modelContext"]>;
+  getAppToolConnections: (scope: string) => ViewAppToolConnection[];
+}
+
+const WidgetDebugContext = createContext<WidgetDebugContextType | undefined>(
+  undefined
+);
+
+const DEFAULT_PLAYGROUND_SETTINGS: PlaygroundSettings = {
+  deviceType: "desktop",
+  customViewport: { width: 768, height: 1024 },
+  cspMode: "widget-declared",
+  displayModeOverride: null,
+  capabilities: { hover: true, touch: false },
+  safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+  locale: "en-US",
+  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+};
+
+export function selectModelContexts(
+  widgets: ReadonlyMap<string, WidgetInfo>,
+  scope?: string
+): Map<string, WidgetInfo["modelContext"]> {
+  const contexts = new Map<string, WidgetInfo["modelContext"]>();
+  for (const [id, widget] of widgets) {
+    if (
+      widget.modelContext &&
+      (scope === undefined || widget.modelContextScope === scope)
+    ) {
+      contexts.set(id, widget.modelContext);
+    }
+  }
+  return contexts;
+}
+
+export function selectAppToolConnections(
+  widgets: ReadonlyMap<string, WidgetInfo>,
+  scope: string
+): ViewAppToolConnection[] {
+  const connections: ViewAppToolConnection[] = [];
+  for (const widget of widgets.values()) {
+    if (
+      widget.modelContextScope === scope &&
+      widget.appToolConnection?.tools.length
+    ) {
+      connections.push(widget.appToolConnection);
+    }
+  }
+  return connections;
+}
+
+/**
+ * Provider for widget debugging context
+ *
+ * Manages widget debug state following the same pattern as InspectorProvider
+ */
+export function WidgetDebugProvider({ children }: { children: ReactNode }) {
+  const [state, setState] = useState<WidgetDebugState>({
+    activeWidgetId: null,
+    widgets: new Map(),
+    playground: DEFAULT_PLAYGROUND_SETTINGS,
+  });
+
+  const setActiveWidget = useCallback((widgetId: string | null) => {
+    setState((prev) => ({ ...prev, activeWidgetId: widgetId }));
+  }, []);
+
+  const addWidget = useCallback(
+    (widgetId: string, info: Omit<WidgetInfo, "cspViolations">) => {
+      setState((prev) => {
+        // Skip update if widget already exists (prevents infinite re-render loop)
+        if (prev.widgets.has(widgetId)) {
+          return prev;
+        }
+        const newWidgets = new Map(prev.widgets);
+        newWidgets.set(widgetId, {
+          ...info,
+          cspViolations: [],
+        });
+        return { ...prev, widgets: newWidgets };
+      });
+    },
+    []
+  );
+
+  const removeWidget = useCallback((widgetId: string) => {
+    setState((prev) => {
+      const newWidgets = new Map(prev.widgets);
+      newWidgets.delete(widgetId);
+      return {
+        ...prev,
+        widgets: newWidgets,
+        activeWidgetId:
+          prev.activeWidgetId === widgetId ? null : prev.activeWidgetId,
+      };
+    });
+  }, []);
+
+  // Use a ref to access current state in getWidget without causing re-renders
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  const getWidget = useCallback(
+    (widgetId: string): WidgetInfo | undefined => {
+      return stateRef.current.widgets.get(widgetId);
+    },
+    [] // No dependencies - uses ref to access current state
+  );
+
+  const addCspViolation = useCallback(
+    (widgetId: string, violation: CspViolation) => {
+      setState((prev) => {
+        const widget = prev.widgets.get(widgetId);
+        if (!widget) return prev;
+
+        const updates: Partial<WidgetInfo> = {
+          cspViolations: [...widget.cspViolations, violation],
+        };
+        if (violation.originalPolicy && widget.effectivePolicy === undefined) {
+          updates.effectivePolicy = violation.originalPolicy;
+        }
+
+        const newWidgets = new Map(prev.widgets);
+        newWidgets.set(widgetId, { ...widget, ...updates });
+        return { ...prev, widgets: newWidgets };
+      });
+    },
+    []
+  );
+
+  const clearCspViolations = useCallback((widgetId: string) => {
+    setState((prev) => {
+      const widget = prev.widgets.get(widgetId);
+      if (!widget) return prev;
+
+      const newWidgets = new Map(prev.widgets);
+      newWidgets.set(widgetId, {
+        ...widget,
+        cspViolations: [],
+      });
+      return { ...prev, widgets: newWidgets };
+    });
+  }, []);
+
+  const setWidgetModelContext = useCallback(
+    (widgetId: string, context: WidgetInfo["modelContext"]) => {
+      setState((prev) => {
+        const widget = prev.widgets.get(widgetId);
+        if (!widget) return prev;
+
+        const newWidgets = new Map(prev.widgets);
+        newWidgets.set(widgetId, {
+          ...widget,
+          modelContext: context,
+        });
+        return { ...prev, widgets: newWidgets };
+      });
+    },
+    []
+  );
+
+  const setWidgetState = useCallback((widgetId: string, widgetState: any) => {
+    setState((prev) => {
+      const widget = prev.widgets.get(widgetId);
+      if (!widget) return prev;
+
+      const newWidgets = new Map(prev.widgets);
+      newWidgets.set(widgetId, {
+        ...widget,
+        widgetState,
+      });
+      return { ...prev, widgets: newWidgets };
+    });
+  }, []);
+
+  const setWidgetDeclaredCsp = useCallback(
+    (
+      widgetId: string,
+      csp: WidgetDeclaredCsp | undefined,
+      effectivePolicy?: string
+    ) => {
+      setState((prev) => {
+        const widget = prev.widgets.get(widgetId);
+        if (!widget) return prev;
+
+        const newWidgets = new Map(prev.widgets);
+        newWidgets.set(widgetId, {
+          ...widget,
+          declaredCsp: csp,
+          ...(effectivePolicy !== undefined && {
+            effectivePolicy,
+          }),
+        });
+        return { ...prev, widgets: newWidgets };
+      });
+    },
+    []
+  );
+
+  const setWidgetAppToolConnection = useCallback(
+    (widgetId: string, connection: ViewAppToolConnection | null) => {
+      setState((prev) => {
+        const widget = prev.widgets.get(widgetId);
+        if (!widget) return prev;
+        if (widget.appToolConnection === connection) return prev;
+
+        const newWidgets = new Map(prev.widgets);
+        newWidgets.set(widgetId, {
+          ...widget,
+          appToolConnection: connection ?? undefined,
+        });
+        return { ...prev, widgets: newWidgets };
+      });
+    },
+    []
+  );
+
+  const updatePlaygroundSettings = useCallback(
+    (settings: Partial<PlaygroundSettings>) => {
+      setState((prev) => ({
+        ...prev,
+        playground: {
+          ...prev.playground,
+          ...settings,
+        },
+      }));
+    },
+    []
+  );
+
+  const clearAllWidgets = useCallback(() => {
+    setState((prev) => ({
+      ...prev,
+      widgets: new Map(),
+      activeWidgetId: null,
+    }));
+  }, []);
+
+  const getAllModelContexts = useCallback(() => {
+    return selectModelContexts(stateRef.current.widgets);
+  }, []);
+
+  const getModelContexts = useCallback(
+    (scope: string) => selectModelContexts(stateRef.current.widgets, scope),
+    []
+  );
+
+  const getAppToolConnections = useCallback((scope: string) => {
+    return selectAppToolConnections(stateRef.current.widgets, scope);
+  }, []);
+
+  // Memoize context value to prevent unnecessary re-renders of consumers
+  const value = useMemo<WidgetDebugContextType>(
+    () => ({
+      ...state,
+      setActiveWidget,
+      addWidget,
+      removeWidget,
+      getWidget,
+      addCspViolation,
+      clearCspViolations,
+      setWidgetModelContext,
+      setWidgetState,
+      setWidgetDeclaredCsp,
+      setWidgetAppToolConnection,
+      updatePlaygroundSettings,
+      clearAllWidgets,
+      getAllModelContexts,
+      getModelContexts,
+      getAppToolConnections,
+    }),
+    [
+      state,
+      setActiveWidget,
+      addWidget,
+      removeWidget,
+      getWidget,
+      addCspViolation,
+      clearCspViolations,
+      setWidgetModelContext,
+      setWidgetState,
+      setWidgetDeclaredCsp,
+      setWidgetAppToolConnection,
+      updatePlaygroundSettings,
+      clearAllWidgets,
+      getAllModelContexts,
+      getModelContexts,
+      getAppToolConnections,
+    ]
+  );
+
+  return <WidgetDebugContext value={value}>{children}</WidgetDebugContext>;
+}
+
+/**
+ * Hook to access widget debug context
+ *
+ * @throws Error if used outside of WidgetDebugProvider
+ */
+export function useWidgetDebug() {
+  const context = use(WidgetDebugContext);
+  if (!context) {
+    throw new Error("useWidgetDebug must be used within WidgetDebugProvider");
+  }
+  return context;
+}
+
+/**
+ * Device viewport configurations for common devices
+ */
+export const DEVICE_VIEWPORT_CONFIGS = {
+  mobile: { width: 390, height: 844, name: "iPhone 14" },
+  desktop: { width: 1440, height: 900, name: "Desktop" },
+} as const;

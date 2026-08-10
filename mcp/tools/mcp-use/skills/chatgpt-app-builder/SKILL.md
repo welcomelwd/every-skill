@@ -1,0 +1,31 @@
+---
+name: chatgpt-app-builder
+description: Build, modify, debug, or review ChatGPT Apps with mcp-use.
+---
+
+# Build ChatGPT Apps with mcp-use
+
+mcp-use is the full stack TypeScript framework for building MCP servers and MCP apps to plug-ins and Claude connectors
+
+Use it to build fully typed MCP servers with tools, resources, prompts, 1 line oauth authentication adapters, middleware, production transports, a built-in Inspector, and headless tooling.
+
+mcp-use has native first class support for MCP Apps with support for HMR both at the server and MCP App level to live preview the changes on clients like ChatGPT
+
+## Get started
+
+Follow the guides at <https://docs.mcp-use.com/v2>.
+
+## API reference
+
+Consult the TSDoc bundled in the installed package and the TypeScript source
+comments on disk. Inspect the project's installed `mcp-use` version, generated
+types, and existing ChatGPT-specific integrations before choosing APIs or
+patterns.
+
+## Agent Skills
+
+Put reusable agent workflows in `skills/<name>/SKILL.md`; the directory is
+served automatically, so normally omit the `skills` server option. Use
+`skills: false` to disable it or `skills: { directory: "server-skills" }` to
+override the project-relative directory. Keep supporting references, scripts,
+templates, and assets in the skill instead of inflating tool descriptions.

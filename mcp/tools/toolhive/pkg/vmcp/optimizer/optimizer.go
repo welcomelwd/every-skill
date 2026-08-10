@@ -1,0 +1,463 @@
+// SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+// Package optimizer provides the Optimizer interface for intelligent tool discovery
+// and invocation in the Virtual MCP Server.
+//
+// When the optimizer is enabled, vMCP exposes only two tools to clients:
+//   - find_tool: Semantic search over available tools
+//   - call_tool: Dynamic invocation of any backend tool
+//
+// This reduces token usage by avoiding the need to send all tool definitions
+// to the LLM, instead allowing it to discover relevant tools on demand.
+package optimizer
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"maps"
+	"os"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/stacklok/toolhive-core/mcpcompat/mcp"
+	"github.com/stacklok/toolhive-core/mcpcompat/server"
+	httpval "github.com/stacklok/toolhive-core/validation/http"
+	vmcpconfig "github.com/stacklok/toolhive/pkg/vmcp/config"
+	"github.com/stacklok/toolhive/pkg/vmcp/optimizer/internal/similarity"
+	"github.com/stacklok/toolhive/pkg/vmcp/optimizer/internal/tokencounter"
+	"github.com/stacklok/toolhive/pkg/vmcp/optimizer/internal/toolstore"
+	"github.com/stacklok/toolhive/pkg/vmcp/optimizer/internal/types"
+)
+
+// embeddingAPIKeyEnvVar holds the bearer token for an OpenAI-compatible
+// embedding service. It is an env var, not a config field, so the secret never
+// lands in a CRD spec or ConfigMap.
+// #nosec G101 -- This is an environment variable name, not a hardcoded credential
+const embeddingAPIKeyEnvVar = "OPENAI_API_KEY"
+
+// Config defines configuration options for the Optimizer.
+// It is defined in the internal/types package and aliased here so that
+// external consumers continue to use optimizer.Config.
+type Config = types.OptimizerConfig
+
+// GetAndValidateConfig validates the CRD-compatible OptimizerConfig and converts it
+// to the internal optimizer.Config with parsed, typed values.
+// Returns (nil, nil) if cfg is nil.
+func GetAndValidateConfig(cfg *vmcpconfig.OptimizerConfig) (*Config, error) {
+	if cfg == nil {
+		return nil, nil
+	}
+
+	optCfg := &Config{
+		EmbeddingService:        cfg.EmbeddingService,
+		EmbeddingServiceTimeout: time.Duration(cfg.EmbeddingServiceTimeout),
+		EmbeddingProvider:       cfg.EmbeddingProvider,
+		EmbeddingModel:          cfg.EmbeddingModel,
+		EmbeddingHeaders:        convertEmbeddingHeaders(cfg.EmbeddingHeaders),
+	}
+
+	if err := resolveEmbeddingProvider(optCfg); err != nil {
+		return nil, err
+	}
+
+	if cfg.MaxToolsToReturn != 0 {
+		if cfg.MaxToolsToReturn < 1 || cfg.MaxToolsToReturn > 50 {
+			return nil, fmt.Errorf("optimizer.maxToolsToReturn must be between 1 and 50, got %d", cfg.MaxToolsToReturn)
+		}
+		optCfg.MaxToolsToReturn = &cfg.MaxToolsToReturn
+	}
+
+	if cfg.HybridSearchSemanticRatio != "" {
+		ratio, err := strconv.ParseFloat(cfg.HybridSearchSemanticRatio, 64)
+		if err != nil {
+			return nil, fmt.Errorf("optimizer.hybridSearchSemanticRatio must be a valid number: %w", err)
+		}
+		if ratio < 0 || ratio > 1 {
+			return nil, fmt.Errorf(
+				"optimizer.hybridSearchSemanticRatio must be between 0.0 and 1.0, got %s",
+				cfg.HybridSearchSemanticRatio,
+			)
+		}
+		optCfg.HybridSemanticRatio = &ratio
+	}
+
+	if cfg.SemanticDistanceThreshold != "" {
+		threshold, err := strconv.ParseFloat(cfg.SemanticDistanceThreshold, 64)
+		if err != nil {
+			return nil, fmt.Errorf("optimizer.semanticDistanceThreshold must be a valid number: %w", err)
+		}
+		if threshold < 0 || threshold > 2 {
+			return nil, fmt.Errorf(
+				"optimizer.semanticDistanceThreshold must be between 0.0 and 2.0, got %s",
+				cfg.SemanticDistanceThreshold,
+			)
+		}
+		optCfg.SemanticDistanceThreshold = &threshold
+	}
+
+	return optCfg, nil
+}
+
+// resolveEmbeddingProvider normalizes and validates the embedding provider on
+// optCfg in place. An empty provider defaults to TEI so existing configs keep
+// working; the OpenAI provider requires a service and model, reads its API
+// key from the environment, and is the only provider that accepts custom
+// embedding headers.
+func resolveEmbeddingProvider(optCfg *Config) error {
+	switch optCfg.EmbeddingProvider {
+	case "":
+		optCfg.EmbeddingProvider = types.EmbeddingProviderTEI
+	case types.EmbeddingProviderTEI:
+	case types.EmbeddingProviderOpenAI:
+		if optCfg.EmbeddingService == "" {
+			return fmt.Errorf("optimizer.embeddingService is required when optimizer.embeddingProvider is %q",
+				types.EmbeddingProviderOpenAI)
+		}
+		if optCfg.EmbeddingModel == "" {
+			return fmt.Errorf("optimizer.embeddingModel is required when optimizer.embeddingProvider is %q",
+				types.EmbeddingProviderOpenAI)
+		}
+		if err := validateEmbeddingHeaders(optCfg.EmbeddingHeaders); err != nil {
+			return err
+		}
+		optCfg.EmbeddingAPIKey = os.Getenv(embeddingAPIKeyEnvVar)
+	default:
+		return fmt.Errorf("optimizer.embeddingProvider must be %q or %q, got %q",
+			types.EmbeddingProviderTEI, types.EmbeddingProviderOpenAI, optCfg.EmbeddingProvider)
+	}
+
+	// Defense in depth: mirrors the CEL rule on config.OptimizerConfig,
+	// covering config sources with no admission validation.
+	if optCfg.EmbeddingProvider != types.EmbeddingProviderOpenAI && len(optCfg.EmbeddingHeaders) > 0 {
+		return fmt.Errorf("optimizer.embeddingHeaders is only supported when optimizer.embeddingProvider is %q",
+			types.EmbeddingProviderOpenAI)
+	}
+
+	return nil
+}
+
+// convertEmbeddingHeaders converts the config header map to the internal
+// plain-string representation, returning nil for an empty map.
+func convertEmbeddingHeaders(headers map[string]vmcpconfig.EmbeddingHeaderValue) map[string]string {
+	if len(headers) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(headers))
+	for name, value := range headers {
+		out[name] = string(value)
+	}
+	return out
+}
+
+// validateEmbeddingHeaders rejects custom embedding headers with invalid
+// RFC 7230 names or values, and headers the OpenAI client sets itself:
+// Content-Type is always application/json, and Authorization is derived from
+// the OPENAI_API_KEY environment variable so the token never lands in config.
+// Reserved names are compared case-insensitively, matching HTTP semantics.
+// Mirrors the CEL rule on config.OptimizerConfig as defense in depth.
+func validateEmbeddingHeaders(headers map[string]string) error {
+	for name, value := range headers {
+		if err := httpval.ValidateHeaderName(name); err != nil {
+			return fmt.Errorf("optimizer.embeddingHeaders: invalid header name %q: %w", name, err)
+		}
+		if err := httpval.ValidateHeaderValue(value); err != nil {
+			return fmt.Errorf("optimizer.embeddingHeaders[%q]: %w", name, err)
+		}
+		switch strings.ToLower(name) {
+		case "authorization":
+			return fmt.Errorf("optimizer.embeddingHeaders must not set %q: the Authorization header is derived "+
+				"from the %s environment variable", name, embeddingAPIKeyEnvVar)
+		case "content-type":
+			return fmt.Errorf("optimizer.embeddingHeaders must not set %q: the Content-Type header is always "+
+				"application/json", name)
+		}
+	}
+	return nil
+}
+
+// Optimizer defines the interface for intelligent tool discovery and invocation.
+//
+// The default implementation delegates search to a ToolStore (SQLite FTS5 with
+// optional embedding-based semantic search) and scopes results to the tools
+// registered for each session.
+type Optimizer interface {
+	// FindTool searches for tools matching the given description and keywords.
+	// Returns matching tools ranked by relevance.
+	FindTool(ctx context.Context, input FindToolInput) (*FindToolOutput, error)
+
+	// CallTool invokes a tool by name with the given parameters.
+	// Returns the tool's result or an error if the tool is not found or execution fails.
+	// Returns the MCP CallToolResult directly from the underlying tool handler.
+	CallTool(ctx context.Context, input CallToolInput) (*mcp.CallToolResult, error)
+}
+
+// FindToolInput contains the parameters for finding tools.
+type FindToolInput struct {
+	// ToolDescription is a natural language description of the tool to find.
+	//nolint:lll // Long description tag provides essential context for LLM tool usage.
+	ToolDescription string `json:"tool_description" description:"Description of the task or capability needed (e.g. 'web search', 'analyze CSV file', 'send an email'). This is used for semantic similarity matching against available tools."`
+
+	// ToolKeywords is an optional list of keywords to narrow the search.
+	//nolint:lll // Long description tag provides essential context for LLM tool usage.
+	ToolKeywords []string `json:"tool_keywords,omitempty" description:"Optional keywords driving the BM25 keyword-search arm (e.g. ['list', 'issues', 'github'] or ['SQL', 'query', 'postgres']). Semantic matching always uses tool_description, so provide a complete description even when supplying keywords."`
+}
+
+// FindToolOutput contains the results of a tool search.
+type FindToolOutput struct {
+	// Tools contains the matching tools, ranked by relevance.
+	Tools []mcp.Tool `json:"tools"`
+
+	// TokenMetrics provides information about token savings from using the optimizer.
+	TokenMetrics TokenMetrics `json:"token_metrics"`
+}
+
+// TokenMetrics provides information about token usage optimization.
+// It is defined in the internal/tokencounter package and aliased here so that
+// external consumers continue to use optimizer.TokenMetrics.
+type TokenMetrics = tokencounter.TokenMetrics
+
+// CallToolInput contains the parameters for calling a tool.
+type CallToolInput struct {
+	// ToolName is the name of the tool to invoke.
+	//nolint:lll // Long description tag provides essential context for LLM tool usage.
+	ToolName string `json:"tool_name" description:"The name of the tool to execute (obtain this from find_tool results - it is the tool's name field)"`
+
+	// Parameters are the arguments to pass to the tool.
+	//nolint:lll // Long description tag provides essential context for LLM tool usage.
+	Parameters map[string]any `json:"parameters" description:"Dictionary of arguments required by the tool. The structure must match the tool's input schema as returned by find_tool."`
+}
+
+// callToolArgToolName is the parameters key resolveCallToolTarget hoists a nested
+// name out of. It must match the json tag on CallToolInput.ToolName, since the
+// nested lookup is a map index while the top-level one goes through encoding/json;
+// TestCallToolArgToolNameMatchesStructTag guards the pair against drift.
+const callToolArgToolName = "tool_name"
+
+// resolveCallToolTarget resolves the tool a call_tool invocation targets,
+// accepting the common LLM malformation where tool_name is nested inside
+// parameters instead of sitting alongside it. A top-level name always wins, so a
+// backend tool with its own tool_name argument still works.
+//
+// It is deliberately unexported: decoding a payload into a CallToolInput is the
+// only supported way to learn which tool a call_tool request names. Reading the
+// name out of a raw arguments map instead misses the case-variant keys
+// encoding/json accepts, and a target that authorization and dispatch disagree on
+// is a tool executing under a policy decision made for a different name.
+//
+// params is never modified; a copy is returned when a nested name is hoisted.
+func resolveCallToolTarget(name string, params map[string]any) (string, map[string]any) {
+	if name != "" {
+		return name, params
+	}
+	nested, ok := params[callToolArgToolName].(string)
+	if !ok || nested == "" {
+		return name, params
+	}
+	hoisted := maps.Clone(params)
+	delete(hoisted, callToolArgToolName)
+	return nested, hoisted
+}
+
+// UnmarshalJSON hoists a nested tool_name so dispatch targets the same tool
+// authorization approved. See resolveCallToolTarget.
+func (in *CallToolInput) UnmarshalJSON(data []byte) error {
+	type rawCallToolInput CallToolInput // drops the method set to avoid recursion
+	var raw rawCallToolInput
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	raw.ToolName, raw.Parameters = resolveCallToolTarget(raw.ToolName, raw.Parameters)
+	*in = CallToolInput(raw)
+	return nil
+}
+
+// NewOptimizerFactory creates the embedding client and SQLite tool store from
+// the given OptimizerConfig, then returns an OptimizerFactory and a cleanup
+// function that closes the store. The caller must invoke the cleanup function
+// during shutdown to release resources.
+func NewOptimizerFactory(cfg *Config) (
+	func(context.Context, []server.ServerTool) (Optimizer, error),
+	func(context.Context) error,
+	error,
+) {
+	embClient, err := similarity.NewEmbeddingClient(cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create embedding client: %w", err)
+	}
+
+	store, err := toolstore.NewSQLiteToolStore(embClient, cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create optimizer store: %w", err)
+	}
+
+	factory := newOptimizerFactoryWithStore(store, tokencounter.NewJSONByteCounter())
+	cleanup := func(_ context.Context) error {
+		return store.Close()
+	}
+
+	slog.Debug("optimizer factory created",
+		"embedding_service", cfg.EmbeddingService,
+		"semantic_search_enabled", embClient != nil,
+	)
+
+	return factory, cleanup, nil
+}
+
+// toolOptimizer implements the Optimizer interface using a shared ToolStore
+// for search and a local handler map for tool invocation.
+//
+// It delegates search to the ToolStore (which uses SQLite FTS5 with optional
+// embedding-based semantic search) and scopes results to only the tools this
+// instance was created with.
+type toolOptimizer struct {
+	// store is the shared tool store used for search.
+	store types.ToolStore
+
+	// tools contains all available tools indexed by name.
+	tools map[string]server.ServerTool
+
+	// toolNames is the precomputed list of tool names from the tools map.
+	// Immutable after construction; avoids re-allocation on every FindTool call.
+	toolNames []string
+
+	// tokenCounts holds precomputed per-tool token estimates, indexed by tool name.
+	// Immutable after construction: token counts are computed once in newToolOptimizer
+	// and never modified. The tools are fixed per session (one optimizer per session),
+	// and the tokencounter.Counter is set at configuration time, so counts cannot change at runtime.
+	tokenCounts map[string]int
+
+	// baselineTokens is the precomputed sum of all per-tool token counts.
+	// Immutable after construction; used as the denominator for savings metrics.
+	baselineTokens int
+}
+
+// newToolOptimizer creates a new toolOptimizer backed by the given ToolStore.
+//
+// The tools slice should contain all backend tools (as ServerTool with handlers).
+// Tools are upserted into the shared store and scoped for this optimizer instance.
+// Token counts are precomputed using the provided counter for metrics calculation.
+func newToolOptimizer(
+	ctx context.Context, store types.ToolStore, counter tokencounter.Counter, tools []server.ServerTool,
+) (Optimizer, error) {
+	toolMap := make(map[string]server.ServerTool, len(tools))
+	names := make([]string, 0, len(tools))
+	tokenCounts := make(map[string]int, len(tools))
+	var baselineTokens int
+	for _, tool := range tools {
+		toolMap[tool.Tool.Name] = tool
+		names = append(names, tool.Tool.Name)
+		tc := counter.CountTokens(tool.Tool)
+		tokenCounts[tool.Tool.Name] = tc
+		baselineTokens += tc
+	}
+
+	if err := store.UpsertTools(ctx, tools); err != nil {
+		return nil, fmt.Errorf("failed to upsert tools into store: %w", err)
+	}
+
+	slog.Debug("optimizer session created",
+		"tools", len(tools),
+		"baseline_tokens", baselineTokens,
+	)
+
+	return &toolOptimizer{
+		store:          store,
+		tools:          toolMap,
+		toolNames:      names,
+		tokenCounts:    tokenCounts,
+		baselineTokens: baselineTokens,
+	}, nil
+}
+
+// FindTool searches for tools using the shared ToolStore, scoped to this instance's tools.
+//
+// TokenMetrics quantify the token savings from returning only matching tools
+// instead of the full set of available tools.
+func (d *toolOptimizer) FindTool(ctx context.Context, input FindToolInput) (*FindToolOutput, error) {
+	if input.ToolDescription == "" {
+		return nil, fmt.Errorf("tool_description is required")
+	}
+
+	matches, err := d.store.Search(ctx, types.SearchQuery{
+		Description: input.ToolDescription,
+		Keywords:    input.ToolKeywords,
+	}, d.toolNames)
+	if err != nil {
+		return nil, fmt.Errorf("tool search failed: %w", err)
+	}
+
+	// Enrich each match with the full tool from the in-memory map.
+	// The store only returns Name and Description; replacing with the full
+	// mcp.Tool gives us InputSchema, OutputSchema, Annotations, etc.
+	for i, m := range matches {
+		if tool, ok := d.tools[m.Name]; ok {
+			matches[i] = tool.Tool
+		}
+	}
+
+	matchedNames := make([]string, len(matches))
+	for i, m := range matches {
+		matchedNames[i] = m.Name
+	}
+	metrics := tokencounter.ComputeTokenMetrics(d.baselineTokens, d.tokenCounts, matchedNames)
+
+	slog.Debug("find_tool completed",
+		"query", input.ToolDescription,
+		"keywords", input.ToolKeywords,
+		"results", len(matches),
+		"baseline_tokens", metrics.BaselineTokens,
+		"returned_tokens", metrics.ReturnedTokens,
+		"savings_percent", metrics.SavingsPercent,
+	)
+
+	return &FindToolOutput{
+		Tools:        matches,
+		TokenMetrics: metrics,
+	}, nil
+}
+
+// CallTool invokes a tool by name using its registered handler.
+//
+// The tool is looked up by exact name match. If found, the handler
+// is invoked directly with the given parameters.
+func (d *toolOptimizer) CallTool(ctx context.Context, input CallToolInput) (*mcp.CallToolResult, error) {
+	if input.ToolName == "" {
+		return nil, fmt.Errorf(
+			`tool_name is required: call_tool expects {"tool_name": "<name from find_tool>", `+
+				`"parameters": {<tool arguments>}}, got parameters keys %v`,
+			slices.Sorted(maps.Keys(input.Parameters)))
+	}
+
+	// Verify the tool exists
+	tool, exists := d.tools[input.ToolName]
+	if !exists {
+		slog.Debug("call_tool failed, tool not found", "tool", input.ToolName)
+		return mcp.NewToolResultError(fmt.Sprintf("tool not found: %s", input.ToolName)), nil
+	}
+
+	slog.Debug("call_tool invoking backend tool", "tool", input.ToolName)
+
+	// Build the MCP request
+	request := mcp.CallToolRequest{}
+	request.Params.Name = input.ToolName
+	request.Params.Arguments = input.Parameters
+
+	// Call the tool handler directly
+	return tool.Handler(ctx, request)
+}
+
+// newOptimizerFactoryWithStore returns an OptimizerFactory that creates
+// toolOptimizer instances backed by the given ToolStore. All optimizers created
+// by the returned factory share the same store, enabling cross-session search.
+func newOptimizerFactoryWithStore(
+	store types.ToolStore, counter tokencounter.Counter,
+) func(context.Context, []server.ServerTool) (Optimizer, error) {
+	return func(ctx context.Context, tools []server.ServerTool) (Optimizer, error) {
+		return newToolOptimizer(ctx, store, counter, tools)
+	}
+}

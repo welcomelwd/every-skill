@@ -1,0 +1,191 @@
+name: Docs - Update Data
+
+on:
+  schedule:
+    - cron: '0 */5 * * *'
+  repository_dispatch:
+    types: [apollo-production-deploy]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./docs
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    env:
+      # Deliberately NOT secrets.COMPOSIO_API_KEY. That secret is shared with
+      # ts.test-e2e, py.test, py.check and ts.examples-nightly, all of which run
+      # against staging — it is a staging-scoped credential. This job is the only
+      # consumer that must reach production (scripts/production-api.mjs rejects any
+      # non-production base URL), so it needs its own production key. Pointing the
+      # shared secret at production instead would break the staging suites.
+      COMPOSIO_API_KEY: ${{ secrets.COMPOSIO_DOCS_API_KEY }}
+
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_APP_PRIVATE_KEY }}
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Log trigger source
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HERMES_COMMIT: ${{ github.event.client_payload.hermes_commit }}
+          DEPLOY_TIMESTAMP: ${{ github.event.client_payload.timestamp }}
+        run: |
+          echo "Workflow triggered by: $EVENT_NAME"
+          if [ "$EVENT_NAME" = "repository_dispatch" ]; then
+            echo "Triggered by Apollo production deployment"
+            echo "Hermes commit: $HERMES_COMMIT"
+            echo "Timestamp: $DEPLOY_TIMESTAMP"
+          fi
+
+      - name: Setup Node.js, pnpm, Bun
+        uses: ./.github/actions/setup-node-pnpm-bun
+
+      # Docs must reflect PRODUCTION. No base-URL override is set here: the
+      # generators default to the production API (docs/scripts/production-api.mjs).
+      # Previously this step pointed the fetch at STAGING, which published staging
+      # hosts (and unreleased content) into the committed docs.
+      # NOTE: requires COMPOSIO_DOCS_API_KEY to have PRODUCTION read access.
+
+      - name: Cache bun dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('docs/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Generate toolkits data
+        run: bun run generate:toolkits
+
+      - name: Fetch OpenAPI spec
+        run: bun run scripts/fetch-openapi.mjs
+
+      - name: Generate API index pages
+        run: bun run generate:api-index
+
+      - name: Generate meta tools reference
+        run: bun run generate:meta-tools
+
+      - name: Check for changes
+        id: changes
+        run: |
+          cd ..
+          git add -N docs/public/data/ docs/public/openapi.json docs/public/openapi-v3.json docs/public/openapi-webhooks.json docs/content/reference/api-reference/ docs/content/reference/v3/api-reference/ docs/content/toolkits/meta-tools/ 2>/dev/null || true
+          if git diff --quiet docs/public/data/ docs/public/openapi.json docs/public/openapi-v3.json docs/public/openapi-webhooks.json docs/content/reference/api-reference/ docs/content/reference/v3/api-reference/ docs/content/toolkits/meta-tools/ 2>/dev/null; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "No changes detected"
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            echo "Changes detected:"
+            git diff --stat docs/public/data/ docs/public/openapi.json docs/public/openapi-v3.json docs/public/openapi-webhooks.json docs/content/reference/api-reference/ docs/content/reference/v3/api-reference/ docs/content/toolkits/meta-tools/ 2>/dev/null || true
+          fi
+
+      - name: Create Pull Request
+        id: create-pr
+        if: steps.changes.outputs.has_changes == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          commit-message: 'docs: update toolkits and API data'
+          title: 'docs: update toolkits, API spec, and meta tools data'
+          body: |
+            ## Summary
+            Automated sync of backend data into the docs site. Triggered by: `${{ github.event_name }}`${{ github.event_name == 'repository_dispatch' && format(' (Hermes commit: {0})', github.event.client_payload.hermes_commit) || '' }}.
+
+            ## What changed
+            - **Toolkit catalog** (`docs/public/data/toolkits.json`, `toolkits-list.json`) — refreshed list of available toolkits, auth schemes, and tools from the backend API
+            - **OpenAPI specs** (`docs/public/openapi.json`, `docs/public/openapi-v3.json`, `docs/public/openapi-webhooks.json`) — latest v3.1 and v3.0 API specifications plus the webhook-events spec, fetched from production
+            - **API reference pages** (`docs/content/reference/api-reference/`, `docs/content/reference/v3/api-reference/`) — regenerated index pages for both API versions
+            - **Meta tools reference** (`docs/public/data/meta-tools.json`, `docs/content/toolkits/meta-tools/*.mdx`) — updated meta tool schemas and reference docs
+          branch: docs/auto-update-data
+          base: next
+          add-paths: |
+            docs/public/data/
+            docs/public/openapi.json
+            docs/public/openapi-v3.json
+            docs/public/openapi-webhooks.json
+            docs/content/reference/api-reference/
+            docs/content/reference/v3/api-reference/
+            docs/content/toolkits/meta-tools/
+
+      - name: Request review from trigger actor
+        if: steps.create-pr.outputs.pull-request-number
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ steps.create-pr.outputs.pull-request-number }}
+          AUTHOR: ${{ github.actor }}
+        run: |
+          gh pr edit "$PR_NUMBER" --add-reviewer "$AUTHOR" || \
+          gh pr edit "$PR_NUMBER" --add-reviewer "Sushmithamallesh"
+
+      # A silent failure here is invisible: the workflow stops refreshing
+      # public/data/toolkits.json, the docs site keeps building from the last
+      # good commit, and nothing 500s — new toolkits simply 404. That is how a
+      # credential failure went unnoticed for 60 consecutive runs. File one
+      # tracking issue and leave it open until someone fixes the cause.
+      - name: Open tracking issue on failure
+        if: failure()
+        continue-on-error: true
+        # Override the job-level `./docs` default. That path only exists after
+        # checkout, so a failure before it (e.g. the app-token step) would leave
+        # the runner unable to start this shell — and continue-on-error would
+        # swallow that, losing the alert for precisely the earliest failures.
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          LABEL: docs-data-sync-failure
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          gh label create "$LABEL" \
+            --color B60205 \
+            --description "Scheduled docs data sync is failing" 2>/dev/null || true
+
+          existing=$(gh issue list --label "$LABEL" --state open --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            echo "Issue #$existing is already open for this failure; not filing a duplicate."
+            exit 0
+          fi
+
+          gh issue create \
+            --title "Docs data sync is failing" \
+            --label "$LABEL" \
+            --body "The scheduled \`Docs - Update Data\` workflow failed.
+
+          - Run: $RUN_URL
+          - Trigger: \`$EVENT_NAME\`
+
+          **Impact:** while this is red, \`docs/public/data/toolkits.json\` stops being
+          refreshed. docs.composio.dev/toolkits is statically generated from that file, so
+          toolkits added to production after the last successful run have no page and
+          return 404. The site stays up, which is why this fails silently.
+
+          **First thing to check:** the \`COMPOSIO_DOCS_API_KEY\` secret must have
+          **production** read access against \`backend.composio.dev\`. Note this job does
+          not use the shared \`COMPOSIO_API_KEY\`, which is staging-scoped.
+
+          This issue is filed once and left open until the cause is fixed; it will not be
+          re-filed on every run."

@@ -10,5 +10,5 @@
 | `apify/mcpc` | up-to-date | `mcp/clients/apify-mcpc @ 096e7705b49e4c9753a18148be7f3fed55f6eb0c` |
 | `msitarzewski/agency-agents` | up-to-date | `agent/roles/msitarzewski-agency-agents @ ebe9c99acb5c96f9468de368d8bead775387d1a7` |
 | `harveyai/harvey-labs` | up-to-date | `agent/evaluations/harveyai-harvey-labs @ 55510f0e609ffa5cf6f5df17d9a813ce4bb33d0c` |
-| `NVIDIA/SkillSpector` | downloaded | `knowledge/tools/nvidia-skillspector @ 2bc641fd0639550a1cae9557491f483e30520afb (275 files, 3152024 bytes); excluded 2 files` |
-| `vitali87/code-graph-rag` | downloaded | `knowledge/tools/vitali87-code-graph-rag @ 234816efbe6c21a4245eff30e107187c98b2656b (1164 files, 14619753 bytes); excluded 11 files` |
+| `NVIDIA/SkillSpector` | up-to-date | `knowledge/tools/nvidia-skillspector @ 2bc641fd0639550a1cae9557491f483e30520afb` |
+| `vitali87/code-graph-rag` | up-to-date | `knowledge/tools/vitali87-code-graph-rag @ 234816efbe6c21a4245eff30e107187c98b2656b` |

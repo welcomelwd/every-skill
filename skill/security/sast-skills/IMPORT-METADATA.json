@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "repository": "utkusen/sast-skills",
+  "source_url": "https://github.com/utkusen/sast-skills",
+  "ref": "default branch",
+  "resolved_commit": "db52227eab1043bf122cbff7206fac6708b4d6c9",
+  "category": "skill",
+  "subcategory": "security",
+  "slug": "sast-skills",
+  "license": null,
+  "source_date": null,
+  "imported_at": "2026-08-10T07:29:55+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 37,
+  "copied_bytes": 761110,
+  "excluded_files": [
+    "demo.gif: file exceeds 2097152 bytes"
+  ],
+  "execution": "never run by this importer"
+}

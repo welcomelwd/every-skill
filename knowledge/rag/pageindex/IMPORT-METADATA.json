@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "repository": "VectifyAI/PageIndex",
+  "source_url": "https://github.com/VectifyAI/PageIndex",
+  "ref": "default branch",
+  "resolved_commit": "d5c4e62c20172ce400aef84545dfba3a0580b9ae",
+  "category": "knowledge",
+  "subcategory": "rag",
+  "slug": "pageindex",
+  "license": null,
+  "source_date": null,
+  "imported_at": "2026-08-10T07:29:55+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 128,
+  "copied_bytes": 2226560,
+  "excluded_files": [
+    "examples/documents/2023-annual-report-truncated.pdf: binary content",
+    "examples/documents/2023-annual-report.pdf: file exceeds 2097152 bytes",
+    "examples/documents/PRML.pdf: file exceeds 2097152 bytes",
+    "examples/documents/Regulation Best Interest_Interpretive release.pdf: binary content",
+    "examples/documents/Regulation Best Interest_proposed rule.pdf: binary content",
+    "examples/documents/attention-residuals.pdf: binary content",
+    "examples/documents/earthmover.pdf: binary content",
+    "examples/documents/four-lectures.pdf: binary content",
+    "examples/documents/q1-fy25-earnings.pdf: binary content",
+    "pageindex/flash/assets/time_vs_pages.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

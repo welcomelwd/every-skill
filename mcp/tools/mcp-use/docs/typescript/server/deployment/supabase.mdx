@@ -1,0 +1,39 @@
+---
+title: Supabase Edge Functions
+description: Deploy mcp-use Views to Supabase without Docker or project mutation.
+icon: "/images/icons/supabase.svg"
+---
+
+Supabase Edge Functions use the generic edge runtime with co-located static
+assets pattern. The function itself receives all MCP requests through
+`server.fetch`; generated View files are bundled alongside it with
+`static_files` and served only under the `_mcp-use` asset subtree.
+
+Start from the [Supabase deployment example](https://github.com/mcp-use/mcp-use/tree/main/libraries/typescript/packages/server/examples/deployment/supabase).
+It packages the files without Docker, a Storage bucket, project configuration
+mutation, or interactive script.
+
+```bash
+npm install
+MCP_URL=https://<ref>.supabase.co/functions/v1/mcp \
+MCP_ASSETS_URL=https://<ref>.supabase.co/functions/v1 \
+npm run deploy:edge -- --project-ref <ref>
+```
+
+The command builds `.mcp-use/build/views/`, stages it beneath the function,
+and uses Supabase's `static_files` configuration to bundle it. The function
+maps `/functions/v1/mcp/_mcp-use/*` to that generated tree and forwards every
+other request to `server.fetch`.
+
+Verify the actual View after deploying:
+
+```bash
+npx --yes mcp-use screenshot \
+  --mcp https://<ref>.supabase.co/functions/v1/mcp --tool show-app \
+  --output supabase-live-view.png
+```
+
+<Note>
+  The deployment uses Supabase CLI's API deployment mode, so Docker is not a
+  prerequisite. The static file configuration requires a current Supabase CLI.
+</Note>

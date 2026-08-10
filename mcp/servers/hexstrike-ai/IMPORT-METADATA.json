@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "repository": "0x4m4/hexstrike-ai",
+  "source_url": "https://github.com/0x4m4/hexstrike-ai",
+  "ref": "default branch",
+  "resolved_commit": "d689933ff579d839c676c82b231f8e98326c5f04",
+  "category": "mcp",
+  "subcategory": "servers",
+  "slug": "hexstrike-ai",
+  "license": null,
+  "source_date": null,
+  "imported_at": "2026-08-10T07:29:55+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 6,
+  "copied_bytes": 989159,
+  "excluded_files": [
+    "assets/hexstrike-logo.png: binary content",
+    "assets/leaksapi-banner.png: binary content",
+    "assets/leaksapi-logo.png: binary content",
+    "assets/ott-logo.png: binary content",
+    "assets/usage_input.png: binary content",
+    "assets/usage_output.png: binary content",
+    "assets/usage_server1.png: binary content",
+    "assets/usage_server2.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

@@ -1,0 +1,29 @@
+{
+  "name": "langchain-example",
+  "private": true,
+  "version": "0.1.10-alpha.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "clean": "git clean -xdf node_modules",
+    "start": "bun src/index.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@composio/core": "workspace:*",
+    "@composio/langchain": "workspace:*",
+    "@langchain/core": "^1.2.4",
+    "@langchain/langgraph": "^1.4.9",
+    "@langchain/openai": "^1.5.5",
+    "dotenv": "catalog:",
+    "langchain": "^1.5.4",
+    "openai": "catalog:"
+  },
+  "devDependencies": {
+    "@types/bun": "catalog:",
+    "typescript": "catalog:"
+  }
+}

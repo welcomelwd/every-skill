@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "repository": "wshobson/agents",
+  "source_url": "https://github.com/wshobson/agents",
+  "ref": "default branch",
+  "resolved_commit": "c4b82b0ad771190355eb8e204b1329732a18449a",
+  "category": "skill",
+  "subcategory": "development",
+  "slug": "wshobson-agents",
+  "license": null,
+  "source_date": null,
+  "imported_at": "2026-08-10T07:29:55+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 1159,
+  "copied_bytes": 7737541,
+  "excluded_files": [
+    "CLAUDE.md: symlink"
+  ],
+  "execution": "never run by this importer"
+}

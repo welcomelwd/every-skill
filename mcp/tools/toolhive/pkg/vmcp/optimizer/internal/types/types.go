@@ -1,0 +1,125 @@
+// SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+// Package types defines shared types used across optimizer sub-packages.
+package types
+
+//go:generate mockgen -destination=mocks/mock_types.go -package=mocks github.com/stacklok/toolhive/pkg/vmcp/optimizer/internal/types ToolStore,EmbeddingClient
+
+import (
+	"context"
+	"time"
+
+	"github.com/stacklok/toolhive-core/mcpcompat/mcp"
+	"github.com/stacklok/toolhive-core/mcpcompat/server"
+)
+
+// SearchQuery describes a tool search request.
+//
+// The two fields feed different arms of hybrid search: Description is embedded
+// for semantic matching, Keywords build the FTS5/BM25 expression. When Keywords
+// is empty the lexical arm falls back to Description.
+type SearchQuery struct {
+	// Description is a natural language description of the desired capability.
+	Description string
+
+	// Keywords are optional discrete terms for the keyword-search arm.
+	Keywords []string
+}
+
+// ToolStore defines the interface for storing and searching tools.
+// Implementations may use in-memory maps, SQLite FTS5, or other backends.
+//
+// A ToolStore is shared across multiple optimizer instances (one per session)
+// and is accessed concurrently. Implementations must be thread-safe.
+type ToolStore interface {
+	// UpsertTools adds or updates tools in the store.
+	// Tools are identified by name; duplicate names are overwritten.
+	UpsertTools(ctx context.Context, tools []server.ServerTool) error
+
+	// Search finds tools matching q. Description is embedded for semantic
+	// matching; Keywords build the FTS5/BM25 expression, falling back to
+	// Description when empty.
+	// The allowedTools parameter limits results to only tools with names in the given set.
+	// If allowedTools is empty, no results are returned (empty = no access).
+	// Returns matches ranked by relevance. The returned mcp.Tool values contain
+	// only Name and Description; the caller is responsible for enriching with schemas.
+	Search(ctx context.Context, q SearchQuery, allowedTools []string) ([]mcp.Tool, error)
+
+	// Close releases any resources held by the store (e.g., database connections).
+	// For in-memory stores this is a no-op.
+	// It is safe to call Close multiple times.
+	Close() error
+}
+
+// Embedding provider identifiers select the wire protocol used to talk to the
+// embedding service. They match config.OptimizerConfig.EmbeddingProvider.
+const (
+	// EmbeddingProviderTEI speaks the HuggingFace Text Embeddings Inference API.
+	EmbeddingProviderTEI = "tei"
+
+	// EmbeddingProviderOpenAI speaks the OpenAI-compatible /embeddings API.
+	EmbeddingProviderOpenAI = "openai"
+)
+
+// EmbeddingClient generates vector embeddings from text.
+// Implementations may use local models, remote APIs, or deterministic fakes.
+// The dimensionality of embeddings can be inferred from the returned vectors.
+type EmbeddingClient interface {
+	// Embed returns a vector embedding for the given text.
+	Embed(ctx context.Context, text string) ([]float32, error)
+
+	// EmbedBatch returns vector embeddings for multiple texts.
+	EmbedBatch(ctx context.Context, texts []string) ([][]float32, error)
+
+	// Close releases any resources held by the client.
+	Close() error
+}
+
+// OptimizerConfig defines runtime configuration options for the Optimizer.
+//
+// This struct intentionally duplicates some fields from config.OptimizerConfig
+// (pkg/vmcp/config) because the two serve different purposes:
+//   - config.OptimizerConfig is the CRD/YAML-serializable type. Kubernetes CRDs
+//     do not support float types portably, so float parameters are encoded as strings.
+//   - This struct holds the parsed, validated, native Go values (float64, *int)
+//     consumed by the optimizer internals.
+//
+// Conversion from config.OptimizerConfig to this type is done by
+// optimizer.GetAndValidateConfig, which validates ranges and parses strings.
+type OptimizerConfig struct {
+	// EmbeddingService is the URL of the embedding service for semantic search.
+	EmbeddingService string
+
+	// EmbeddingServiceTimeout is the HTTP request timeout for calls to the embedding service.
+	// Zero means use the default timeout (30s).
+	EmbeddingServiceTimeout time.Duration
+
+	// EmbeddingProvider selects the embedding backend wire protocol
+	// (EmbeddingProviderTEI or EmbeddingProviderOpenAI). Empty defaults to TEI.
+	EmbeddingProvider string
+
+	// EmbeddingModel is the model name requested from an OpenAI-compatible
+	// embedding service (e.g. "text-embedding-3-small"). Unused by the TEI
+	// provider, where the model is fixed by the running container.
+	EmbeddingModel string
+
+	// EmbeddingAPIKey is the bearer token sent to an OpenAI-compatible embedding
+	// service. Empty means no Authorization header is sent, which supports
+	// keyless in-cluster gateways. Never populated for the TEI provider.
+	EmbeddingAPIKey string
+
+	// EmbeddingHeaders holds additional HTTP headers sent with every request
+	// to an OpenAI-compatible embedding service. Never populated for the TEI
+	// provider.
+	EmbeddingHeaders map[string]string
+
+	// MaxToolsToReturn limits the number of tools returned by FindTool.
+	MaxToolsToReturn *int
+
+	// HybridSemanticRatio controls the balance between semantic and keyword search.
+	HybridSemanticRatio *float64
+
+	// SemanticDistanceThreshold sets the maximum distance for semantic search results (0.0 = identical, 2.0 = opposite).
+	SemanticDistanceThreshold *float64
+}

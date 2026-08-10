@@ -1,0 +1,33 @@
+{
+  "name": "google-example",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Example project for Google GenAI",
+  "main": "src/index.ts",
+  "scripts": {
+    "clean": "git clean -xdf node_modules",
+    "start": "bun src/index.ts",
+    "dev": "bun --watch src/index.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "composio",
+    "example",
+    "google",
+    "genai",
+    "gemini"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@composio/core": "workspace:*",
+    "@composio/google": "workspace:*",
+    "@google/genai": "^2.15.0",
+    "@modelcontextprotocol/sdk": "catalog:",
+    "dotenv": "catalog:"
+  },
+  "devDependencies": {
+    "@types/bun": "catalog:",
+    "typescript": "catalog:"
+  }
+}

@@ -1,0 +1,64 @@
+---
+title: "Command Palette"
+description: "Search Inspector servers, tools, prompts, resources, saved requests, and client setup actions."
+icon: "search"
+---
+
+{/* TODO: Add Inspector media when a screenshot or short clip would clarify the workflow. */}
+
+Press `Cmd/Ctrl + K` to open the command palette from anywhere in the Inspector. It searches the current Inspector state and lets you jump directly to the item you choose.
+
+## What you can open
+
+The command palette searches:
+
+- connected servers by display name or URL
+- tools by name, description, and server
+- prompts by name, description, and server
+- resources by name, URI, and server
+- saved tool requests
+- global navigation actions
+- Add to Client actions for supported clients
+
+Search is fuzzy, so partial words usually work. For example, `lin iss` can match a Linear issue tool if that tool is connected.
+
+## Run a tool from search
+
+Use the command palette when you know the tool name and want to skip tab navigation.
+
+1. Press `Cmd/Ctrl + K`.
+2. Type the tool name or part of its description.
+3. Select the tool.
+4. Fill the generated input form.
+5. Run the tool.
+
+The Inspector opens the Tools tab with that tool selected.
+
+## Load a saved request
+
+Saved requests appear in their own results category. Select one to open the matching tool with its saved arguments already loaded.
+
+Use saved requests for repeatable calls such as regression checks, widget test cases, or long input payloads.
+
+## Switch servers
+
+When more than one server is connected, search by server display name or URL. Selecting a server opens that server's Inspector view.
+
+Display names are useful here. Rename saved servers from [Connection settings](/inspector/connection-settings) when several URLs are hard to scan.
+
+## Add a server to a client
+
+Add to Client commands appear when a connected server can be installed or copied into a supported client. Search for the client name, then choose the matching action.
+
+Depending on the client, the action may open a deep link, download a configuration file, or copy a command to the clipboard.
+
+## Keyboard controls
+
+| Key | Action |
+| --- | --- |
+| `Cmd/Ctrl + K` | Open the command palette. |
+| `Up` / `Down` | Move through results. |
+| `Enter` | Open the selected result. |
+| `Esc` | Close the palette. |
+
+For the full shortcut reference, see [Keyboard shortcuts](/inspector/keyboard-shortcuts).
