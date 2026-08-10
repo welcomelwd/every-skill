@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "source_date": "2026-08-10",
+  "batch": "PM",
+  "source_markdown": "knowledge/github-trending/2026-08-10.md",
+  "projects": [
+    {
+      "repository": "pingdotgg/t3code",
+      "source_url": "https://github.com/pingdotgg/t3code",
+      "category": "agent",
+      "subcategory": "runtimes",
+      "slug": "t3code",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "9821bca1ceb97f137a9d93f1080fe1954b6641d3"
+    },
+    {
+      "repository": "Comfy-Org/ComfyUI",
+      "source_url": "https://github.com/Comfy-Org/ComfyUI",
+      "category": "knowledge",
+      "subcategory": "tools",
+      "slug": "comfyui",
+      "license": "GPL-3.0",
+      "download": true,
+      "ref": "master",
+      "commit": "7d11ec31cb700d881fdf2d73731ecde0093b9540"
+    },
+    {
+      "repository": "google-deepmind/weathernext",
+      "source_url": "https://github.com/google-deepmind/weathernext",
+      "category": "knowledge",
+      "subcategory": "datasets",
+      "slug": "weathernext",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "71f8883cc0f8ef02903ba6724c9c3ac36fc504f6"
+    },
+    {
+      "repository": "ZhuLinsen/daily_stock_analysis",
+      "source_url": "https://github.com/ZhuLinsen/daily_stock_analysis",
+      "category": "agent",
+      "subcategory": "workflows",
+      "slug": "daily-stock-analysis",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "396d43a4c76ffa940e2b9aea7bbe8686343c694a"
+    },
+    {
+      "repository": "hetaoBackend/mcp-github-trending",
+      "source_url": "https://github.com/hetaoBackend/mcp-github-trending",
+      "category": "mcp",
+      "subcategory": "servers",
+      "slug": "mcp-github-trending",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "9f2c577b3496657807244cfacc2c651aeb6291ed"
+    }
+  ]
+}
