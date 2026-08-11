@@ -1,9 +1,12 @@
 """Comprehensive unit tests for textproto_util.py."""
 
+import os
+import sys
+
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from absl.testing import absltest
 from dataclasses import asdict
 import textproto_util  # type: ignore[missing-import]
-
 
 
 class TextprotoUtilTest(absltest.TestCase):
@@ -206,19 +209,18 @@ class TextprotoUtilTest(absltest.TestCase):
         "title": "GCE Instance CPU Utilization",
         "xy_chart": {
             "chart_options": {"mode": "COLOR"},
-            "data_sets": [
-                {
-                    "time_series_query": {
-                        "prometheus_query": (
-                            "100 *"
-                            " avg(compute_googleapis_com:instance_cpu_utilization)"
-                        ),
-                        "unit_override": "%",
-                    },
-                    "plot_type": "LINE",
-                    "target_axis": "Y1",
-                }
-            ],
+            "data_sets": [{
+                "time_series_query": {
+                    "prometheus_query": (
+                        "100 *"
+                        " avg(compute_googleapis_com:instance_cpu_utilization)"
+                    ),
+                    "time_series_filter": None,
+                    "unit_override": "%",
+                },
+                "plot_type": "LINE",
+                "target_axis": "Y1",
+            }],
             "y_axis": {
                 "label": "Utilization (%)",
                 "scale": "LINEAR",
@@ -245,18 +247,17 @@ class TextprotoUtilTest(absltest.TestCase):
         "title": "Memory Percent Used",
         "xy_chart": {
             "chart_options": {"mode": "COLOR"},
-            "data_sets": [
-                {
-                    "time_series_query": {
-                        "prometheus_query": (
-                            "avg(agent_googleapis_com:memory_percent_used)"
-                        ),
-                        "unit_override": "",
-                    },
-                    "plot_type": "STACKED_AREA",
-                    "target_axis": "Y1",
-                }
-            ],
+            "data_sets": [{
+                "time_series_query": {
+                    "prometheus_query": (
+                        "avg(agent_googleapis_com:memory_percent_used)"
+                    ),
+                    "time_series_filter": None,
+                    "unit_override": "",
+                },
+                "plot_type": "STACKED_AREA",
+                "target_axis": "Y1",
+            }],
             "y_axis": {
                 "label": "",
                 "scale": "LINEAR",
@@ -299,6 +300,7 @@ class TextprotoUtilTest(absltest.TestCase):
                 {
                     "time_series_query": {
                         "prometheus_query": "rate(net_in[1m])",
+                        "time_series_filter": None,
                         "unit_override": "By/s",
                     },
                     "plot_type": "LINE",
@@ -307,6 +309,7 @@ class TextprotoUtilTest(absltest.TestCase):
                 {
                     "time_series_query": {
                         "prometheus_query": "rate(net_out[1m])",
+                        "time_series_filter": None,
                         "unit_override": "By/s",
                     },
                     "plot_type": "STACKED_AREA",

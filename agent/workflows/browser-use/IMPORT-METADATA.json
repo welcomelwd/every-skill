@@ -3,19 +3,25 @@
   "repository": "browser-use/browser-use",
   "source_url": "https://github.com/browser-use/browser-use",
   "ref": "default branch",
-  "resolved_commit": "32601887cfbc9f4f1e3cad3e2b678e56aeaeaae4",
+  "resolved_commit": "608911cd19fd54e96961d812d731f6bf43d9512a",
   "category": "agent",
   "subcategory": "workflows",
   "slug": "browser-use",
   "license": null,
-  "source_date": "2026-08-10",
-  "imported_at": "2026-08-10T07:29:55+00:00",
+  "source_date": null,
+  "imported_at": "2026-08-11T23:05:36+00:00",
   "download_mode": "bounded source snapshot",
   "copied_files": 487,
-  "copied_bytes": 5111333,
+  "copied_bytes": 5111309,
   "excluded_files": [
-    "Details omitted from the repaired marker; see 2026-08-10-BATCH1-import-report.md (8 files excluded)."
+    ".env.example: sensitive filename",
+    "examples/apps/ad-use/output/ad_20250908_150030.png: binary content",
+    "examples/apps/ad-use/output/landing_page_20250908_150030.png: binary content",
+    "static/NiceHack69.png: binary content",
+    "static/accuracy_by_model_dark.png: binary content",
+    "static/accuracy_by_model_light.png: binary content",
+    "static/browser-use-dark.png: binary content",
+    "static/browser-use.png: binary content"
   ],
-  "execution": "never run by this importer",
-  "repair_note": "Added after the upstream snapshot's ignore rules filtered the generated marker; source snapshot was not changed."
+  "execution": "never run by this importer"
 }

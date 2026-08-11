@@ -95,7 +95,7 @@ from nanobot.utils.runtime import (
 )
 
 if TYPE_CHECKING:
-    from nanobot.agent.tools.mcp import MCPConnection
+    from nanobot.agent.tools.mcp import MCPConnection, MCPRuntimeStatus
     from nanobot.config.schema import (
         ChannelsConfig,
         Config,
@@ -401,6 +401,7 @@ class AgentLoop:
         self._running = False
         self._mcp_servers = mcp_servers or {}
         self._mcp_stacks: dict[str, MCPConnection] = {}
+        self._mcp_runtime_statuses: dict[str, MCPRuntimeStatus] = {}
         self._mcp_connecting = False
         self._runtime_context_providers: list[RuntimeContextProvider] = []
         self._active_tasks: dict[str, set[asyncio.Task[Any]]] = {}
@@ -485,6 +486,8 @@ class AgentLoop:
             config,
             provider_snapshot_loader,
         )
+        from nanobot.agent.plugins import agent_plugin_mcp_servers
+
         return cls(
             bus=bus,
             provider=provider,
@@ -499,7 +502,7 @@ class AgentLoop:
             provider_retry_mode=defaults.provider_retry_mode,
             tool_hint_max_length=defaults.tool_hint_max_length,
             restrict_to_workspace=config.tools.restrict_to_workspace,
-            mcp_servers=config.tools.mcp_servers,
+            mcp_servers=agent_plugin_mcp_servers(config.workspace_path, config.tools.mcp_servers),
             channels_config=config.channels,
             timezone=defaults.timezone,
             unified_session=defaults.unified_session,
@@ -643,6 +646,10 @@ class AgentLoop:
     async def _connect_mcp(self) -> None:
         """Connect configured MCP servers."""
         await agent_context.connect_mcp(self, self.tools)
+
+    def mcp_runtime_status(self) -> dict[str, MCPRuntimeStatus]:
+        """Return connection state learned from real MCP runtime attempts."""
+        return agent_context.mcp_runtime_status(self)
 
     def register_runtime_context_provider(
         self,

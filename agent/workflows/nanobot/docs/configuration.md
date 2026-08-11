@@ -330,7 +330,11 @@ By default, OpenAI uses `apiType: "auto"`: nanobot calls Chat Completions normal
 
 Valid `apiType` values are exactly `auto`, `chat_completions`, and `responses`.
 
-`extraBody` follows the selected OpenAI API surface. With Chat Completions, nanobot passes it through as the SDK `extra_body` value. With Responses, configure it in Responses API body shape; nanobot merges ordinary top-level fields into the Responses request body, appends `extraBody.tools` after generated function tools, and merges `extraBody.include` without duplicates:
+`extraBody` follows the selected OpenAI API surface. With Chat Completions, nanobot passes
+ordinary fields through as the SDK `extra_body` value; list-valued `extraBody.tools` is handled
+specially and appended after generated function tools. With Responses, configure it in Responses
+API body shape; nanobot merges ordinary top-level fields into the Responses request body, appends
+`extraBody.tools` after generated function tools, and merges `extraBody.include` without duplicates:
 
 ```json
 {
@@ -2342,6 +2346,20 @@ Disabled skills are excluded from the main agent's skill summary, from always-on
 | Option | Default | Description |
 |--------|---------|-------------|
 | `agents.defaults.disabledSkills` | `[]` | List of skill directory names to exclude from loading. Applies to both built-in skills and workspace skills. |
+
+### Agent Plugins v1
+
+nanobot discovers [Agent Plugins](https://agent-plugins.org/) under `<workspace>/plugins/`; a v1 package has `plugin.json` and may add `mcp.json`, `skills/<name>/SKILL.md`, or both. Agent Plugins are the common package and activation boundary for installable capabilities; they do not replace native providers, channels, tools, standalone workspace skills, or directly configured MCP servers.
+
+Directory presence means installed; activation is explicit in **Apps**. Skills use progressive loading and `$skill-name` invocation, with workspace > plugin > built-in precedence.
+Enabled `stdio` servers receive contained `PLUGIN_ROOT` and isolated `PLUGIN_DATA` paths; explicit
+`tools.mcpServers` entries win collisions. Invalid or escaping components are ignored.
+An enabled package is treated as immutable: changing any packaged file disables it until the user
+reviews and enables it again. Runtime state belongs under `PLUGIN_DATA`, not the package root.
+
+Enabled plugins run as the nanobot user; permissions are descriptive, not an OS sandbox. The optional `extensions.dev.nanobot.logo` accepts a contained PNG, JPEG, or WebP up to 256 KiB.
+
+CLI Apps use the same skills-only package layout while their installer manages executables, updates, and removal. Future catalogs can place packages before using this activation path.
 
 ## Tool Hint Max Length
 

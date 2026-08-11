@@ -4,6 +4,7 @@ import {
   useId,
   useMemo,
   useState,
+  type ComponentPropsWithoutRef,
   type Dispatch,
   type ReactNode,
   type SetStateAction,
@@ -16,12 +17,15 @@ import {
   Database,
   ExternalLink,
   Loader2,
+  MoreHorizontal,
+  PauseCircle,
   PlayCircle,
   Plus,
   RotateCcw,
   Search,
   Server,
   SlidersHorizontal,
+  TriangleAlert,
   Trash2,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -156,8 +160,8 @@ export function AppsCatalogSettings({
   onQueryChange: (value: string) => void;
   onFilterChange: (value: AppsKindFilter) => void;
   onCliAction: (action: "install" | "update" | "uninstall" | "test", name: string) => void;
-  onMcpAction: (action: "enable" | "remove" | "test", name: string, values?: Record<string, string>) => void;
-  onMcpOAuthConnect: (name: string) => void;
+  onMcpAction: (action: "enable" | "disable" | "remove" | "test" | "reconnect", name: string, values?: Record<string, string>) => void;
+  onMcpOAuthConnect: (name: string, reset?: boolean) => void;
   onMcpOAuthCancel: () => void;
   onMcpOAuthOpen: () => void;
   onMcpOAuthCallbackUrlChange: (value: string) => void;
@@ -191,7 +195,11 @@ export function AppsCatalogSettings({
   ]
     .filter((item) => {
       if (normalizedQuery) return appsSearchText(item).includes(normalizedQuery);
-      return filter === "ready" ? appsReady(item) : item.kind === filter;
+      if (filter === "ready") return appsReady(item);
+      if (filter === "cli") {
+        return item.kind === "cli" || item.preset.source === "agent-plugin";
+      }
+      return item.kind === "mcp" && item.preset.source !== "agent-plugin";
     })
     .sort((left, right) => {
       const rank = Number(!appsReady(left)) - Number(!appsReady(right));
@@ -318,6 +326,7 @@ export function AppsCatalogSettings({
                   oauthCompleting={mcpOAuthCompleting}
                   oauthCallbackError={mcpOAuthCallbackError}
                   showBrandLogos={showBrandLogos}
+                  showTypeBadge={filter !== "mcp"}
                   onFieldChange={onMcpFieldChange}
                   onAction={onMcpAction}
                   onOAuthConnect={onMcpOAuthConnect}
@@ -481,6 +490,7 @@ function McpAppsCatalogRow({
   oauthCompleting,
   oauthCallbackError,
   showBrandLogos,
+  showTypeBadge,
   onFieldChange,
   onAction,
   onOAuthConnect,
@@ -499,9 +509,10 @@ function McpAppsCatalogRow({
   oauthCompleting: boolean;
   oauthCallbackError: string | null;
   showBrandLogos: boolean;
+  showTypeBadge: boolean;
   onFieldChange: (presetName: string, fieldName: string, value: string) => void;
-  onAction: (action: "enable" | "remove" | "test", name: string, values?: Record<string, string>) => void;
-  onOAuthConnect: (name: string) => void;
+  onAction: (action: "enable" | "disable" | "remove" | "test" | "reconnect", name: string, values?: Record<string, string>) => void;
+  onOAuthConnect: (name: string, reset?: boolean) => void;
   onOAuthCancel: () => void;
   onOAuthOpen: () => void;
   onOAuthCallbackUrlChange: (value: string) => void;
@@ -513,18 +524,32 @@ function McpAppsCatalogRow({
   const [setupOpen, setSetupOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const enableBusy = actionKey === `enable:${preset.name}`;
+  const disableBusy = actionKey === `disable:${preset.name}`;
   const removeBusy = actionKey === `remove:${preset.name}`;
   const testBusy = actionKey === `test:${preset.name}`;
+  const reconnectBusy = actionKey === `reconnect:${preset.name}`;
   const toolsBusy = actionKey === `tools:${preset.name}`;
   const oauthBusy = actionKey === `oauth:${preset.name}`;
   const anotherOAuthBusy = Boolean(actionKey?.startsWith("oauth:")) && !oauthBusy;
-  const busy = enableBusy || removeBusy || testBusy || toolsBusy || oauthBusy;
+  const busy = enableBusy || disableBusy || removeBusy || testBusy || reconnectBusy || toolsBusy || oauthBusy;
+  const agentPlugin = preset.source === "agent-plugin";
+  const toggleable = preset.enabled !== undefined;
   const isOAuth = preset.auth === "oauth";
   const missingFields = preset.required_fields.filter((field) => field.required && !field.configured);
   const hasFields = preset.required_fields.length > 0;
   const needsSetupInput = missingFields.length > 0;
-  const readyInstalled = preset.installed && preset.configured;
-  const statusLabel = mcpPresetStatusLabel(preset.status, tx);
+  const configuredInstalled = preset.installed && preset.configured;
+  const readyInstalled = preset.enabled ?? configuredInstalled;
+  const runtimeConnected = !toggleable && preset.runtime_status === "connected";
+  const runtimeConnecting = !toggleable && preset.runtime_status === "connecting";
+  const runtimeFailed = !toggleable && preset.runtime_status === "failed";
+  const statusLabel = toggleable
+    ? tx("settings.nanobotFeatures.enabled", "Enabled")
+    : runtimeConnected
+      ? tx("settings.mcp.connected", "Connected.")
+      : mcpPresetStatusLabel(preset.status, tx);
+  const failureLabel = tx("settings.mcp.connectionFailed", "Connection failed.");
+  const reconnectLabel = tx("settings.mcp.reconnect", "Reconnect");
   const canEnable =
     preset.install_supported &&
     (missingFields.length === 0 || missingFields.every((field) => Boolean(values[field.name]?.trim())));
@@ -532,7 +557,10 @@ function McpAppsCatalogRow({
   const enabledTools = preset.enabled_tools ?? ["*"];
   const allowAllTools = enabledTools.includes("*");
   const enabledSet = new Set(allowAllTools ? toolNames : enabledTools);
-  const description = preset.description || preset.note || preset.requires || preset.name;
+  const description = preset.description || preset.note || preset.name;
+  const detail = agentPlugin && preset.requires
+    ? `${description} · ${preset.requires}`
+    : description || preset.requires;
   const manualCallback =
     oauthFlow?.completion_input === "callback_url" && Boolean(oauthFlow.authorization_url);
   const callbackInputId = `mcp-oauth-callback-${preset.name}`;
@@ -569,40 +597,96 @@ function McpAppsCatalogRow({
 
   return (
     <article className="min-w-0 rounded-[14px] transition-colors hover:bg-muted/45">
-      <div
-        className={cn(
-          "group min-w-0 px-3 py-3",
-          oauthFlow
-            ? "grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 sm:grid-cols-[auto_minmax(0,1fr)_auto]"
-            : "flex items-center gap-3",
-        )}
-      >
+      <div className="group flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 px-3 py-3">
         <McpPresetLogo preset={preset} showBrandLogos={showBrandLogos} />
-        <div className="min-w-0 flex-1">
+        <div className="min-w-[8rem] flex-[1_1_8rem]">
           <div className="flex min-w-0 items-baseline gap-2">
             <h3 className="truncate text-[14px] font-semibold leading-5 text-foreground">{preset.display_name}</h3>
-            <AppsTypeBadge>{tx("settings.apps.mcpLabel", "MCP")}</AppsTypeBadge>
+            {showTypeBadge ? (
+              <AppsTypeBadge>
+                {agentPlugin
+                  ? tx("settings.apps.filterPlugins", "Plugins")
+                  : tx("settings.apps.mcpLabel", "MCP")}
+              </AppsTypeBadge>
+            ) : null}
           </div>
-          <p className="mt-0.5 truncate text-[12.5px] leading-5 text-muted-foreground">{description}</p>
+          <p
+            className={cn(
+              "mt-0.5 flex min-w-0 items-center gap-1.5 text-[12.5px] leading-5 text-muted-foreground",
+              runtimeFailed && configuredInstalled && "font-medium text-destructive",
+            )}
+          >
+            {runtimeFailed && configuredInstalled ? (
+              <TriangleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            ) : null}
+            <span className="truncate">
+              {runtimeFailed && configuredInstalled ? failureLabel : detail}
+            </span>
+          </p>
         </div>
-        <div
-          className={cn(
-            "flex shrink-0 items-center gap-1",
-            oauthFlow && "col-span-2 justify-self-end sm:col-span-1",
-          )}
-        >
-          {readyInstalled ? (
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          {oauthFlow ? (
             <>
+              <AppsActionButton
+                ariaLabel={t("settings.mcp.connectingAccount", {
+                  name: preset.display_name,
+                  defaultValue: "Connecting {{name}}",
+                })}
+                visibleLabel={tx("settings.mcp.connectingLabel", "Connecting…")}
+                busy
+              />
+              <AppsActionButton
+                ariaLabel={tx("settings.actions.cancel", "Cancel")}
+                visibleLabel={tx("settings.actions.cancel", "Cancel")}
+                tone="danger"
+                onClick={onOAuthCancel}
+              />
+            </>
+          ) : runtimeConnecting && configuredInstalled ? (
+            <>
+              <AppsActionButton
+                ariaLabel={`${preset.display_name}: ${tx("settings.mcp.connectingLabel", "Connecting…")}`}
+                visibleLabel={tx("settings.mcp.connectingLabel", "Connecting…")}
+                busy
+              />
+              <AppsActionButton
+                ariaLabel={tx("settings.mcp.remove", "Remove")}
+                busy={removeBusy}
+                disabled={busy && !removeBusy}
+                tone="danger"
+                onClick={() => onAction("remove", preset.name)}
+              >
+                <Trash2 className="h-4 w-4" aria-hidden />
+              </AppsActionButton>
+            </>
+          ) : runtimeFailed && configuredInstalled ? (
+            <>
+              <AppsActionButton
+                ariaLabel={t("settings.mcp.reconnectTitle", {
+                  name: preset.display_name,
+                  defaultValue: "Reconnect {{name}}",
+                })}
+                visibleLabel={reconnectLabel}
+                busy={isOAuth ? oauthBusy : reconnectBusy}
+                disabled={anotherOAuthBusy || (busy && !oauthBusy && !reconnectBusy)}
+                onClick={() => {
+                  if (isOAuth) onOAuthConnect(preset.name, true);
+                  else onAction("reconnect", preset.name);
+                }}
+              >
+                <RotateCcw className="h-4 w-4" aria-hidden />
+              </AppsActionButton>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <AppsActionButton
-                    ariaLabel={`${preset.display_name}: ${statusLabel}`}
-                    visibleLabel={statusLabel}
-                    busy={testBusy || toolsBusy}
+                    ariaLabel={t("settings.mcp.actionsTitle", {
+                      name: preset.display_name,
+                      defaultValue: "Actions for {{name}}",
+                    })}
+                    busy={testBusy || toolsBusy || removeBusy}
                     disabled={busy}
-                    tone="installed"
                   >
-                    <Check className="h-4 w-4" aria-hidden />
+                    <MoreHorizontal className="h-4 w-4" aria-hidden />
                   </AppsActionButton>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
@@ -626,33 +710,69 @@ function McpAppsCatalogRow({
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-              <AppsActionButton
-                ariaLabel={tx("settings.mcp.remove", "Remove")}
-                busy={removeBusy}
-                disabled={busy && !removeBusy}
-                tone="danger"
-                onClick={() => onAction("remove", preset.name)}
-              >
-                <Trash2 className="h-4 w-4" aria-hidden />
-              </AppsActionButton>
             </>
-          ) : oauthFlow ? (
+          ) : readyInstalled ? (
             <>
-              <AppsActionButton
-                ariaLabel={t("settings.mcp.connectingAccount", {
-                  name: preset.display_name,
-                  defaultValue: "Connecting {{name}}",
-                })}
-                visibleLabel={tx("settings.mcp.connectingLabel", "Connecting…")}
-                busy
-              />
-              <AppsActionButton
-                ariaLabel={tx("settings.actions.cancel", "Cancel")}
-                visibleLabel={tx("settings.actions.cancel", "Cancel")}
-                tone="danger"
-                onClick={onOAuthCancel}
-              />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <AppsActionButton
+                    ariaLabel={`${preset.display_name}: ${statusLabel}`}
+                    visibleLabel={statusLabel}
+                    busy={testBusy || toolsBusy || disableBusy}
+                    disabled={busy}
+                    tone={toggleable || runtimeConnected ? "installed" : "default"}
+                  >
+                    {toggleable || runtimeConnected ? (
+                      <Check className="h-4 w-4" aria-hidden />
+                    ) : (
+                      <Server className="h-4 w-4" aria-hidden />
+                    )}
+                  </AppsActionButton>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {!toggleable ? (
+                    <DropdownMenuItem disabled={busy} onClick={() => onAction("test", preset.name)}>
+                      <PlayCircle aria-hidden />
+                      {tx("settings.mcp.test", "Test")}
+                    </DropdownMenuItem>
+                  ) : null}
+                  {!toggleable && toolNames.length ? (
+                    <DropdownMenuItem disabled={busy} onClick={() => setToolsOpen((open) => !open)}>
+                      <SlidersHorizontal aria-hidden />
+                      {tx("settings.mcp.toolScope", "Tools")}
+                    </DropdownMenuItem>
+                  ) : null}
+                  <DropdownMenuItem
+                    tone={toggleable ? undefined : "destructive"}
+                    disabled={busy}
+                    onClick={() => onAction(toggleable ? "disable" : "remove", preset.name)}
+                  >
+                    {toggleable ? <PauseCircle aria-hidden /> : <Trash2 aria-hidden />}
+                    {toggleable
+                      ? tx("settings.nanobotFeatures.disable", "Disable")
+                      : tx("settings.mcp.remove", "Remove")}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              {!toggleable ? (
+                <AppsActionButton
+                  ariaLabel={tx("settings.mcp.remove", "Remove")}
+                  busy={removeBusy}
+                  disabled={busy && !removeBusy}
+                  tone="danger"
+                  onClick={() => onAction("remove", preset.name)}
+                >
+                  <Trash2 className="h-4 w-4" aria-hidden />
+                </AppsActionButton>
+              ) : null}
             </>
+          ) : preset.enabled === false ? (
+            <AppsActionButton
+              ariaLabel={tx("settings.nanobotFeatures.enable", "Enable")}
+              visibleLabel={tx("settings.nanobotFeatures.enable", "Enable")}
+              busy={enableBusy}
+              onClick={() => onAction("enable", preset.name, values)}
+            />
           ) : isOAuth && preset.install_supported ? (
             <AppsActionButton
               ariaLabel={t("settings.mcp.connectTitle", {
@@ -871,7 +991,7 @@ function McpAppsCatalogRow({
         </div>
       ) : null}
 
-      {toolsOpen && readyInstalled && toolNames.length ? (
+      {toolsOpen && configuredInstalled && toolNames.length ? (
         <div className="mx-3 mb-3 rounded-[14px] bg-background/55 p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-[11.5px] font-medium text-muted-foreground">
@@ -935,55 +1055,67 @@ function AppsTypeBadge({ children }: { children: ReactNode }) {
   );
 }
 
-export const AppsActionButton = forwardRef<HTMLButtonElement, {
+type AppsActionButtonProps = Omit<
+  ComponentPropsWithoutRef<typeof Button>,
+  "aria-label" | "children" | "disabled" | "size" | "variant"
+> & {
   ariaLabel: string;
   visibleLabel?: string;
   busy?: boolean;
   disabled?: boolean;
   tone?: "default" | "installed" | "danger";
-  onClick?: () => void;
   children?: ReactNode;
-}>(function AppsActionButton({
-  ariaLabel,
-  visibleLabel,
-  busy,
-  disabled,
-  tone = "default",
-  onClick,
-  children,
-}, ref) {
-  return (
-    <Button
-      ref={ref}
-      type="button"
-      size={visibleLabel ? "sm" : "icon"}
-      variant="ghost"
-      aria-label={ariaLabel}
-      title={ariaLabel}
-      disabled={disabled || busy}
-      onClick={onClick}
-      className={cn(
-        "rounded-full text-muted-foreground transition-colors",
-        visibleLabel
-          ? "h-8 w-auto gap-1.5 px-3 text-[12px] font-semibold"
-          : "h-9 w-9",
-        tone === "installed" && "bg-transparent hover:bg-muted/70 hover:text-foreground",
-        tone === "danger" && "bg-transparent hover:bg-destructive/10 hover:text-destructive",
-        tone === "default" && "bg-muted/70 hover:bg-muted hover:text-foreground",
-      )}
-    >
-      {busy ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden /> : children}
-      {visibleLabel ? <span>{visibleLabel}</span> : null}
-    </Button>
-  );
-});
+};
+
+export const AppsActionButton = forwardRef<HTMLButtonElement, AppsActionButtonProps>(
+  function AppsActionButton({
+    ariaLabel,
+    visibleLabel,
+    busy,
+    disabled,
+    tone = "default",
+    children,
+    className,
+    ...buttonProps
+  }, ref) {
+    return (
+      <Button
+        {...buttonProps}
+        ref={ref}
+        type="button"
+        size={visibleLabel ? "sm" : "icon"}
+        variant="ghost"
+        aria-label={ariaLabel}
+        title={ariaLabel}
+        disabled={disabled || busy}
+        className={cn(
+          "rounded-full text-muted-foreground transition-colors",
+          visibleLabel
+            ? "h-8 w-auto gap-1.5 px-3 text-[12px] font-semibold"
+            : "h-9 w-9",
+          tone === "installed" && "bg-transparent hover:bg-muted/70 hover:text-foreground",
+          tone === "danger" && "bg-transparent hover:bg-destructive/10 hover:text-destructive",
+          tone === "default" && "bg-muted/70 hover:bg-muted hover:text-foreground",
+          className,
+        )}
+      >
+        {busy ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden /> : children}
+        {visibleLabel ? <span>{visibleLabel}</span> : null}
+      </Button>
+    );
+  },
+);
 
 function appsTitle(item: AppsCatalogItem): string {
   return item.kind === "cli" ? item.app.display_name : item.preset.display_name;
 }
 
 function appsReady(item: AppsCatalogItem): boolean {
-  return item.kind === "cli" ? item.app.installed : item.preset.installed && item.preset.configured;
+  if (item.kind === "cli") return item.app.installed;
+  if (item.preset.enabled !== undefined) return item.preset.enabled;
+  return item.preset.installed &&
+    item.preset.configured &&
+    item.preset.runtime_status === "connected";
 }
 
 function appsSearchText(item: AppsCatalogItem): string {
@@ -1374,6 +1506,7 @@ function McpPresetLogo({ preset, showBrandLogos }: { preset: McpPresetInfo; show
   const bg = preset.brand_color || "hsl(var(--muted))";
   const logoUrls = useMemo(() => logoFallbackUrls(preset.logo_url), [preset.logo_url]);
   const { logoUrl, onLogoError, onLogoLoad } = useLogoFallback(logoUrls);
+  const packagedLogo = preset.logo_url?.startsWith("data:image/") === true;
   const initials = preset.display_name
     .split(/\s+/)
     .filter(Boolean)
@@ -1381,7 +1514,7 @@ function McpPresetLogo({ preset, showBrandLogos }: { preset: McpPresetInfo; show
     .map((part) => part[0]?.toUpperCase())
     .join("") || preset.name.slice(0, 2).toUpperCase();
 
-  if (showBrandLogos && logoUrl) {
+  if ((showBrandLogos || packagedLogo) && logoUrl) {
     return (
       <span
         className="grid h-11 w-11 shrink-0 place-items-center rounded-[8px] border border-border/45 bg-background"

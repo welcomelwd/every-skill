@@ -136,7 +136,7 @@ repo to install.
   - [**Google Mobile Ads SDK - Install**](./skills/ads/google-mobile-ads-get-started)
   - [**Google Mobile Ads SDK - Interstitial Ads**](./skills/ads/google-mobile-ads-interstitial)
   - [**Google Mobile Ads SDK - Rewarded Ads**](./skills/ads/google-mobile-ads-rewarded)
-  - [**IMA SDK basics**](./skills/ads/ima-sdk-basics)
+  - [**IMA SDK client-side**](./skills/ads/ima-sdk-client-side)
 - **Others**
   - [**Getting Started with Google Analytics Admin API**](./skills/analytics/google-analytics-admin-api-basics)
   - [**Getting Started with Google Analytics Data API**](./skills/analytics/google-analytics-data-api-basics)

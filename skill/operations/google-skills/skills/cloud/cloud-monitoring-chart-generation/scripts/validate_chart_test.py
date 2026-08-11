@@ -1,5 +1,9 @@
 """Unit test for validate_chart.py."""
 
+import os
+import sys
+
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from absl.testing import absltest
 import validate_chart  # type: ignore[missing-import]
 
@@ -71,7 +75,7 @@ xy_chart {
 }
 """
     widget = validate_chart.parse_and_validate_widget(textproto)
-    with self.assertRaises(AssertionError):
+    with self.assertRaises(ValueError):
       validate_chart.validate_widget(widget=widget)
 
   def test_main_validate_from_stdin(self):

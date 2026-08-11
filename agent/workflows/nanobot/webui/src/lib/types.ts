@@ -962,8 +962,10 @@ export interface McpPresetInfo {
   install_supported: boolean;
   installed: boolean;
   configured: boolean;
+  enabled?: boolean;
   available: boolean;
   status: "not_installed" | "configured" | "missing_credentials" | "missing_dependency" | "coming_soon" | string;
+  runtime_status?: "connecting" | "connected" | "failed" | string;
   logo_url?: string | null;
   brand_color?: string | null;
   required_fields: McpPresetField[];

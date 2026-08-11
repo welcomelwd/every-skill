@@ -7,10 +7,24 @@ from typing import Any
 
 
 @dataclass
+class Aggregation:
+  alignment_period: dict = field(default_factory=dict)
+  per_series_aligner: str = ""
+  cross_series_reducer: str = ""
+  group_by_fields: list[str] = field(default_factory=list)
+
+
+@dataclass
+class TimeSeriesFilter:
+  filter: str = ""
+  aggregation: Aggregation | None = None
+
+
+@dataclass
 class TimeSeriesQuery:
   prometheus_query: str = ""
+  time_series_filter: TimeSeriesFilter | None = None
   unit_override: str = ""
-
 
 @dataclass
 class DataSet:
@@ -18,24 +32,20 @@ class DataSet:
   plot_type: str = "LINE"
   target_axis: str = "Y1"
 
-
 @dataclass
 class YAxis:
   label: str = ""
   scale: str = "LINEAR"
 
-
 @dataclass
 class ChartOptions:
   mode: str = "COLOR"
-
 
 @dataclass
 class XyChart:
   chart_options: ChartOptions = field(default_factory=ChartOptions)
   data_sets: list[DataSet] = field(default_factory=list)
   y_axis: YAxis = field(default_factory=YAxis)
-
 
 @dataclass
 class Widget:
@@ -44,7 +54,6 @@ class Widget:
 
   def HasField(self, field_name: str) -> bool:
     return getattr(self, field_name, None) is not None
-
 
 def tokenize_textproto(text: str) -> list[tuple[str, str]]:
   """Tokenizes textproto string into (token_type, value) tuples."""
@@ -90,7 +99,6 @@ def tokenize_textproto(text: str) -> list[tuple[str, str]]:
     i = j
   return tokens
 
-
 def parse_textproto_tokens(
     tokens: list[tuple[str, str]], idx: int = 0
 ) -> tuple[dict[str, Any], int]:
@@ -124,7 +132,6 @@ def parse_textproto_tokens(
     else:
       idx += 1
   return obj, idx
-
 
 def dict_to_widget(data: dict[str, Any]) -> Widget:
   """Converts a parsed textproto dictionary into a structured Widget hierarchy."""
@@ -164,12 +171,36 @@ def dict_to_widget(data: dict[str, Any]) -> Widget:
     if not isinstance(ds_dict, dict):
       continue
     ts_dict = ds_dict.get("time_series_query", {})
+    ts_filter = None
     if isinstance(ts_dict, dict):
       promql = str(ts_dict.get("prometheus_query", ""))
       unit = str(ts_dict.get("unit_override", ""))
+      ts_filter_dict = ts_dict.get("time_series_filter")
+      if isinstance(ts_filter_dict, dict):
+        agg_dict = ts_filter_dict.get("aggregation", {})
+        agg_obj = None
+        if isinstance(agg_dict, dict) and agg_dict:
+          group_by = agg_dict.get("group_by_fields", [])
+          if isinstance(group_by, str):
+            group_by = [group_by]
+          agg_obj = Aggregation(
+              alignment_period=agg_dict.get("alignment_period", {}),
+              per_series_aligner=str(agg_dict.get("per_series_aligner", "")),
+              cross_series_reducer=str(
+                  agg_dict.get("cross_series_reducer", "")
+              ),
+              group_by_fields=group_by,
+          )
+        ts_filter = TimeSeriesFilter(
+            filter=str(ts_filter_dict.get("filter", "")), aggregation=agg_obj
+        )
     else:
       promql, unit = "", ""
-    ts_query = TimeSeriesQuery(prometheus_query=promql, unit_override=unit)
+    ts_query = TimeSeriesQuery(
+        prometheus_query=promql,
+        time_series_filter=ts_filter,
+        unit_override=unit,
+    )
     plot_type = str(ds_dict.get("plot_type", "LINE"))
     target_axis = str(ds_dict.get("target_axis", "Y1"))
     data_sets.append(
@@ -186,7 +217,6 @@ def dict_to_widget(data: dict[str, Any]) -> Widget:
       y_axis=y_axis,
   )
   return Widget(title=title, xy_chart=xy_chart)
-
 
 def parse_and_validate_widget(text: str) -> Widget:
   """Parses a textproto string into a Widget message hierarchy."""

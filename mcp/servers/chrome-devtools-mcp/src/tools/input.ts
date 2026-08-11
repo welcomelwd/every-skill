@@ -443,19 +443,22 @@ export const uploadFile = definePageTool({
       .describe(
         'The uid of the file input element or an element that will open file chooser on the page from the page content snapshot',
       ),
-    filePath: zod.string().describe('The local path of the file to upload'),
+    filePaths: zod
+      .array(zod.string())
+      .min(1)
+      .describe('One or more local paths of files to upload.'),
     includeSnapshot: includeSnapshotSchema,
   },
   blockedByDialog: true,
-  verifyFilesSchema: ['filePath'],
+  verifyFilesSchema: ['filePaths'],
   handler: async (request, response) => {
-    const {uid, filePath} = request.params;
+    const {uid, filePaths} = request.params;
     using handle = (await request.page.getElementByUid(
       uid,
     )) as ElementHandle<HTMLInputElement>;
 
     try {
-      await handle.uploadFile(filePath);
+      await handle.uploadFile(...filePaths);
     } catch {
       // Some sites use a proxy element to trigger file upload instead of
       // a type=file element. In this case, we want to default to
@@ -465,7 +468,7 @@ export const uploadFile = definePageTool({
           request.page.pptrPage.waitForFileChooser({timeout: 3000}),
           handle.asLocator().click(),
         ]);
-        await fileChooser.accept([filePath]);
+        await fileChooser.accept(filePaths);
       } catch {
         throw new Error(
           `Failed to upload file. The element could not accept the file directly, and clicking it did not trigger a file chooser.`,
@@ -475,7 +478,7 @@ export const uploadFile = definePageTool({
     if (request.params.includeSnapshot) {
       response.includeSnapshot();
     }
-    response.appendResponseLine(`File uploaded from ${filePath}.`);
+    response.appendResponseLine(`File uploaded from ${filePaths.join(', ')}.`);
   },
 });
 

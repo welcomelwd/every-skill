@@ -361,34 +361,46 @@ module is re-exported under its own name. A project that does
   summaries are resolved by a worklist fixpoint once every file has been walked, so
   a callee defined after (or in a different file from) its caller is still known to
   return a tainted value at the caller's site.
-- Forward argument taint composes into callee **sinks** for Python: a parameter that
-  reaches a write sink inside its body is recorded as a per-function parameter-sink
-  summary (closed over transitive parameter hand-offs by the same finalize fixpoint),
-  so a tainted argument passed at a call site emits the full `resource -> resource`
-  flow even when the source and the sink live in different bodies — the logging-wrapper
-  case `secret = getenv('K'); log_it(secret)` with `log_it(m): logger.info(m)` connects
-  ENV to STDOUT. Only resolved callees participate; there are still no `Parameter` nodes
-  and no SSA-level precision.
+- Forward argument taint composes into callee **sinks** for Python and the lean-walk
+  languages with a parameter-name extractor (Go, JavaScript, TypeScript/TSX, C++): a
+  parameter that reaches a write sink inside its body is recorded as a per-function
+  parameter-sink summary (closed over transitive parameter hand-offs by the same
+  finalize fixpoint), so a tainted argument passed at a call site emits the full
+  `resource -> resource` flow even when the source and the sink live in different
+  bodies — the logging-wrapper case `secret = getenv('K'); log_it(secret)` with
+  `log_it(m): logger.info(m)` connects ENV to STDOUT. Only resolved callees participate;
+  there are still no `Parameter` nodes and no SSA-level precision. Java and C# parse
+  into the graph but have no parameter-name extractor yet, so their positional
+  composition stays inert until one is added.
 - Forward argument taint also composes through a callee's **return** value for Python
   (pass-through helpers such as `def redact(v): return v`): a parameter that reaches the
   function's return — directly or transitively through `return other(p)` and pass-through
   chains — is closed over by the same finalize fixpoint, and a call site passing a tainted
   argument into such a parameter folds that argument's origins into the callee's return
   summary, so a caller consuming the return (`y = redact(secret); print(y)`) resolves the
-  secret to the sink. The non-Python walks remain one level for now.
+  secret to the sink. This return composition is Python-only; the lean walks forward
+  taint into callee sinks (above) but not yet through a callee's return.
 - The `kind = arg` edge itself is still recorded one level deep — it marks that a
   tainted value reached a call — and is emitted alongside the forward composition above.
   Sources and sinks are direct I/O calls from the registry.
 - The source/sink registry covers Python, JavaScript, TypeScript (including TSX),
-  Go, Java, Rust, C, C++, and C#; a language not in the registry emits no I/O or
-  flow edges until its table is added.
+  Go, Java, Rust, C, C++, C#, and Lua; a language not in the registry emits no I/O
+  or flow edges until its table is added.
+- The lean (non-Python) `FLOWS_TO` walk matches **direct call sinks only**; a taint
+  that reaches a resource through a handle method (`os.Create(p).Write(x)`,
+  `io.open(p):write(x)`, `File::create(p).write(x)`) emits no flow edge, uniformly
+  across every lean language — the handle-tracking tables feed the `READS_FROM`/
+  `WRITES_TO` walk, not the flow walk. So a handle-only write leak reads as `NO_FLOW`
+  rather than `UNKNOWN` in a fully covered project; teaching the flow walk to track
+  handle bindings (cross-language) is tracked in #1204. This bites Lua hardest, since Lua has
+  no direct file-write sink at all.
 
 These are deliberate ceilings, chosen so the feature is correct and cheap where
 it applies rather than broad and noisy.
 
 ## Language coverage
 
-`FLOWS_TO` covers **10 of the 14 supported languages** — every language whose
+`FLOWS_TO` covers **11 of the 14 supported languages** — every language whose
 source/sink table is registered in `FLOW_REGISTERED_LANGUAGES`
 (`codebase_rag/parsers/io_access/registry.py`). Python uses the deep,
 path-sensitive walk; the rest use the descriptor-driven lean walk. A language
@@ -408,7 +420,7 @@ edges, so a reachability question over it returns `UNKNOWN` rather than
 | C++ | ✅ | lean descriptor |
 | C | ✅ | lean descriptor |
 | C# | ✅ | lean descriptor |
-| Lua | ❌ | not covered — no sink table |
+| Lua | ✅ | lean descriptor |
 | PHP | ❌ | not covered — no sink table |
 | Scala | ❌ | not covered — no sink table |
 | Dart | ❌ | not covered — no sink table |
