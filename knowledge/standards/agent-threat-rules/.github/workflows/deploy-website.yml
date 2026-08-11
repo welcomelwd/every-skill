@@ -1,0 +1,44 @@
+name: Deploy Website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - 'rules/**'
+      - 'data/**'
+      # Don't redeploy the site for the daily CVE collector's run-report churn
+      # (the site doesn't surface cve-collector data). Negation must come after
+      # the 'data/**' include; a mixed push (e.g. benchmark data) still deploys.
+      - '!data/cve-collector/**'
+      - '.github/workflows/deploy-website.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        working-directory: website
+        run: npm ci
+
+      - name: Build (includes next-sitemap for SEO)
+        working-directory: website
+        run: npm run build
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy out --project-name=agentthreatrule --branch=main
+          workingDirectory: website

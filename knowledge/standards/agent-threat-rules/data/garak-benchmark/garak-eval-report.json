@@ -1,0 +1,120 @@
+{
+  "benchmark": "NVIDIA Garak In-The-Wild Jailbreak Dataset",
+  "source": "garak — data/test-corpora/garak-full/inthewild.json",
+  "generated_by": "scripts/eval-garak-inthewild.ts",
+  "date": "2026-08-05",
+  "atr_version": "3.5.11",
+  "rules_loaded": 780,
+  "event_shapes": "llm_input + tool_response (scripts/lib/corpus-event.ts promptChannelShapes)",
+  "dataset": {
+    "total_prompts": 650,
+    "type": "100% malicious (real-world jailbreaks)"
+  },
+  "results": {
+    "detected": 601,
+    "missed": 49,
+    "recall": 92.5
+  },
+  "wide_shape_comparison": {
+    "detected": 605,
+    "recall": 93.1,
+    "note": "corpus-event canonical shapes + engine.scanSkill(). Not published — a garak prompt never reaches production as a SKILL.md."
+  },
+  "by_severity": {
+    "medium": 410,
+    "high": 1904,
+    "critical": 521
+  },
+  "top_rules": [
+    {
+      "id": "ATR-2026-00003",
+      "title": "Jailbreak Attempt Detection",
+      "severity": "high",
+      "count": 259
+    },
+    {
+      "id": "ATR-2026-00001",
+      "title": "Direct Prompt Injection via User Input",
+      "severity": "high",
+      "count": 186
+    },
+    {
+      "id": "ATR-2026-00244",
+      "title": "Dual-Response Persona Jailbreak",
+      "severity": "high",
+      "count": 181
+    },
+    {
+      "id": "ATR-2026-00227",
+      "title": "Historical AI Persona Jailbreak with Compliance Enforcement",
+      "severity": "high",
+      "count": 176
+    },
+    {
+      "id": "ATR-2026-00010",
+      "title": "Malicious Content in MCP Tool Response",
+      "severity": "critical",
+      "count": 138
+    },
+    {
+      "id": "ATR-2026-00303",
+      "title": "DevMode + RANTI Dual-Output Profanity Coercion Jailbreak",
+      "severity": "critical",
+      "count": 118
+    },
+    {
+      "id": "ATR-2026-00005",
+      "title": "Multi-Turn Prompt Injection",
+      "severity": "medium",
+      "count": 97
+    },
+    {
+      "id": "ATR-2026-00465",
+      "title": "Garak Dan - your prompt here",
+      "severity": "medium",
+      "count": 97
+    },
+    {
+      "id": "ATR-2026-00020",
+      "title": "System Prompt and Internal Instruction Leakage",
+      "severity": "high",
+      "count": 91
+    },
+    {
+      "id": "ATR-2026-00273",
+      "title": "DAN / Developer Mode / DUDE Persona Jailbreak",
+      "severity": "high",
+      "count": 86
+    },
+    {
+      "id": "ATR-2026-02377",
+      "title": "Novel-Persona Jailbreak via Co-Signal (persona swap + explicit restriction removal)",
+      "severity": "high",
+      "count": 85
+    },
+    {
+      "id": "ATR-2026-00365",
+      "title": "Reservoir Dogs Coercive Interrogation Roleplay (Mr. Blonde / The Cop)",
+      "severity": "high",
+      "count": 84
+    },
+    {
+      "id": "ATR-2026-00229",
+      "title": "Roleplay-Based Policy Bypass Jailbreak",
+      "severity": "high",
+      "count": 62
+    },
+    {
+      "id": "ATR-2026-00234",
+      "title": "Roleplay-Based Policy Bypass Jailbreak",
+      "severity": "high",
+      "count": 62
+    },
+    {
+      "id": "ATR-2026-00242",
+      "title": "Dual-Response Persona Jailbreak with Emoji Formatting",
+      "severity": "high",
+      "count": 60
+    }
+  ]
+}

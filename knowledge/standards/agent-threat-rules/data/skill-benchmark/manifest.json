@@ -1,0 +1,2556 @@
+[
+  {
+    "file": "malicious/adv-001-context-poisoning-claude-md.md",
+    "label": "malicious",
+    "attack_type": "context_poisoning",
+    "source": "adversarial-handcrafted",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/adv-002-rug-pull-timebomb.md",
+    "label": "malicious",
+    "attack_type": "rug_pull",
+    "source": "adversarial-handcrafted",
+    "layer": "C"
+  },
+  {
+    "file": "malicious/adv-003-subcommand-overflow.md",
+    "label": "malicious",
+    "attack_type": "subcommand_overflow",
+    "source": "adversarial-handcrafted",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/adv-004-credential-harvest-env.md",
+    "label": "malicious",
+    "attack_type": "credential_exfiltration",
+    "source": "adversarial-handcrafted",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/adv-005-typosquat-supply-chain.md",
+    "label": "malicious",
+    "attack_type": "supply_chain",
+    "source": "adversarial-handcrafted",
+    "layer": "C"
+  },
+  {
+    "file": "malicious/adv-006-permission-escalation-fs.md",
+    "label": "malicious",
+    "attack_type": "privilege_escalation",
+    "source": "adversarial-handcrafted",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/adv-007-hidden-instruction-base64.md",
+    "label": "malicious",
+    "attack_type": "prompt_injection",
+    "source": "adversarial-handcrafted",
+    "layer": "C"
+  },
+  {
+    "file": "malicious/adv-008-reverse-shell-disguised.md",
+    "label": "malicious",
+    "attack_type": "reverse_shell",
+    "source": "adversarial-handcrafted",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/adv-009-prompt-injection-ignore.md",
+    "label": "malicious",
+    "attack_type": "prompt_injection",
+    "source": "adversarial-handcrafted",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/adv-010-data-exfil-dns.md",
+    "label": "malicious",
+    "attack_type": "data_exfiltration",
+    "source": "adversarial-handcrafted",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/adv-011-wallet-stealer.md",
+    "label": "malicious",
+    "attack_type": "credential_exfiltration",
+    "source": "adversarial-handcrafted",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/adv-012-shadow-dependency.md",
+    "label": "malicious",
+    "attack_type": "supply_chain",
+    "source": "adversarial-handcrafted",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/adv-013-ssh-key-harvest.md",
+    "label": "malicious",
+    "attack_type": "credential_exfiltration",
+    "source": "adversarial-handcrafted",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/adv-014-browser-cookie-steal.md",
+    "label": "malicious",
+    "attack_type": "credential_exfiltration",
+    "source": "adversarial-handcrafted",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/ninja-001-malware-dropper-clawhub.md",
+    "label": "malicious",
+    "attack_type": "malware_delivery",
+    "source": "aztr0nutzs-net-ninja",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/ninja-002-malware-dropper-google-qx4.md",
+    "label": "malicious",
+    "attack_type": "malware_delivery",
+    "source": "aztr0nutzs-net-ninja",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/ninja-019-malware-dropper-coding-agent-1gx.md",
+    "label": "malicious",
+    "attack_type": "malware_delivery",
+    "source": "aztr0nutzs-net-ninja",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/ninja-036-malware-dropper-security-system-zf.md",
+    "label": "malicious",
+    "attack_type": "malware_delivery",
+    "source": "aztr0nutzs-net-ninja",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/ninja-039-malware-dropper-whatsapp-mgv.md",
+    "label": "malicious",
+    "attack_type": "malware_delivery",
+    "source": "aztr0nutzs-net-ninja",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/ninja-evasive-evasive-03-prompt-subtle.md",
+    "label": "malicious",
+    "attack_type": "evasion",
+    "source": "ninja-skillguard-fixtures",
+    "layer": "C"
+  },
+  {
+    "file": "malicious/ninja-evasive-evasive-06-unicode-injection.md",
+    "label": "malicious",
+    "attack_type": "evasion",
+    "source": "ninja-skillguard-fixtures",
+    "layer": "C"
+  },
+  {
+    "file": "malicious/ninja-evasive-evasive-10-roleplay.md",
+    "label": "malicious",
+    "attack_type": "evasion",
+    "source": "ninja-skillguard-fixtures",
+    "layer": "C"
+  },
+  {
+    "file": "malicious/ninja-evasive-malicious-skill.md",
+    "label": "malicious",
+    "attack_type": "evasion",
+    "source": "ninja-skillguard-fixtures",
+    "layer": "C"
+  },
+  {
+    "file": "malicious/openclaw-001-malware-dropper-twitter.md",
+    "label": "malicious",
+    "attack_type": "malware_delivery",
+    "source": "openclaw-skills-repo",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/openclaw-002-malware-dropper-moltbook.md",
+    "label": "malicious",
+    "attack_type": "malware_delivery",
+    "source": "openclaw-skills-repo",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/openclaw-003-malware-dropper-pdf.md",
+    "label": "malicious",
+    "attack_type": "malware_delivery",
+    "source": "openclaw-skills-repo",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/snyk-001-exfiltration-curl-pastebin.md",
+    "label": "malicious",
+    "attack_type": "credential_exfiltration",
+    "source": "snyk-mcp-scan",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/snyk-002-malware-dropper-openclawcli.md",
+    "label": "malicious",
+    "attack_type": "malware_delivery",
+    "source": "snyk-mcp-scan",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/snyk-003-ascii-smuggling-injection.md",
+    "label": "malicious",
+    "attack_type": "unicode_injection",
+    "source": "snyk-mcp-scan",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/snyk-004-exfiltration-curl-pastebin-agents.md",
+    "label": "malicious",
+    "attack_type": "credential_exfiltration",
+    "source": "snyk-mcp-scan",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/snyk-005-malware-dropper-rentry.md",
+    "label": "malicious",
+    "attack_type": "malware_delivery",
+    "source": "snyk-mcp-scan",
+    "layer": "A"
+  },
+  {
+    "file": "malicious/snyk-006-malware-dropper-base64.md",
+    "label": "malicious",
+    "attack_type": "malware_delivery",
+    "source": "snyk-mcp-scan",
+    "layer": "C"
+  },
+  {
+    "file": "benign/evasive-stub-evasive-01-string-concat.md",
+    "label": "benign",
+    "source": "evasive-stubs"
+  },
+  {
+    "file": "benign/evasive-stub-evasive-02-encoded.md",
+    "label": "benign",
+    "source": "evasive-stubs"
+  },
+  {
+    "file": "benign/evasive-stub-evasive-04-timebomb.md",
+    "label": "benign",
+    "source": "evasive-stubs"
+  },
+  {
+    "file": "benign/evasive-stub-evasive-05-alias-chain.md",
+    "label": "benign",
+    "source": "evasive-stubs"
+  },
+  {
+    "file": "benign/evasive-stub-evasive-07-sandbox-detect.md",
+    "label": "benign",
+    "source": "evasive-stubs"
+  },
+  {
+    "file": "benign/evasive-stub-evasive-08-reverse-shell.md",
+    "label": "benign",
+    "source": "evasive-stubs"
+  },
+  {
+    "file": "benign/evasive-stub-evasive-09-python-pickle.md",
+    "label": "benign",
+    "source": "evasive-stubs"
+  },
+  {
+    "file": "benign/evasive-stub-evasive-11-polyglot-json.md",
+    "label": "benign",
+    "source": "evasive-stubs"
+  },
+  {
+    "file": "benign/evasive-stub-evasive-12-multi-stage.md",
+    "label": "benign",
+    "source": "evasive-stubs"
+  },
+  {
+    "file": "benign/mcp-official-002-fetch.md",
+    "label": "benign",
+    "source": "mcp-official"
+  },
+  {
+    "file": "benign/mcp-official-003-filesystem.md",
+    "label": "benign",
+    "source": "mcp-official"
+  },
+  {
+    "file": "benign/mcp-official-004-git.md",
+    "label": "benign",
+    "source": "mcp-official"
+  },
+  {
+    "file": "benign/mcp-official-007-memory.md",
+    "label": "benign",
+    "source": "mcp-official"
+  },
+  {
+    "file": "benign/mcp-official-010-sequentialthinking.md",
+    "label": "benign",
+    "source": "mcp-official"
+  },
+  {
+    "file": "benign/mcp-official-013-time.md",
+    "label": "benign",
+    "source": "mcp-official"
+  },
+  {
+    "file": "benign/mcp-official-014-everything.md",
+    "label": "benign",
+    "source": "mcp-official"
+  },
+  {
+    "file": "benign/real-aaron-he-zhu--backlink-analyzer.md",
+    "label": "benign",
+    "source": "skills-sh/aaron-he-zhu"
+  },
+  {
+    "file": "benign/real-antfu--antfu.md",
+    "label": "benign",
+    "source": "skills-sh/antfu"
+  },
+  {
+    "file": "benign/real-antfu--find-skills.md",
+    "label": "benign",
+    "source": "skills-sh/antfu"
+  },
+  {
+    "file": "benign/real-antfu--ghfs.md",
+    "label": "benign",
+    "source": "skills-sh/antfu"
+  },
+  {
+    "file": "benign/real-antfu--nuxt.md",
+    "label": "benign",
+    "source": "skills-sh/antfu"
+  },
+  {
+    "file": "benign/real-antfu--pinia.md",
+    "label": "benign",
+    "source": "skills-sh/antfu"
+  },
+  {
+    "file": "benign/real-anthropics--3-statement-model.md",
+    "label": "benign",
+    "source": "skills-sh/anthropics"
+  },
+  {
+    "file": "benign/real-anthropics--access.md",
+    "label": "benign",
+    "source": "skills-sh/anthropics"
+  },
+  {
+    "file": "benign/real-anthropics--accessibility-review.md",
+    "label": "benign",
+    "source": "skills-sh/anthropics"
+  },
+  {
+    "file": "benign/real-anthropics--account-research.md",
+    "label": "benign",
+    "source": "skills-sh/anthropics"
+  },
+  {
+    "file": "benign/real-anthropics--action-creator.md",
+    "label": "benign",
+    "source": "skills-sh/anthropics"
+  },
+  {
+    "file": "benign/real-apify--apify-actor-development.md",
+    "label": "benign",
+    "source": "skills-sh/apify"
+  },
+  {
+    "file": "benign/real-apify--apify-actorization.md",
+    "label": "benign",
+    "source": "skills-sh/apify"
+  },
+  {
+    "file": "benign/real-apify--apify-audience-analysis.md",
+    "label": "benign",
+    "source": "skills-sh/apify"
+  },
+  {
+    "file": "benign/real-apify--apify-brand-reputation-monitoring.md",
+    "label": "benign",
+    "source": "skills-sh/apify"
+  },
+  {
+    "file": "benign/real-apify--apify-competitor-intelligence.md",
+    "label": "benign",
+    "source": "skills-sh/apify"
+  },
+  {
+    "file": "benign/real-apollographql--apollo-client.md",
+    "label": "benign",
+    "source": "skills-sh/apollographql"
+  },
+  {
+    "file": "benign/real-apollographql--apollo-connectors.md",
+    "label": "benign",
+    "source": "skills-sh/apollographql"
+  },
+  {
+    "file": "benign/real-apollographql--apollo-federation.md",
+    "label": "benign",
+    "source": "skills-sh/apollographql"
+  },
+  {
+    "file": "benign/real-apollographql--apollo-kotlin.md",
+    "label": "benign",
+    "source": "skills-sh/apollographql"
+  },
+  {
+    "file": "benign/real-apollographql--apollo-mcp-server.md",
+    "label": "benign",
+    "source": "skills-sh/apollographql"
+  },
+  {
+    "file": "benign/real-astronomer--airflow-hitl.md",
+    "label": "benign",
+    "source": "skills-sh/astronomer"
+  },
+  {
+    "file": "benign/real-astronomer--airflow-plugins.md",
+    "label": "benign",
+    "source": "skills-sh/astronomer"
+  },
+  {
+    "file": "benign/real-astronomer--airflow.md",
+    "label": "benign",
+    "source": "skills-sh/astronomer"
+  },
+  {
+    "file": "benign/real-astronomer--analyzing-data.md",
+    "label": "benign",
+    "source": "skills-sh/astronomer"
+  },
+  {
+    "file": "benign/real-astronomer--annotating-task-lineage.md",
+    "label": "benign",
+    "source": "skills-sh/astronomer"
+  },
+  {
+    "file": "benign/real-auth0--auth0-angular.md",
+    "label": "benign",
+    "source": "skills-sh/auth0"
+  },
+  {
+    "file": "benign/real-auth0--auth0-aspnetcore-api.md",
+    "label": "benign",
+    "source": "skills-sh/auth0"
+  },
+  {
+    "file": "benign/real-auth0--auth0-express.md",
+    "label": "benign",
+    "source": "skills-sh/auth0"
+  },
+  {
+    "file": "benign/real-auth0--auth0-fastify-api.md",
+    "label": "benign",
+    "source": "skills-sh/auth0"
+  },
+  {
+    "file": "benign/real-auth0--auth0-fastify.md",
+    "label": "benign",
+    "source": "skills-sh/auth0"
+  },
+  {
+    "file": "benign/real-automattic--studio-cli.md",
+    "label": "benign",
+    "source": "skills-sh/automattic"
+  },
+  {
+    "file": "benign/real-automattic--wordpress-router.md",
+    "label": "benign",
+    "source": "skills-sh/automattic"
+  },
+  {
+    "file": "benign/real-automattic--wp-abilities-api.md",
+    "label": "benign",
+    "source": "skills-sh/automattic"
+  },
+  {
+    "file": "benign/real-automattic--wp-block-development.md",
+    "label": "benign",
+    "source": "skills-sh/automattic"
+  },
+  {
+    "file": "benign/real-automattic--wp-block-themes.md",
+    "label": "benign",
+    "source": "skills-sh/automattic"
+  },
+  {
+    "file": "benign/real-avdlee--core-data-expert.md",
+    "label": "benign",
+    "source": "skills-sh/avdlee"
+  },
+  {
+    "file": "benign/real-avdlee--spm-build-analysis.md",
+    "label": "benign",
+    "source": "skills-sh/avdlee"
+  },
+  {
+    "file": "benign/real-avdlee--swift-concurrency.md",
+    "label": "benign",
+    "source": "skills-sh/avdlee"
+  },
+  {
+    "file": "benign/real-avdlee--swift-testing-expert.md",
+    "label": "benign",
+    "source": "skills-sh/avdlee"
+  },
+  {
+    "file": "benign/real-avdlee--swiftui-expert-skill.md",
+    "label": "benign",
+    "source": "skills-sh/avdlee"
+  },
+  {
+    "file": "benign/real-axiomhq--axiom-sre.md",
+    "label": "benign",
+    "source": "skills-sh/axiomhq"
+  },
+  {
+    "file": "benign/real-axiomhq--building-dashboards.md",
+    "label": "benign",
+    "source": "skills-sh/axiomhq"
+  },
+  {
+    "file": "benign/real-axiomhq--controlling-costs.md",
+    "label": "benign",
+    "source": "skills-sh/axiomhq"
+  },
+  {
+    "file": "benign/real-axiomhq--query-metrics.md",
+    "label": "benign",
+    "source": "skills-sh/axiomhq"
+  },
+  {
+    "file": "benign/real-axiomhq--spl-to-apl.md",
+    "label": "benign",
+    "source": "skills-sh/axiomhq"
+  },
+  {
+    "file": "benign/real-base--adding-builder-codes.md",
+    "label": "benign",
+    "source": "skills-sh/base"
+  },
+  {
+    "file": "benign/real-base--building-with-base-account.md",
+    "label": "benign",
+    "source": "skills-sh/base"
+  },
+  {
+    "file": "benign/real-base--connecting-to-base-network.md",
+    "label": "benign",
+    "source": "skills-sh/base"
+  },
+  {
+    "file": "benign/real-base--convert-farcaster-miniapp-to-app.md",
+    "label": "benign",
+    "source": "skills-sh/base"
+  },
+  {
+    "file": "benign/real-base--converting-minikit-to-farcaster.md",
+    "label": "benign",
+    "source": "skills-sh/base"
+  },
+  {
+    "file": "benign/real-better-auth--better-auth-best-practices.md",
+    "label": "benign",
+    "source": "skills-sh/better-auth"
+  },
+  {
+    "file": "benign/real-better-auth--create-auth-skill.md",
+    "label": "benign",
+    "source": "skills-sh/better-auth"
+  },
+  {
+    "file": "benign/real-better-auth--email-and-password-best-practices.md",
+    "label": "benign",
+    "source": "skills-sh/better-auth"
+  },
+  {
+    "file": "benign/real-better-auth--organization-best-practices.md",
+    "label": "benign",
+    "source": "skills-sh/better-auth"
+  },
+  {
+    "file": "benign/real-better-auth--two-factor-authentication-best-practices.md",
+    "label": "benign",
+    "source": "skills-sh/better-auth"
+  },
+  {
+    "file": "benign/real-bitwarden--analyzing-code-security.md",
+    "label": "benign",
+    "source": "skills-sh/bitwarden"
+  },
+  {
+    "file": "benign/real-bitwarden--analyzing-git-sessions.md",
+    "label": "benign",
+    "source": "skills-sh/bitwarden"
+  },
+  {
+    "file": "benign/real-bitwarden--atlassian-reader.md",
+    "label": "benign",
+    "source": "skills-sh/bitwarden"
+  },
+  {
+    "file": "benign/real-bitwarden--avoiding-false-positives.md",
+    "label": "benign",
+    "source": "skills-sh/bitwarden"
+  },
+  {
+    "file": "benign/real-bitwarden--bitwarden-security-context.md",
+    "label": "benign",
+    "source": "skills-sh/bitwarden"
+  },
+  {
+    "file": "benign/real-box--box.md",
+    "label": "benign",
+    "source": "skills-sh/box"
+  },
+  {
+    "file": "benign/real-brave--answers.md",
+    "label": "benign",
+    "source": "skills-sh/brave"
+  },
+  {
+    "file": "benign/real-brave--images-search.md",
+    "label": "benign",
+    "source": "skills-sh/brave"
+  },
+  {
+    "file": "benign/real-brave--llm-context.md",
+    "label": "benign",
+    "source": "skills-sh/brave"
+  },
+  {
+    "file": "benign/real-brave--local-descriptions.md",
+    "label": "benign",
+    "source": "skills-sh/brave"
+  },
+  {
+    "file": "benign/real-brave--local-pois.md",
+    "label": "benign",
+    "source": "skills-sh/brave"
+  },
+  {
+    "file": "benign/real-browser-use--browser-use.md",
+    "label": "benign",
+    "source": "skills-sh/browser-use"
+  },
+  {
+    "file": "benign/real-browser-use--cloud.md",
+    "label": "benign",
+    "source": "skills-sh/browser-use"
+  },
+  {
+    "file": "benign/real-browser-use--open-source.md",
+    "label": "benign",
+    "source": "skills-sh/browser-use"
+  },
+  {
+    "file": "benign/real-browser-use--remote-browser.md",
+    "label": "benign",
+    "source": "skills-sh/browser-use"
+  },
+  {
+    "file": "benign/real-browserbase--browser.md",
+    "label": "benign",
+    "source": "skills-sh/browserbase"
+  },
+  {
+    "file": "benign/real-browserbase--browserbase-cli.md",
+    "label": "benign",
+    "source": "skills-sh/browserbase"
+  },
+  {
+    "file": "benign/real-browserbase--cookie-sync.md",
+    "label": "benign",
+    "source": "skills-sh/browserbase"
+  },
+  {
+    "file": "benign/real-browserbase--fetch.md",
+    "label": "benign",
+    "source": "skills-sh/browserbase"
+  },
+  {
+    "file": "benign/real-browserbase--functions.md",
+    "label": "benign",
+    "source": "skills-sh/browserbase"
+  },
+  {
+    "file": "benign/real-callstackincubator--agent-device.md",
+    "label": "benign",
+    "source": "skills-sh/callstackincubator"
+  },
+  {
+    "file": "benign/real-callstackincubator--cordierite.md",
+    "label": "benign",
+    "source": "skills-sh/callstackincubator"
+  },
+  {
+    "file": "benign/real-callstackincubator--dogfood.md",
+    "label": "benign",
+    "source": "skills-sh/callstackincubator"
+  },
+  {
+    "file": "benign/real-callstackincubator--github-actions.md",
+    "label": "benign",
+    "source": "skills-sh/callstackincubator"
+  },
+  {
+    "file": "benign/real-callstackincubator--github.md",
+    "label": "benign",
+    "source": "skills-sh/callstackincubator"
+  },
+  {
+    "file": "benign/real-charon-fan--api-designer.md",
+    "label": "benign",
+    "source": "skills-sh/charon-fan"
+  },
+  {
+    "file": "benign/real-charon-fan--api-documenter.md",
+    "label": "benign",
+    "source": "skills-sh/charon-fan"
+  },
+  {
+    "file": "benign/real-charon-fan--architecting-solutions.md",
+    "label": "benign",
+    "source": "skills-sh/charon-fan"
+  },
+  {
+    "file": "benign/real-charon-fan--auto-trigger.md",
+    "label": "benign",
+    "source": "skills-sh/charon-fan"
+  },
+  {
+    "file": "benign/real-charon-fan--code-reviewer.md",
+    "label": "benign",
+    "source": "skills-sh/charon-fan"
+  },
+  {
+    "file": "benign/real-clerk--clerk.md",
+    "label": "benign",
+    "source": "skills-sh/clerk"
+  },
+  {
+    "file": "benign/real-clickhouse--clickhouse-best-practices.md",
+    "label": "benign",
+    "source": "skills-sh/clickhouse"
+  },
+  {
+    "file": "benign/real-cloudflare--agents-sdk.md",
+    "label": "benign",
+    "source": "skills-sh/cloudflare"
+  },
+  {
+    "file": "benign/real-cloudflare--building-ai-agent-on-cloudflare.md",
+    "label": "benign",
+    "source": "skills-sh/cloudflare"
+  },
+  {
+    "file": "benign/real-cloudflare--building-mcp-server-on-cloudflare.md",
+    "label": "benign",
+    "source": "skills-sh/cloudflare"
+  },
+  {
+    "file": "benign/real-cloudflare--cloudflare-browser.md",
+    "label": "benign",
+    "source": "skills-sh/cloudflare"
+  },
+  {
+    "file": "benign/real-cloudflare--cloudflare.md",
+    "label": "benign",
+    "source": "skills-sh/cloudflare"
+  },
+  {
+    "file": "benign/real-coderabbitai--autofix.md",
+    "label": "benign",
+    "source": "skills-sh/coderabbitai"
+  },
+  {
+    "file": "benign/real-coderabbitai--code-review.md",
+    "label": "benign",
+    "source": "skills-sh/coderabbitai"
+  },
+  {
+    "file": "benign/real-coinbase--authenticate-wallet.md",
+    "label": "benign",
+    "source": "skills-sh/coinbase"
+  },
+  {
+    "file": "benign/real-coinbase--fund.md",
+    "label": "benign",
+    "source": "skills-sh/coinbase"
+  },
+  {
+    "file": "benign/real-coinbase--monetize-service.md",
+    "label": "benign",
+    "source": "skills-sh/coinbase"
+  },
+  {
+    "file": "benign/real-coinbase--pay-for-service.md",
+    "label": "benign",
+    "source": "skills-sh/coinbase"
+  },
+  {
+    "file": "benign/real-coinbase--query-onchain-data.md",
+    "label": "benign",
+    "source": "skills-sh/coinbase"
+  },
+  {
+    "file": "benign/real-coreyhaines31--ab-test-setup.md",
+    "label": "benign",
+    "source": "skills-sh/coreyhaines31"
+  },
+  {
+    "file": "benign/real-coreyhaines31--ad-creative.md",
+    "label": "benign",
+    "source": "skills-sh/coreyhaines31"
+  },
+  {
+    "file": "benign/real-coreyhaines31--ai-seo.md",
+    "label": "benign",
+    "source": "skills-sh/coreyhaines31"
+  },
+  {
+    "file": "benign/real-coreyhaines31--analytics-tracking.md",
+    "label": "benign",
+    "source": "skills-sh/coreyhaines31"
+  },
+  {
+    "file": "benign/real-coreyhaines31--churn-prevention.md",
+    "label": "benign",
+    "source": "skills-sh/coreyhaines31"
+  },
+  {
+    "file": "benign/real-dagster-io--fake-driven-testing.md",
+    "label": "benign",
+    "source": "skills-sh/dagster-io"
+  },
+  {
+    "file": "benign/real-dagster-io--fdt-refactor-mock-to-fake.md",
+    "label": "benign",
+    "source": "skills-sh/dagster-io"
+  },
+  {
+    "file": "benign/real-dammyjay93--interface-design.md",
+    "label": "benign",
+    "source": "skills-sh/dammyjay93"
+  },
+  {
+    "file": "benign/real-datadog-labs--dd-apm.md",
+    "label": "benign",
+    "source": "skills-sh/datadog-labs"
+  },
+  {
+    "file": "benign/real-datadog-labs--dd-docs.md",
+    "label": "benign",
+    "source": "skills-sh/datadog-labs"
+  },
+  {
+    "file": "benign/real-datadog-labs--dd-file-issue.md",
+    "label": "benign",
+    "source": "skills-sh/datadog-labs"
+  },
+  {
+    "file": "benign/real-datadog-labs--dd-logs.md",
+    "label": "benign",
+    "source": "skills-sh/datadog-labs"
+  },
+  {
+    "file": "benign/real-datadog-labs--dd-monitors.md",
+    "label": "benign",
+    "source": "skills-sh/datadog-labs"
+  },
+  {
+    "file": "benign/real-denoland--deno-deploy.md",
+    "label": "benign",
+    "source": "skills-sh/denoland"
+  },
+  {
+    "file": "benign/real-denoland--deno-expert.md",
+    "label": "benign",
+    "source": "skills-sh/denoland"
+  },
+  {
+    "file": "benign/real-denoland--deno-frontend.md",
+    "label": "benign",
+    "source": "skills-sh/denoland"
+  },
+  {
+    "file": "benign/real-denoland--deno-guidance.md",
+    "label": "benign",
+    "source": "skills-sh/denoland"
+  },
+  {
+    "file": "benign/real-denoland--deno-project-templates.md",
+    "label": "benign",
+    "source": "skills-sh/denoland"
+  },
+  {
+    "file": "benign/real-elevenlabs--agents.md",
+    "label": "benign",
+    "source": "skills-sh/elevenlabs"
+  },
+  {
+    "file": "benign/real-elevenlabs--elevenlabs-sdk-migration.md",
+    "label": "benign",
+    "source": "skills-sh/elevenlabs"
+  },
+  {
+    "file": "benign/real-elevenlabs--music.md",
+    "label": "benign",
+    "source": "skills-sh/elevenlabs"
+  },
+  {
+    "file": "benign/real-elevenlabs--setup-api-key.md",
+    "label": "benign",
+    "source": "skills-sh/elevenlabs"
+  },
+  {
+    "file": "benign/real-elevenlabs--sound-effects.md",
+    "label": "benign",
+    "source": "skills-sh/elevenlabs"
+  },
+  {
+    "file": "benign/real-exploreomni--omni-admin.md",
+    "label": "benign",
+    "source": "skills-sh/exploreomni"
+  },
+  {
+    "file": "benign/real-exploreomni--omni-ai-optimizer.md",
+    "label": "benign",
+    "source": "skills-sh/exploreomni"
+  },
+  {
+    "file": "benign/real-exploreomni--omni-content-builder.md",
+    "label": "benign",
+    "source": "skills-sh/exploreomni"
+  },
+  {
+    "file": "benign/real-exploreomni--omni-content-explorer.md",
+    "label": "benign",
+    "source": "skills-sh/exploreomni"
+  },
+  {
+    "file": "benign/real-exploreomni--omni-embed.md",
+    "label": "benign",
+    "source": "skills-sh/exploreomni"
+  },
+  {
+    "file": "benign/real-expo--building-native-ui.md",
+    "label": "benign",
+    "source": "skills-sh/expo"
+  },
+  {
+    "file": "benign/real-expo--expo-api-routes.md",
+    "label": "benign",
+    "source": "skills-sh/expo"
+  },
+  {
+    "file": "benign/real-expo--expo-cicd-workflows.md",
+    "label": "benign",
+    "source": "skills-sh/expo"
+  },
+  {
+    "file": "benign/real-expo--expo-deployment.md",
+    "label": "benign",
+    "source": "skills-sh/expo"
+  },
+  {
+    "file": "benign/real-expo--expo-dev-client.md",
+    "label": "benign",
+    "source": "skills-sh/expo"
+  },
+  {
+    "file": "benign/real-figma--figma-code-connect.md",
+    "label": "benign",
+    "source": "skills-sh/figma"
+  },
+  {
+    "file": "benign/real-figma--figma-create-design-system-rules.md",
+    "label": "benign",
+    "source": "skills-sh/figma"
+  },
+  {
+    "file": "benign/real-figma--figma-create-new-file.md",
+    "label": "benign",
+    "source": "skills-sh/figma"
+  },
+  {
+    "file": "benign/real-figma--figma-generate-design.md",
+    "label": "benign",
+    "source": "skills-sh/figma"
+  },
+  {
+    "file": "benign/real-figma--figma-generate-library.md",
+    "label": "benign",
+    "source": "skills-sh/figma"
+  },
+  {
+    "file": "benign/real-firebase--developing-genkit-dart.md",
+    "label": "benign",
+    "source": "skills-sh/firebase"
+  },
+  {
+    "file": "benign/real-firebase--developing-genkit-js.md",
+    "label": "benign",
+    "source": "skills-sh/firebase"
+  },
+  {
+    "file": "benign/real-firebase--developing-genkit-tooling.md",
+    "label": "benign",
+    "source": "skills-sh/firebase"
+  },
+  {
+    "file": "benign/real-firebase--firebase-app-hosting-basics.md",
+    "label": "benign",
+    "source": "skills-sh/firebase"
+  },
+  {
+    "file": "benign/real-firebase--firebase-auth-basics.md",
+    "label": "benign",
+    "source": "skills-sh/firebase"
+  },
+  {
+    "file": "benign/real-firecrawl--firecrawl-agent.md",
+    "label": "benign",
+    "source": "skills-sh/firecrawl"
+  },
+  {
+    "file": "benign/real-firecrawl--firecrawl-crawl.md",
+    "label": "benign",
+    "source": "skills-sh/firecrawl"
+  },
+  {
+    "file": "benign/real-firecrawl--firecrawl-download.md",
+    "label": "benign",
+    "source": "skills-sh/firecrawl"
+  },
+  {
+    "file": "benign/real-firecrawl--firecrawl-instruct.md",
+    "label": "benign",
+    "source": "skills-sh/firecrawl"
+  },
+  {
+    "file": "benign/real-firecrawl--firecrawl-map.md",
+    "label": "benign",
+    "source": "skills-sh/firecrawl"
+  },
+  {
+    "file": "benign/real-flutter--flutter-adding-home-screen-widgets.md",
+    "label": "benign",
+    "source": "skills-sh/flutter"
+  },
+  {
+    "file": "benign/real-flutter--flutter-animating-apps.md",
+    "label": "benign",
+    "source": "skills-sh/flutter"
+  },
+  {
+    "file": "benign/real-flutter--flutter-architecting-apps.md",
+    "label": "benign",
+    "source": "skills-sh/flutter"
+  },
+  {
+    "file": "benign/real-flutter--flutter-building-forms.md",
+    "label": "benign",
+    "source": "skills-sh/flutter"
+  },
+  {
+    "file": "benign/real-flutter--flutter-building-layouts.md",
+    "label": "benign",
+    "source": "skills-sh/flutter"
+  },
+  {
+    "file": "benign/real-franalgaba--grimoire-aave.md",
+    "label": "benign",
+    "source": "skills-sh/franalgaba"
+  },
+  {
+    "file": "benign/real-franalgaba--grimoire-across.md",
+    "label": "benign",
+    "source": "skills-sh/franalgaba"
+  },
+  {
+    "file": "benign/real-franalgaba--grimoire-hyperliquid.md",
+    "label": "benign",
+    "source": "skills-sh/franalgaba"
+  },
+  {
+    "file": "benign/real-franalgaba--grimoire-morpho-blue.md",
+    "label": "benign",
+    "source": "skills-sh/franalgaba"
+  },
+  {
+    "file": "benign/real-franalgaba--grimoire-pendle.md",
+    "label": "benign",
+    "source": "skills-sh/franalgaba"
+  },
+  {
+    "file": "benign/real-get-convex--auth-setup.md",
+    "label": "benign",
+    "source": "skills-sh/get-convex"
+  },
+  {
+    "file": "benign/real-get-convex--components-guide.md",
+    "label": "benign",
+    "source": "skills-sh/get-convex"
+  },
+  {
+    "file": "benign/real-get-convex--convex-create-component.md",
+    "label": "benign",
+    "source": "skills-sh/get-convex"
+  },
+  {
+    "file": "benign/real-get-convex--convex-helpers-guide.md",
+    "label": "benign",
+    "source": "skills-sh/get-convex"
+  },
+  {
+    "file": "benign/real-get-convex--convex-migration-helper.md",
+    "label": "benign",
+    "source": "skills-sh/get-convex"
+  },
+  {
+    "file": "benign/real-getsentry--dotagents.md",
+    "label": "benign",
+    "source": "skills-sh/getsentry"
+  },
+  {
+    "file": "benign/real-getsentry--sentry-android-sdk.md",
+    "label": "benign",
+    "source": "skills-sh/getsentry"
+  },
+  {
+    "file": "benign/real-getsentry--sentry-browser-sdk.md",
+    "label": "benign",
+    "source": "skills-sh/getsentry"
+  },
+  {
+    "file": "benign/real-getsentry--sentry-cloudflare-sdk.md",
+    "label": "benign",
+    "source": "skills-sh/getsentry"
+  },
+  {
+    "file": "benign/real-getsentry--sentry-cocoa-sdk.md",
+    "label": "benign",
+    "source": "skills-sh/getsentry"
+  },
+  {
+    "file": "benign/real-github--add-educational-comments.md",
+    "label": "benign",
+    "source": "skills-sh/github"
+  },
+  {
+    "file": "benign/real-github--agent-governance.md",
+    "label": "benign",
+    "source": "skills-sh/github"
+  },
+  {
+    "file": "benign/real-github--agentic-eval.md",
+    "label": "benign",
+    "source": "skills-sh/github"
+  },
+  {
+    "file": "benign/real-github--ai-prompt-engineering-safety-review.md",
+    "label": "benign",
+    "source": "skills-sh/github"
+  },
+  {
+    "file": "benign/real-github--appinsights-instrumentation.md",
+    "label": "benign",
+    "source": "skills-sh/github"
+  },
+  {
+    "file": "benign/real-giuseppe-trisciuoglio--shadcn-ui.md",
+    "label": "benign",
+    "source": "skills-sh/giuseppe-trisciuoglio"
+  },
+  {
+    "file": "benign/real-google-gemini--gemini-api-dev.md",
+    "label": "benign",
+    "source": "skills-sh/google-gemini"
+  },
+  {
+    "file": "benign/real-google-gemini--gemini-interactions-api.md",
+    "label": "benign",
+    "source": "skills-sh/google-gemini"
+  },
+  {
+    "file": "benign/real-google-gemini--gemini-live-api-dev.md",
+    "label": "benign",
+    "source": "skills-sh/google-gemini"
+  },
+  {
+    "file": "benign/real-google-gemini--vertex-ai-api-dev.md",
+    "label": "benign",
+    "source": "skills-sh/google-gemini"
+  },
+  {
+    "file": "benign/real-google-labs-code--automate-github-issues.md",
+    "label": "benign",
+    "source": "skills-sh/google-labs-code"
+  },
+  {
+    "file": "benign/real-google-labs-code--design-md.md",
+    "label": "benign",
+    "source": "skills-sh/google-labs-code"
+  },
+  {
+    "file": "benign/real-google-labs-code--enhance-prompt.md",
+    "label": "benign",
+    "source": "skills-sh/google-labs-code"
+  },
+  {
+    "file": "benign/real-google-labs-code--local-action-verification.md",
+    "label": "benign",
+    "source": "skills-sh/google-labs-code"
+  },
+  {
+    "file": "benign/real-google-labs-code--remotion.md",
+    "label": "benign",
+    "source": "skills-sh/google-labs-code"
+  },
+  {
+    "file": "benign/real-googleworkspace--gws-admin-reports.md",
+    "label": "benign",
+    "source": "skills-sh/googleworkspace"
+  },
+  {
+    "file": "benign/real-googleworkspace--gws-calendar-agenda.md",
+    "label": "benign",
+    "source": "skills-sh/googleworkspace"
+  },
+  {
+    "file": "benign/real-googleworkspace--gws-calendar-insert.md",
+    "label": "benign",
+    "source": "skills-sh/googleworkspace"
+  },
+  {
+    "file": "benign/real-googleworkspace--gws-calendar.md",
+    "label": "benign",
+    "source": "skills-sh/googleworkspace"
+  },
+  {
+    "file": "benign/real-googleworkspace--gws-chat-send.md",
+    "label": "benign",
+    "source": "skills-sh/googleworkspace"
+  },
+  {
+    "file": "benign/real-gracefullight--stock-analysis.md",
+    "label": "benign",
+    "source": "skills-sh/gracefullight"
+  },
+  {
+    "file": "benign/real-hexiaochun--copilotkit.md",
+    "label": "benign",
+    "source": "skills-sh/hexiaochun"
+  },
+  {
+    "file": "benign/real-huggingface--cuda-kernels.md",
+    "label": "benign",
+    "source": "skills-sh/huggingface"
+  },
+  {
+    "file": "benign/real-huggingface--hf-cli.md",
+    "label": "benign",
+    "source": "skills-sh/huggingface"
+  },
+  {
+    "file": "benign/real-huggingface--huggingface-community-evals.md",
+    "label": "benign",
+    "source": "skills-sh/huggingface"
+  },
+  {
+    "file": "benign/real-huggingface--huggingface-datasets.md",
+    "label": "benign",
+    "source": "skills-sh/huggingface"
+  },
+  {
+    "file": "benign/real-huggingface--huggingface-gradio.md",
+    "label": "benign",
+    "source": "skills-sh/huggingface"
+  },
+  {
+    "file": "benign/real-hyf0--code.md",
+    "label": "benign",
+    "source": "skills-sh/hyf0"
+  },
+  {
+    "file": "benign/real-hyf0--create-adaptable-composable.md",
+    "label": "benign",
+    "source": "skills-sh/hyf0"
+  },
+  {
+    "file": "benign/real-hyf0--create-skill.md",
+    "label": "benign",
+    "source": "skills-sh/hyf0"
+  },
+  {
+    "file": "benign/real-hyf0--dev-announce.md",
+    "label": "benign",
+    "source": "skills-sh/hyf0"
+  },
+  {
+    "file": "benign/real-hyf0--optimize-skill.md",
+    "label": "benign",
+    "source": "skills-sh/hyf0"
+  },
+  {
+    "file": "benign/real-inferen-sh--agent-browser.md",
+    "label": "benign",
+    "source": "skills-sh/inferen-sh"
+  },
+  {
+    "file": "benign/real-inferen-sh--agent-tools.md",
+    "label": "benign",
+    "source": "skills-sh/inferen-sh"
+  },
+  {
+    "file": "benign/real-inferen-sh--agent-ui.md",
+    "label": "benign",
+    "source": "skills-sh/inferen-sh"
+  },
+  {
+    "file": "benign/real-inferen-sh--ai-automation-workflows.md",
+    "label": "benign",
+    "source": "skills-sh/inferen-sh"
+  },
+  {
+    "file": "benign/real-inferen-sh--ai-image-generation.md",
+    "label": "benign",
+    "source": "skills-sh/inferen-sh"
+  },
+  {
+    "file": "benign/real-jimliu--baoyu-article-illustrator.md",
+    "label": "benign",
+    "source": "skills-sh/jimliu"
+  },
+  {
+    "file": "benign/real-jimliu--baoyu-comic.md",
+    "label": "benign",
+    "source": "skills-sh/jimliu"
+  },
+  {
+    "file": "benign/real-jimliu--baoyu-compress-image.md",
+    "label": "benign",
+    "source": "skills-sh/jimliu"
+  },
+  {
+    "file": "benign/real-jimliu--baoyu-cover-image.md",
+    "label": "benign",
+    "source": "skills-sh/jimliu"
+  },
+  {
+    "file": "benign/real-jimliu--baoyu-danger-gemini-web.md",
+    "label": "benign",
+    "source": "skills-sh/jimliu"
+  },
+  {
+    "file": "benign/real-kadajett--blecsd-3d.md",
+    "label": "benign",
+    "source": "skills-sh/kadajett"
+  },
+  {
+    "file": "benign/real-kadajett--blecsd-ai.md",
+    "label": "benign",
+    "source": "skills-sh/kadajett"
+  },
+  {
+    "file": "benign/real-kadajett--blecsd-audio.md",
+    "label": "benign",
+    "source": "skills-sh/kadajett"
+  },
+  {
+    "file": "benign/real-kadajett--blecsd-game.md",
+    "label": "benign",
+    "source": "skills-sh/kadajett"
+  },
+  {
+    "file": "benign/real-kadajett--blecsd-media.md",
+    "label": "benign",
+    "source": "skills-sh/kadajett"
+  },
+  {
+    "file": "benign/real-kepano--defuddle.md",
+    "label": "benign",
+    "source": "skills-sh/kepano"
+  },
+  {
+    "file": "benign/real-kepano--json-canvas.md",
+    "label": "benign",
+    "source": "skills-sh/kepano"
+  },
+  {
+    "file": "benign/real-kepano--obsidian-bases.md",
+    "label": "benign",
+    "source": "skills-sh/kepano"
+  },
+  {
+    "file": "benign/real-kepano--obsidian-cli.md",
+    "label": "benign",
+    "source": "skills-sh/kepano"
+  },
+  {
+    "file": "benign/real-kepano--obsidian-markdown.md",
+    "label": "benign",
+    "source": "skills-sh/kepano"
+  },
+  {
+    "file": "benign/real-kotlin--kotlin-backend-jpa-entity-mapping.md",
+    "label": "benign",
+    "source": "skills-sh/kotlin"
+  },
+  {
+    "file": "benign/real-kotlin--kotlin-tooling-agp9-migration.md",
+    "label": "benign",
+    "source": "skills-sh/kotlin"
+  },
+  {
+    "file": "benign/real-kotlin--kotlin-tooling-cocoapods-spm-migration.md",
+    "label": "benign",
+    "source": "skills-sh/kotlin"
+  },
+  {
+    "file": "benign/real-kotlin--kotlin-tooling-java-to-kotlin.md",
+    "label": "benign",
+    "source": "skills-sh/kotlin"
+  },
+  {
+    "file": "benign/real-langchain-ai--langsmith-code-eval.md",
+    "label": "benign",
+    "source": "skills-sh/langchain-ai"
+  },
+  {
+    "file": "benign/real-langchain-ai--langsmith-fetch.md",
+    "label": "benign",
+    "source": "skills-sh/langchain-ai"
+  },
+  {
+    "file": "benign/real-langfuse--langfuse.md",
+    "label": "benign",
+    "source": "skills-sh/langfuse"
+  },
+  {
+    "file": "benign/real-larksuite--feishu-bitable.md",
+    "label": "benign",
+    "source": "skills-sh/larksuite"
+  },
+  {
+    "file": "benign/real-larksuite--feishu-calendar.md",
+    "label": "benign",
+    "source": "skills-sh/larksuite"
+  },
+  {
+    "file": "benign/real-larksuite--feishu-channel-rules.md",
+    "label": "benign",
+    "source": "skills-sh/larksuite"
+  },
+  {
+    "file": "benign/real-larksuite--feishu-create-doc.md",
+    "label": "benign",
+    "source": "skills-sh/larksuite"
+  },
+  {
+    "file": "benign/real-larksuite--feishu-fetch-doc.md",
+    "label": "benign",
+    "source": "skills-sh/larksuite"
+  },
+  {
+    "file": "benign/real-livekit--livekit-agents.md",
+    "label": "benign",
+    "source": "skills-sh/livekit"
+  },
+  {
+    "file": "benign/real-madteacher--agents-md-generator.md",
+    "label": "benign",
+    "source": "skills-sh/madteacher"
+  },
+  {
+    "file": "benign/real-madteacher--dart-drift.md",
+    "label": "benign",
+    "source": "skills-sh/madteacher"
+  },
+  {
+    "file": "benign/real-madteacher--flutter-adaptive-ui.md",
+    "label": "benign",
+    "source": "skills-sh/madteacher"
+  },
+  {
+    "file": "benign/real-madteacher--flutter-animations.md",
+    "label": "benign",
+    "source": "skills-sh/madteacher"
+  },
+  {
+    "file": "benign/real-madteacher--flutter-architecture.md",
+    "label": "benign",
+    "source": "skills-sh/madteacher"
+  },
+  {
+    "file": "benign/real-makenotion--create-database-row.md",
+    "label": "benign",
+    "source": "skills-sh/makenotion"
+  },
+  {
+    "file": "benign/real-makenotion--create-page.md",
+    "label": "benign",
+    "source": "skills-sh/makenotion"
+  },
+  {
+    "file": "benign/real-makenotion--create-task.md",
+    "label": "benign",
+    "source": "skills-sh/makenotion"
+  },
+  {
+    "file": "benign/real-makenotion--database-query.md",
+    "label": "benign",
+    "source": "skills-sh/makenotion"
+  },
+  {
+    "file": "benign/real-makenotion--find.md",
+    "label": "benign",
+    "source": "skills-sh/makenotion"
+  },
+  {
+    "file": "benign/real-mapbox--mapbox-android-patterns.md",
+    "label": "benign",
+    "source": "skills-sh/mapbox"
+  },
+  {
+    "file": "benign/real-mapbox--mapbox-cartography.md",
+    "label": "benign",
+    "source": "skills-sh/mapbox"
+  },
+  {
+    "file": "benign/real-mapbox--mapbox-data-visualization-patterns.md",
+    "label": "benign",
+    "source": "skills-sh/mapbox"
+  },
+  {
+    "file": "benign/real-mapbox--mapbox-geospatial-operations.md",
+    "label": "benign",
+    "source": "skills-sh/mapbox"
+  },
+  {
+    "file": "benign/real-mapbox--mapbox-google-maps-migration.md",
+    "label": "benign",
+    "source": "skills-sh/mapbox"
+  },
+  {
+    "file": "benign/real-mastra-ai--mastra.md",
+    "label": "benign",
+    "source": "skills-sh/mastra-ai"
+  },
+  {
+    "file": "benign/real-mattpocock--design-an-interface.md",
+    "label": "benign",
+    "source": "skills-sh/mattpocock"
+  },
+  {
+    "file": "benign/real-mattpocock--edit-article.md",
+    "label": "benign",
+    "source": "skills-sh/mattpocock"
+  },
+  {
+    "file": "benign/real-mattpocock--git-guardrails-claude-code.md",
+    "label": "benign",
+    "source": "skills-sh/mattpocock"
+  },
+  {
+    "file": "benign/real-mattpocock--github-triage.md",
+    "label": "benign",
+    "source": "skills-sh/mattpocock"
+  },
+  {
+    "file": "benign/real-mattpocock--grill-me.md",
+    "label": "benign",
+    "source": "skills-sh/mattpocock"
+  },
+  {
+    "file": "benign/real-mcp-use--chatgpt-app-builder.md",
+    "label": "benign",
+    "source": "skills-sh/mcp-use"
+  },
+  {
+    "file": "benign/real-mcp-use--mcp-apps-builder.md",
+    "label": "benign",
+    "source": "skills-sh/mcp-use"
+  },
+  {
+    "file": "benign/real-mcp-use--mcp-builder.md",
+    "label": "benign",
+    "source": "skills-sh/mcp-use"
+  },
+  {
+    "file": "benign/real-microsoft--analyze-test-run.md",
+    "label": "benign",
+    "source": "skills-sh/microsoft"
+  },
+  {
+    "file": "benign/real-microsoft--appinsights-instrumentation.md",
+    "label": "benign",
+    "source": "skills-sh/microsoft"
+  },
+  {
+    "file": "benign/real-microsoft--azure-ai.md",
+    "label": "benign",
+    "source": "skills-sh/microsoft"
+  },
+  {
+    "file": "benign/real-microsoft--azure-aigateway.md",
+    "label": "benign",
+    "source": "skills-sh/microsoft"
+  },
+  {
+    "file": "benign/real-microsoft--azure-cloud-migrate.md",
+    "label": "benign",
+    "source": "skills-sh/microsoft"
+  },
+  {
+    "file": "benign/real-neondatabase--better-env.md",
+    "label": "benign",
+    "source": "skills-sh/neondatabase"
+  },
+  {
+    "file": "benign/real-neondatabase--claimable-postgres.md",
+    "label": "benign",
+    "source": "skills-sh/neondatabase"
+  },
+  {
+    "file": "benign/real-neondatabase--neon-auth-nextjs.md",
+    "label": "benign",
+    "source": "skills-sh/neondatabase"
+  },
+  {
+    "file": "benign/real-neondatabase--neon-auth-react.md",
+    "label": "benign",
+    "source": "skills-sh/neondatabase"
+  },
+  {
+    "file": "benign/real-neondatabase--neon-js-react.md",
+    "label": "benign",
+    "source": "skills-sh/neondatabase"
+  },
+  {
+    "file": "benign/real-nextlevelbuilder--ui-ux-pro-max.md",
+    "label": "benign",
+    "source": "skills-sh/nextlevelbuilder"
+  },
+  {
+    "file": "benign/real-nuxt--nuxt-ui.md",
+    "label": "benign",
+    "source": "skills-sh/nuxt"
+  },
+  {
+    "file": "benign/real-obra--brainstorming.md",
+    "label": "benign",
+    "source": "skills-sh/obra"
+  },
+  {
+    "file": "benign/real-obra--browsing.md",
+    "label": "benign",
+    "source": "skills-sh/obra"
+  },
+  {
+    "file": "benign/real-obra--developing-claude-code-plugins.md",
+    "label": "benign",
+    "source": "skills-sh/obra"
+  },
+  {
+    "file": "benign/real-obra--dispatching-parallel-agents.md",
+    "label": "benign",
+    "source": "skills-sh/obra"
+  },
+  {
+    "file": "benign/real-obra--executing-plans.md",
+    "label": "benign",
+    "source": "skills-sh/obra"
+  },
+  {
+    "file": "benign/real-othmanadi--codebase-knowledge-builder.md",
+    "label": "benign",
+    "source": "skills-sh/othmanadi"
+  },
+  {
+    "file": "benign/real-othmanadi--open-responses-agent-dev.md",
+    "label": "benign",
+    "source": "skills-sh/othmanadi"
+  },
+  {
+    "file": "benign/real-othmanadi--openui-forge.md",
+    "label": "benign",
+    "source": "skills-sh/othmanadi"
+  },
+  {
+    "file": "benign/real-othmanadi--planning-with-files-zh.md",
+    "label": "benign",
+    "source": "skills-sh/othmanadi"
+  },
+  {
+    "file": "benign/real-othmanadi--planning-with-files-zht.md",
+    "label": "benign",
+    "source": "skills-sh/othmanadi"
+  },
+  {
+    "file": "benign/real-pbakaus--adapt.md",
+    "label": "benign",
+    "source": "skills-sh/pbakaus"
+  },
+  {
+    "file": "benign/real-pbakaus--animate.md",
+    "label": "benign",
+    "source": "skills-sh/pbakaus"
+  },
+  {
+    "file": "benign/real-pbakaus--arrange.md",
+    "label": "benign",
+    "source": "skills-sh/pbakaus"
+  },
+  {
+    "file": "benign/real-pbakaus--audit.md",
+    "label": "benign",
+    "source": "skills-sh/pbakaus"
+  },
+  {
+    "file": "benign/real-pbakaus--bolder.md",
+    "label": "benign",
+    "source": "skills-sh/pbakaus"
+  },
+  {
+    "file": "benign/real-pexoai--pexo-agent.md",
+    "label": "benign",
+    "source": "skills-sh/pexoai"
+  },
+  {
+    "file": "benign/real-pexoai--seedance-2.0-prompter.md",
+    "label": "benign",
+    "source": "skills-sh/pexoai"
+  },
+  {
+    "file": "benign/real-pexoai--veo-3.2-prompter.md",
+    "label": "benign",
+    "source": "skills-sh/pexoai"
+  },
+  {
+    "file": "benign/real-pexoai--videoagent-audio-studio.md",
+    "label": "benign",
+    "source": "skills-sh/pexoai"
+  },
+  {
+    "file": "benign/real-pexoai--videoagent-director.md",
+    "label": "benign",
+    "source": "skills-sh/pexoai"
+  },
+  {
+    "file": "benign/real-planetscale--mysql.md",
+    "label": "benign",
+    "source": "skills-sh/planetscale"
+  },
+  {
+    "file": "benign/real-planetscale--neki.md",
+    "label": "benign",
+    "source": "skills-sh/planetscale"
+  },
+  {
+    "file": "benign/real-planetscale--postgres.md",
+    "label": "benign",
+    "source": "skills-sh/planetscale"
+  },
+  {
+    "file": "benign/real-planetscale--vitess.md",
+    "label": "benign",
+    "source": "skills-sh/planetscale"
+  },
+  {
+    "file": "benign/real-posthog--analyzing-experiment-session-replays.md",
+    "label": "benign",
+    "source": "skills-sh/posthog"
+  },
+  {
+    "file": "benign/real-posthog--auditing-experiments-flags.md",
+    "label": "benign",
+    "source": "skills-sh/posthog"
+  },
+  {
+    "file": "benign/real-posthog--cleaning-up-stale-feature-flags.md",
+    "label": "benign",
+    "source": "skills-sh/posthog"
+  },
+  {
+    "file": "benign/real-posthog--exploring-llm-clusters.md",
+    "label": "benign",
+    "source": "skills-sh/posthog"
+  },
+  {
+    "file": "benign/real-posthog--exploring-llm-traces.md",
+    "label": "benign",
+    "source": "skills-sh/posthog"
+  },
+  {
+    "file": "benign/real-prisma--prisma-cli-db-execute.md",
+    "label": "benign",
+    "source": "skills-sh/prisma"
+  },
+  {
+    "file": "benign/real-prisma--prisma-cli-db-pull.md",
+    "label": "benign",
+    "source": "skills-sh/prisma"
+  },
+  {
+    "file": "benign/real-prisma--prisma-cli-db-push.md",
+    "label": "benign",
+    "source": "skills-sh/prisma"
+  },
+  {
+    "file": "benign/real-prisma--prisma-cli-db-seed.md",
+    "label": "benign",
+    "source": "skills-sh/prisma"
+  },
+  {
+    "file": "benign/real-prisma--prisma-cli-debug.md",
+    "label": "benign",
+    "source": "skills-sh/prisma"
+  },
+  {
+    "file": "benign/real-redis--redis-development.md",
+    "label": "benign",
+    "source": "skills-sh/redis"
+  },
+  {
+    "file": "benign/real-remotion-dev--remotion-best-practices.md",
+    "label": "benign",
+    "source": "skills-sh/remotion-dev"
+  },
+  {
+    "file": "benign/real-resciencelab--archive.md",
+    "label": "benign",
+    "source": "skills-sh/resciencelab"
+  },
+  {
+    "file": "benign/real-resciencelab--banner-creator.md",
+    "label": "benign",
+    "source": "skills-sh/resciencelab"
+  },
+  {
+    "file": "benign/real-resciencelab--domain-hunter.md",
+    "label": "benign",
+    "source": "skills-sh/resciencelab"
+  },
+  {
+    "file": "benign/real-resciencelab--logo-creator.md",
+    "label": "benign",
+    "source": "skills-sh/resciencelab"
+  },
+  {
+    "file": "benign/real-resciencelab--nanobanana.md",
+    "label": "benign",
+    "source": "skills-sh/resciencelab"
+  },
+  {
+    "file": "benign/real-resend--agent-email-inbox.md",
+    "label": "benign",
+    "source": "skills-sh/resend"
+  },
+  {
+    "file": "benign/real-resend--email-best-practices.md",
+    "label": "benign",
+    "source": "skills-sh/resend"
+  },
+  {
+    "file": "benign/real-resend--react-email.md",
+    "label": "benign",
+    "source": "skills-sh/resend"
+  },
+  {
+    "file": "benign/real-resend--resend-cli.md",
+    "label": "benign",
+    "source": "skills-sh/resend"
+  },
+  {
+    "file": "benign/real-resend--resend.md",
+    "label": "benign",
+    "source": "skills-sh/resend"
+  },
+  {
+    "file": "benign/real-rivet-dev--multiplayer-game.md",
+    "label": "benign",
+    "source": "skills-sh/rivet-dev"
+  },
+  {
+    "file": "benign/real-rivet-dev--rivetkit-client-javascript.md",
+    "label": "benign",
+    "source": "skills-sh/rivet-dev"
+  },
+  {
+    "file": "benign/real-rivet-dev--rivetkit-client-react.md",
+    "label": "benign",
+    "source": "skills-sh/rivet-dev"
+  },
+  {
+    "file": "benign/real-rivet-dev--rivetkit-client-swift.md",
+    "label": "benign",
+    "source": "skills-sh/rivet-dev"
+  },
+  {
+    "file": "benign/real-rivet-dev--rivetkit-client-swiftui.md",
+    "label": "benign",
+    "source": "skills-sh/rivet-dev"
+  },
+  {
+    "file": "benign/real-roin-orca--brainstorm.md",
+    "label": "benign",
+    "source": "skills-sh/roin-orca"
+  },
+  {
+    "file": "benign/real-roin-orca--brainstorming.md",
+    "label": "benign",
+    "source": "skills-sh/roin-orca"
+  },
+  {
+    "file": "benign/real-roin-orca--brainstormingv2.md",
+    "label": "benign",
+    "source": "skills-sh/roin-orca"
+  },
+  {
+    "file": "benign/real-roin-orca--brainstormingv3.md",
+    "label": "benign",
+    "source": "skills-sh/roin-orca"
+  },
+  {
+    "file": "benign/real-roin-orca--find-skills.md",
+    "label": "benign",
+    "source": "skills-sh/roin-orca"
+  },
+  {
+    "file": "benign/real-runwayml--api-reference.md",
+    "label": "benign",
+    "source": "skills-sh/runwayml"
+  },
+  {
+    "file": "benign/real-runwayml--check-compatibility.md",
+    "label": "benign",
+    "source": "skills-sh/runwayml"
+  },
+  {
+    "file": "benign/real-runwayml--check-org-details.md",
+    "label": "benign",
+    "source": "skills-sh/runwayml"
+  },
+  {
+    "file": "benign/real-runwayml--fetch-api-reference.md",
+    "label": "benign",
+    "source": "skills-sh/runwayml"
+  },
+  {
+    "file": "benign/real-runwayml--integrate-audio.md",
+    "label": "benign",
+    "source": "skills-sh/runwayml"
+  },
+  {
+    "file": "benign/real-sanity-io--content-experimentation-best-practices.md",
+    "label": "benign",
+    "source": "skills-sh/sanity-io"
+  },
+  {
+    "file": "benign/real-sanity-io--content-modeling-best-practices.md",
+    "label": "benign",
+    "source": "skills-sh/sanity-io"
+  },
+  {
+    "file": "benign/real-sanity-io--create-agent-with-sanity-context.md",
+    "label": "benign",
+    "source": "skills-sh/sanity-io"
+  },
+  {
+    "file": "benign/real-sanity-io--dial-your-context.md",
+    "label": "benign",
+    "source": "skills-sh/sanity-io"
+  },
+  {
+    "file": "benign/real-sanity-io--sanity-best-practices.md",
+    "label": "benign",
+    "source": "skills-sh/sanity-io"
+  },
+  {
+    "file": "benign/real-semgrep--code-security.md",
+    "label": "benign",
+    "source": "skills-sh/semgrep"
+  },
+  {
+    "file": "benign/real-semgrep--llm-security.md",
+    "label": "benign",
+    "source": "skills-sh/semgrep"
+  },
+  {
+    "file": "benign/real-semgrep--semgrep.md",
+    "label": "benign",
+    "source": "skills-sh/semgrep"
+  },
+  {
+    "file": "benign/real-semgrep--setup-semgrep-plugin.md",
+    "label": "benign",
+    "source": "skills-sh/semgrep"
+  },
+  {
+    "file": "benign/real-shadcn--shadcn.md",
+    "label": "benign",
+    "source": "skills-sh/shadcn"
+  },
+  {
+    "file": "benign/real-sleekdotdesign--sleek-design-mobile-apps.md",
+    "label": "benign",
+    "source": "skills-sh/sleekdotdesign"
+  },
+  {
+    "file": "benign/real-squirrelscan--audit-website.md",
+    "label": "benign",
+    "source": "skills-sh/squirrelscan"
+  },
+  {
+    "file": "benign/real-steipete--1password.md",
+    "label": "benign",
+    "source": "skills-sh/steipete"
+  },
+  {
+    "file": "benign/real-steipete--apple-notes.md",
+    "label": "benign",
+    "source": "skills-sh/steipete"
+  },
+  {
+    "file": "benign/real-steipete--apple-reminders.md",
+    "label": "benign",
+    "source": "skills-sh/steipete"
+  },
+  {
+    "file": "benign/real-steipete--bear-notes.md",
+    "label": "benign",
+    "source": "skills-sh/steipete"
+  },
+  {
+    "file": "benign/real-steipete--blogwatcher.md",
+    "label": "benign",
+    "source": "skills-sh/steipete"
+  },
+  {
+    "file": "benign/real-streamlit--developing-with-streamlit.md",
+    "label": "benign",
+    "source": "skills-sh/streamlit"
+  },
+  {
+    "file": "benign/real-stripe--pay-for-http-request.md",
+    "label": "benign",
+    "source": "skills-sh/stripe"
+  },
+  {
+    "file": "benign/real-stripe--stripe-best-practices.md",
+    "label": "benign",
+    "source": "skills-sh/stripe"
+  },
+  {
+    "file": "benign/real-stripe--stripe-projects.md",
+    "label": "benign",
+    "source": "skills-sh/stripe"
+  },
+  {
+    "file": "benign/real-stripe--upgrade-stripe.md",
+    "label": "benign",
+    "source": "skills-sh/stripe"
+  },
+  {
+    "file": "benign/real-sugarforever--add-feishu.md",
+    "label": "benign",
+    "source": "skills-sh/sugarforever"
+  },
+  {
+    "file": "benign/real-sugarforever--china-stock-analysis.md",
+    "label": "benign",
+    "source": "skills-sh/sugarforever"
+  },
+  {
+    "file": "benign/real-sugarforever--diagram-to-image.md",
+    "label": "benign",
+    "source": "skills-sh/sugarforever"
+  },
+  {
+    "file": "benign/real-sugarforever--interactive-input.md",
+    "label": "benign",
+    "source": "skills-sh/sugarforever"
+  },
+  {
+    "file": "benign/real-sugarforever--personal-writing-style.md",
+    "label": "benign",
+    "source": "skills-sh/sugarforever"
+  },
+  {
+    "file": "benign/real-supabase--supabase-postgres-best-practices.md",
+    "label": "benign",
+    "source": "skills-sh/supabase"
+  },
+  {
+    "file": "benign/real-tavily-ai--search.md",
+    "label": "benign",
+    "source": "skills-sh/tavily-ai"
+  },
+  {
+    "file": "benign/real-tavily-ai--tavily-best-practices.md",
+    "label": "benign",
+    "source": "skills-sh/tavily-ai"
+  },
+  {
+    "file": "benign/real-tavily-ai--tavily-cli.md",
+    "label": "benign",
+    "source": "skills-sh/tavily-ai"
+  },
+  {
+    "file": "benign/real-tavily-ai--tavily-crawl.md",
+    "label": "benign",
+    "source": "skills-sh/tavily-ai"
+  },
+  {
+    "file": "benign/real-tavily-ai--tavily-extract.md",
+    "label": "benign",
+    "source": "skills-sh/tavily-ai"
+  },
+  {
+    "file": "benign/real-tinybirdco--tinybird-cli-guidelines.md",
+    "label": "benign",
+    "source": "skills-sh/tinybirdco"
+  },
+  {
+    "file": "benign/real-tinybirdco--tinybird-python-sdk-guidelines.md",
+    "label": "benign",
+    "source": "skills-sh/tinybirdco"
+  },
+  {
+    "file": "benign/real-tinybirdco--tinybird-typescript-sdk-guidelines.md",
+    "label": "benign",
+    "source": "skills-sh/tinybirdco"
+  },
+  {
+    "file": "benign/real-triggerdotdev--trigger-agents.md",
+    "label": "benign",
+    "source": "skills-sh/triggerdotdev"
+  },
+  {
+    "file": "benign/real-triggerdotdev--trigger-config.md",
+    "label": "benign",
+    "source": "skills-sh/triggerdotdev"
+  },
+  {
+    "file": "benign/real-triggerdotdev--trigger-cost-savings.md",
+    "label": "benign",
+    "source": "skills-sh/triggerdotdev"
+  },
+  {
+    "file": "benign/real-triggerdotdev--trigger-realtime.md",
+    "label": "benign",
+    "source": "skills-sh/triggerdotdev"
+  },
+  {
+    "file": "benign/real-triggerdotdev--trigger-setup.md",
+    "label": "benign",
+    "source": "skills-sh/triggerdotdev"
+  },
+  {
+    "file": "benign/real-twostraws--swift-concurrency-pro.md",
+    "label": "benign",
+    "source": "skills-sh/twostraws"
+  },
+  {
+    "file": "benign/real-twostraws--swift-testing-pro.md",
+    "label": "benign",
+    "source": "skills-sh/twostraws"
+  },
+  {
+    "file": "benign/real-twostraws--swiftdata-pro.md",
+    "label": "benign",
+    "source": "skills-sh/twostraws"
+  },
+  {
+    "file": "benign/real-twostraws--swiftui-pro.md",
+    "label": "benign",
+    "source": "skills-sh/twostraws"
+  },
+  {
+    "file": "benign/real-upstash--context7-cli.md",
+    "label": "benign",
+    "source": "skills-sh/upstash"
+  },
+  {
+    "file": "benign/real-upstash--context7-mcp.md",
+    "label": "benign",
+    "source": "skills-sh/upstash"
+  },
+  {
+    "file": "benign/real-upstash--find-docs.md",
+    "label": "benign",
+    "source": "skills-sh/upstash"
+  },
+  {
+    "file": "benign/real-upstash--upstash-box-js.md",
+    "label": "benign",
+    "source": "skills-sh/upstash"
+  },
+  {
+    "file": "benign/real-upstash--upstash-qstash-js.md",
+    "label": "benign",
+    "source": "skills-sh/upstash"
+  },
+  {
+    "file": "benign/real-useai-pro--config-hardener.md",
+    "label": "benign",
+    "source": "skills-sh/useai-pro"
+  },
+  {
+    "file": "benign/real-useai-pro--credential-scanner.md",
+    "label": "benign",
+    "source": "skills-sh/useai-pro"
+  },
+  {
+    "file": "benign/real-useai-pro--dependency-auditor.md",
+    "label": "benign",
+    "source": "skills-sh/useai-pro"
+  },
+  {
+    "file": "benign/real-useai-pro--incident-responder.md",
+    "label": "benign",
+    "source": "skills-sh/useai-pro"
+  },
+  {
+    "file": "benign/real-useai-pro--network-watcher.md",
+    "label": "benign",
+    "source": "skills-sh/useai-pro"
+  },
+  {
+    "file": "benign/real-vercel--add-function-examples.md",
+    "label": "benign",
+    "source": "skills-sh/vercel"
+  },
+  {
+    "file": "benign/real-vercel--add-provider-package.md",
+    "label": "benign",
+    "source": "skills-sh/vercel"
+  },
+  {
+    "file": "benign/real-vercel--adr-skill.md",
+    "label": "benign",
+    "source": "skills-sh/vercel"
+  },
+  {
+    "file": "benign/real-vercel--ai-elements.md",
+    "label": "benign",
+    "source": "skills-sh/vercel"
+  },
+  {
+    "file": "benign/real-vercel--ai-gateway.md",
+    "label": "benign",
+    "source": "skills-sh/vercel"
+  },
+  {
+    "file": "benign/real-vercel-labs--add-function-examples.md",
+    "label": "benign",
+    "source": "skills-sh/vercel-labs"
+  },
+  {
+    "file": "benign/real-vercel-labs--add-provider-package.md",
+    "label": "benign",
+    "source": "skills-sh/vercel-labs"
+  },
+  {
+    "file": "benign/real-vercel-labs--adr-skill.md",
+    "label": "benign",
+    "source": "skills-sh/vercel-labs"
+  },
+  {
+    "file": "benign/real-vercel-labs--agent-browser.md",
+    "label": "benign",
+    "source": "skills-sh/vercel-labs"
+  },
+  {
+    "file": "benign/real-vercel-labs--agent-friendly-apis.md",
+    "label": "benign",
+    "source": "skills-sh/vercel-labs"
+  },
+  {
+    "file": "benign/real-wix--wds-docs.md",
+    "label": "benign",
+    "source": "skills-sh/wix"
+  },
+  {
+    "file": "benign/real-wix--wix-cli-app-validation.md",
+    "label": "benign",
+    "source": "skills-sh/wix"
+  },
+  {
+    "file": "benign/real-wix--wix-cli-backend-api.md",
+    "label": "benign",
+    "source": "skills-sh/wix"
+  },
+  {
+    "file": "benign/real-wix--wix-cli-backend-event.md",
+    "label": "benign",
+    "source": "skills-sh/wix"
+  },
+  {
+    "file": "benign/real-wix--wix-cli-context-provider.md",
+    "label": "benign",
+    "source": "skills-sh/wix"
+  },
+  {
+    "file": "benign/real-wordpress--blueprint.md",
+    "label": "benign",
+    "source": "skills-sh/wordpress"
+  },
+  {
+    "file": "benign/real-wordpress--wordpress-router.md",
+    "label": "benign",
+    "source": "skills-sh/wordpress"
+  },
+  {
+    "file": "benign/real-wordpress--wp-abilities-api.md",
+    "label": "benign",
+    "source": "skills-sh/wordpress"
+  },
+  {
+    "file": "benign/real-wordpress--wp-block-development.md",
+    "label": "benign",
+    "source": "skills-sh/wordpress"
+  },
+  {
+    "file": "benign/real-wordpress--wp-block-themes.md",
+    "label": "benign",
+    "source": "skills-sh/wordpress"
+  },
+  {
+    "file": "benign/real-wshobson--api-design-principles.md",
+    "label": "benign",
+    "source": "skills-sh/wshobson"
+  },
+  {
+    "file": "benign/real-wshobson--architecture-patterns.md",
+    "label": "benign",
+    "source": "skills-sh/wshobson"
+  },
+  {
+    "file": "benign/real-wshobson--code-review-excellence.md",
+    "label": "benign",
+    "source": "skills-sh/wshobson"
+  },
+  {
+    "file": "benign/real-wshobson--e2e-testing-patterns.md",
+    "label": "benign",
+    "source": "skills-sh/wshobson"
+  },
+  {
+    "file": "benign/real-wshobson--fastapi-templates.md",
+    "label": "benign",
+    "source": "skills-sh/wshobson"
+  },
+  {
+    "file": "benign/real-xixu-me--github-actions-docs.md",
+    "label": "benign",
+    "source": "skills-sh/xixu-me"
+  },
+  {
+    "file": "benign/real-xixu-me--openclaw-secure-linux-cloud.md",
+    "label": "benign",
+    "source": "skills-sh/xixu-me"
+  },
+  {
+    "file": "benign/real-xixu-me--opensource-guide-coach.md",
+    "label": "benign",
+    "source": "skills-sh/xixu-me"
+  },
+  {
+    "file": "benign/real-xixu-me--readme-i18n.md",
+    "label": "benign",
+    "source": "skills-sh/xixu-me"
+  },
+  {
+    "file": "benign/real-xixu-me--running-claude-code-via-litellm-copilot.md",
+    "label": "benign",
+    "source": "skills-sh/xixu-me"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-003-clawdnet.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-004-deepclaw.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-005-clawvox.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-006-afame.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-007-agent-config.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-008-agent-orchestrator.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-009-agentic-calling.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-010-agents-manager.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-011-ai-persona-os.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-012-ai-skill-scanner.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-013-api-gateway.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-014-canvas-os.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-015-clauditor.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-016-claw-sync.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-017-codex-sub-agents.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-018-codex_orchestration.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-020-computer-use.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-021-deepgram.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-022-elite-longterm-memory.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-023-frontend-design-ultimate.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-024-gemini-deep-research.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-025-git-sync.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-026-jules-cli.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-027-memory-setup.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-028-mission-control.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-029-multi-coding-agent.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-030-nano-banana-pro.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-031-news-aggregator.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-032-openclaw-aisa.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-033-penfield.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-034-progressive-memory.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-035-runware.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-037-task-monitor.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-038-ui-ux-pro-max.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  },
+  {
+    "file": "benign/ninja-legit/ninja-040-openswarm-fight.md",
+    "label": "benign",
+    "source": "aztr0nutzs-legit"
+  }
+]

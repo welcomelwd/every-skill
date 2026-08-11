@@ -1,0 +1,15 @@
+name: ATR Security Scan
+on: [push, pull_request]
+jobs:
+  atr-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./
+        with:
+          path: '.'
+          severity: 'medium'
+          fail-on-finding: 'false'
+          upload-sarif: 'true'

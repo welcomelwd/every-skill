@@ -368,11 +368,14 @@ module is re-exported under its own name. A project that does
   flow even when the source and the sink live in different bodies — the logging-wrapper
   case `secret = getenv('K'); log_it(secret)` with `log_it(m): logger.info(m)` connects
   ENV to STDOUT. Only resolved callees participate; there are still no `Parameter` nodes
-  and no SSA-level precision. Forward taint through a callee's **return** value
-  (pass-through helpers such as `def redact(v): return v`) is **not** supported:
-  `Taint.params` is not propagated through the return fixpoint (`_resolve_summaries`),
-  so a parameter returned to the caller does not carry the argument's taint to a later
-  sink. Parameter-to-return propagation and the non-Python walks are out of scope for now.
+  and no SSA-level precision.
+- Forward argument taint also composes through a callee's **return** value for Python
+  (pass-through helpers such as `def redact(v): return v`): a parameter that reaches the
+  function's return — directly or transitively through `return other(p)` and pass-through
+  chains — is closed over by the same finalize fixpoint, and a call site passing a tainted
+  argument into such a parameter folds that argument's origins into the callee's return
+  summary, so a caller consuming the return (`y = redact(secret); print(y)`) resolves the
+  secret to the sink. The non-Python walks remain one level for now.
 - The `kind = arg` edge itself is still recorded one level deep — it marks that a
   tainted value reached a call — and is emitted alongside the forward composition above.
   Sources and sinks are direct I/O calls from the registry.
@@ -382,6 +385,33 @@ module is re-exported under its own name. A project that does
 
 These are deliberate ceilings, chosen so the feature is correct and cheap where
 it applies rather than broad and noisy.
+
+## Language coverage
+
+`FLOWS_TO` covers **10 of the 14 supported languages** — every language whose
+source/sink table is registered in `FLOW_REGISTERED_LANGUAGES`
+(`codebase_rag/parsers/io_access/registry.py`). Python uses the deep,
+path-sensitive walk; the rest use the descriptor-driven lean walk. A language
+outside this set is still parsed into the graph — it simply emits no `FLOWS_TO`
+edges, so a reachability question over it returns `UNKNOWN` rather than
+`NO_FLOW` (see the three-verdict query below).
+
+| Language | `FLOWS_TO` | Walk |
+| --- | --- | --- |
+| Python | ✅ | deep, path-sensitive |
+| JavaScript | ✅ | lean descriptor |
+| TypeScript | ✅ | lean descriptor |
+| TSX | ✅ | lean descriptor |
+| Go | ✅ | lean descriptor |
+| Java | ✅ | lean descriptor |
+| Rust | ✅ | lean descriptor |
+| C++ | ✅ | lean descriptor |
+| C | ✅ | lean descriptor |
+| C# | ✅ | lean descriptor |
+| Lua | ❌ | not covered — no sink table |
+| PHP | ❌ | not covered — no sink table |
+| Scala | ❌ | not covered — no sink table |
+| Dart | ❌ | not covered — no sink table |
 
 ## Coverage metadata and the three-verdict query
 

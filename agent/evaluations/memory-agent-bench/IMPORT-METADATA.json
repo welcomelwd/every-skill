@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "repository": "HUST-AI-HYZ/MemoryAgentBench",
+  "source_url": "https://github.com/HUST-AI-HYZ/MemoryAgentBench",
+  "ref": "main",
+  "resolved_commit": "455306dcabc3842526eb83cd4e225e5d486c5c5d",
+  "category": "agent",
+  "subcategory": "evaluations",
+  "slug": "memory-agent-bench",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-11T10:11:41+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 1064,
+  "copied_bytes": 5171112,
+  "excluded_files": [
+    ".DS_Store: binary content",
+    "assets/intro.png: binary content",
+    "cognee/tests/test_data/artificial-intelligence.pdf: binary content",
+    "cognee/tests/test_data/example.docx: binary content",
+    "cognee/tests/test_data/example.png: binary content",
+    "cognee/tests/test_data/example.pptx: binary content",
+    "cognee/tests/test_data/example.xlsx: binary content",
+    "cognee/tests/test_data/example_copy.png: binary content",
+    "cognee/tests/test_data/migration_database.sqlite: binary content",
+    "cognee/tests/test_data/text_to_speech.mp3: binary, archive, media, or generated artifact",
+    "cognee/tests/test_data/text_to_speech_copy.mp3: binary, archive, media, or generated artifact",
+    "letta/server/static_files/favicon.ico: binary content",
+    "letta/server/static_files/memgpt_logo_transparent.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

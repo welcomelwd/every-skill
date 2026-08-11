@@ -1,0 +1,67 @@
+title: "[Showcase] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Showcase Your ATR Integration
+
+        Show the community how you're using ATR. This helps others learn
+        and demonstrates the ecosystem's reach.
+
+  - type: input
+    id: project-name
+    attributes:
+      label: Project / Company Name
+    validations:
+      required: true
+
+  - type: input
+    id: project-url
+    attributes:
+      label: Project URL
+      description: GitHub repo, website, or npm package
+    validations:
+      required: true
+
+  - type: dropdown
+    id: integration-type
+    attributes:
+      label: How are you using ATR?
+      options:
+        - Bundled ATR rules in our product
+        - Using ATR engine via npm
+        - Built custom engine consuming ATR YAML
+        - CI/CD scanning with ATR
+        - Research / benchmarking
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What you built
+      description: |
+        Describe your integration. What problem does it solve?
+        Include screenshots, metrics, or architecture diagrams if available.
+    validations:
+      required: true
+
+  - type: textarea
+    id: results
+    attributes:
+      label: Results
+      description: |
+        Any metrics? Threats caught? Performance numbers?
+      placeholder: |
+        Example:
+        - Scanning 5,000 MCP skills daily
+        - Caught 23 critical threats in first week
+        - Average scan latency: 3.2ms per skill
+
+  - type: textarea
+    id: feedback
+    attributes:
+      label: Feedback for ATR
+      description: What could ATR do better to support your use case?

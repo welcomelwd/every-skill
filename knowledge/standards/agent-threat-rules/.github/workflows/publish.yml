@@ -1,0 +1,224 @@
+name: Publish to npm + GitHub Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  id-token: write  # required by `npm publish --provenance`
+
+jobs:
+  publish:
+    name: Publish ATR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate rules
+        run: npm run validate
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Bump version (manual dispatch only)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          BUMP="${{ github.event.inputs.bump_type }}"
+          CURRENT=$(node -e "console.log(require('./package.json').version)")
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+          NEW="$MAJOR.$MINOR.$PATCH"
+          node -e "
+            const fs = require('fs');
+            const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            p.version = '$NEW';
+            fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          "
+          git config user.name "ATR Release Bot"
+          git config user.email "release@atr-framework.org"
+          git add package.json
+          git commit -m "release: v$NEW"
+          git pull --rebase --autostash origin main
+          git tag "v$NEW"
+          git push origin main
+          git push origin "v$NEW"
+          echo "VERSION=$NEW" >> "$GITHUB_ENV"
+
+      - name: Get version from tag
+        if: ${{ github.event_name == 'push' }}
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Generate stats.json
+        run: |
+          node -e "
+            const fs = require('fs');
+            const path = require('path');
+
+            const rulesDir = path.resolve('rules');
+            const categories = fs.readdirSync(rulesDir).filter(d =>
+              fs.statSync(path.join(rulesDir, d)).isDirectory()
+            );
+
+            const rulesByCategory = {};
+            let totalRules = 0;
+            for (const cat of categories) {
+              const catDir = path.join(rulesDir, cat);
+              const files = fs.readdirSync(catDir).filter(f => f.endsWith('.yaml'));
+              rulesByCategory[cat] = files.length;
+              totalRules += files.length;
+            }
+
+            let megaScan = { scanned: 0, flagged: 0 };
+            try {
+              const mega = JSON.parse(fs.readFileSync('data/mega-scan-report.json', 'utf8'));
+              megaScan = { scanned: mega.totals?.scanned ?? 0, flagged: mega.totals?.flagged ?? 0 };
+            } catch {}
+
+            let benchmark = { recall: 0, precision: 0 };
+            try {
+              const pint = JSON.parse(fs.readFileSync('data/pint-benchmark/pint-eval-report.json', 'utf8'));
+              benchmark = { recall: pint.report?.overall?.recall ?? 0, precision: pint.report?.overall?.precision ?? 0 };
+            } catch {}
+
+            const stats = {
+              version: '${{ env.VERSION }}',
+              generatedAt: new Date().toISOString(),
+              rules: { total: totalRules, categories: Object.keys(rulesByCategory).length, byCategory: rulesByCategory },
+              ecosystem: { skillsScanned: megaScan.scanned, skillsFlagged: megaScan.flagged },
+              benchmark: { pintRecall: benchmark.recall, pintPrecision: benchmark.precision },
+            };
+
+            fs.writeFileSync('data/stats.json', JSON.stringify(stats, null, 2) + '\n');
+            console.log('Stats:', JSON.stringify(stats.rules));
+          "
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # Auto-detect dist-tag from prerelease identifier so 3.0.0-alpha.X
+          # doesn't accidentally take over the `latest` tag (which represents
+          # the stable release line).
+          TAG=$(node -e "
+            const v = require('./package.json').version;
+            const m = v.match(/-([a-zA-Z]+)/);
+            console.log(m ? m[1] : 'latest');
+          ")
+          echo "Publishing with dist-tag: $TAG"
+          npm publish --access public --provenance --tag "$TAG"
+
+      - name: Count rules for release notes
+        id: rules
+        run: |
+          TOTAL=$(find rules -name "*.yaml" | wc -l | tr -d ' ')
+          echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PREV_TAG=$(git tag --sort=-creatordate | sed -n '2p' || echo "")
+          CHANGELOG=""
+          if [ -n "$PREV_TAG" ]; then
+            CHANGELOG=$(git log "$PREV_TAG"..HEAD --oneline --no-merges | head -20)
+          fi
+
+          gh release create "v${{ env.VERSION }}" \
+            --title "ATR v${{ env.VERSION }} — ${{ steps.rules.outputs.total }} detection rules" \
+            --notes "## ATR v${{ env.VERSION }}
+
+          ### Stats
+          - **${{ steps.rules.outputs.total }}** detection rules across 9 threat categories
+          - OWASP Agentic Top 10: 10/10 coverage
+          - PINT benchmark: 62.7% recall, 99.7% precision
+
+          ### Changes since last release
+          $CHANGELOG
+
+          ### Install
+          \`\`\`bash
+          npm install agent-threat-rules@${{ env.VERSION }}
+          \`\`\`
+
+          ### Ecosystem
+          ATR rules are consumed by [Cisco AI Defense](https://github.com/cisco-ai-defense/skill-scanner/pull/79), [OWASP](https://github.com/OWASP/www-project-top-10-for-large-language-model-applications/pull/814), and the growing ecosystem of AI agent security tools.
+
+          Full stats: [data/stats.json](https://raw.githubusercontent.com/Agent-Threat-Rule/agent-threat-rules/main/data/stats.json)
+          "
+
+      - name: Verify npm publish
+        run: |
+          sleep 10
+          PUBLISHED=$(npm info agent-threat-rules version 2>/dev/null || echo "unknown")
+          echo "Published version: $PUBLISHED"
+          if [ "$PUBLISHED" != "${{ env.VERSION }}" ]; then
+            echo "WARNING: npm shows $PUBLISHED, expected ${{ env.VERSION }} (may need propagation time)"
+          fi
+
+      - name: Sync rules to Threat Cloud
+        env:
+          TC_URL: ${{ vars.TC_URL || 'https://tc.panguard.ai' }}
+          TC_ADMIN_API_KEY: ${{ secrets.TC_ADMIN_API_KEY }}
+        run: |
+          TOTAL=$(find rules -name "*.yaml" | wc -l | tr -d ' ')
+          echo "Syncing $TOTAL rules to TC via /api/rules/sync..."
+          node -e "
+            const fs = require('fs');
+            const path = require('path');
+            const adminKey = process.env.TC_ADMIN_API_KEY || '';
+            if (!adminKey) { console.warn('WARNING: TC_ADMIN_API_KEY not set, sync will fail'); }
+            const rules = [];
+            for (const cat of fs.readdirSync('rules')) {
+              const catDir = path.join('rules', cat);
+              if (!fs.statSync(catDir).isDirectory()) continue;
+              for (const f of fs.readdirSync(catDir).filter(f => f.endsWith('.yaml'))) {
+                const content = fs.readFileSync(path.join(catDir, f), 'utf-8');
+                const id = content.match(/^id:\s*(\S+)/m)?.[1] || f;
+                rules.push({ ruleId: id, ruleContent: content, source: 'atr' });
+              }
+            }
+            console.log('Prepared ' + rules.length + ' rules for sync');
+            const headers = { 'Content-Type': 'application/json' };
+            if (adminKey) headers['Authorization'] = 'Bearer ' + adminKey;
+            fetch(process.env.TC_URL + '/api/rules/sync', {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({ rules }),
+            }).then(r => r.json()).then(d => console.log('TC sync:', JSON.stringify(d)))
+              .catch(e => console.error('TC sync failed:', e.message));
+          "

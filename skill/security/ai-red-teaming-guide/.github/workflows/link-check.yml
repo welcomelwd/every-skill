@@ -1,0 +1,31 @@
+name: Link Check
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  schedule:
+    # Weekly, Mondays 06:00 UTC — catches links that rot between edits.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  link-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check links with lychee
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: >-
+            --no-progress
+            --cache
+            --max-cache-age 1d
+            --accept 200,206,429
+            './**/*.md'
+          # Do not fail the build on broken links; surface them in the summary
+          # instead so transient/rate-limited hosts don't wall PRs. Flip
+          # `fail: true` once the allowlist in .lycheeignore is dialed in.
+          fail: false

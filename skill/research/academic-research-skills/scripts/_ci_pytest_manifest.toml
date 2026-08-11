@@ -421,6 +421,14 @@ id = "666-human-subjects-authority"
 path = "scripts/test_resolve_human_subjects_authority.py"
 
 [[pytest]]
+id = "669-review-pathway-rule-trace"
+path = "scripts/test_review_pathway_rule_trace.py"
+
+[[pytest]]
+id = "669-review-pathway-integration"
+path = "scripts/test_check_669_review_pathway_rule_trace.py"
+
+[[pytest]]
 id = "667-submission-packet-manifest"
 path = "scripts/test_build_submission_packet_manifest.py"
 
@@ -443,6 +451,14 @@ path = "scripts/test_cross_document_consistency_advisory.py"
 [[pytest]]
 id = "672-cross-document-consistency-integration"
 path = "scripts/test_check_cross_document_consistency_advisory_integration.py"
+
+[[pytest]]
+id = "673-adjudication-activity-runtime"
+path = "scripts/test_adjudication_activity.py"
+
+[[pytest]]
+id = "673-adjudication-activity-integration"
+path = "scripts/test_check_673_adjudication_activity.py"
 
 [[pytest]]
 id = "680-human-subjects-reference-migration"
@@ -473,9 +489,33 @@ id = "683-review-target-context"
 path = "scripts/test_resolve_review_target_context.py"
 
 [[pytest]]
+id = "684-review-criteria-binding-runtime"
+path = "scripts/test_review_criteria_binding.py"
+
+[[pytest]]
+id = "684-review-criteria-binding-integration"
+path = "scripts/test_check_684_review_criteria_binding.py"
+
+[[pytest]]
+id = "684-review-criteria-constructive-value-scorer"
+path = "scripts/test_score_review_criteria_constructive_value.py"
+
+[[pytest]]
+id = "684-review-criteria-constructive-value-runner"
+path = "scripts/test_run_review_criteria_constructive_value.py"
+
+[[pytest]]
 id = "656-shared-evidence-row-contract"
 path = "scripts/test_evidence_rows.py"
 
 [[pytest]]
 id = "656-evidence-row-integration"
 path = "scripts/test_check_evidence_row_integration.py"
+
+[[pytest]]
+id = "630-codex-subscription-transport"
+path = "scripts/test_cross_model_codex_transport.py"
+
+[[pytest]]
+id = "630-codex-subscription-integration"
+path = "scripts/test_check_630_codex_subscription_transport.py"

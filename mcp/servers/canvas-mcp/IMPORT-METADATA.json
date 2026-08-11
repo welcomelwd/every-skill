@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "repository": "vishalsachdev/canvas-mcp",
+  "source_url": "https://github.com/vishalsachdev/canvas-mcp",
+  "ref": "main",
+  "resolved_commit": "1ae1c573b81fb4e44a4af79a48f1cd2b210aff6c",
+  "category": "mcp",
+  "subcategory": "servers",
+  "slug": "canvas-mcp",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-11T10:11:41+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 233,
+  "copied_bytes": 3355340,
+  "excluded_files": [
+    "articles/2026-02-23-cover-image.png: binary content",
+    "articles/2026-02-23-substack-banner.png: binary content",
+    "articles/2026-02-23-twitter-card.png: binary content",
+    "articles/2026-08-08-linkedin-1200x628.png: binary content",
+    "articles/2026-08-08-substack-1100x220.png: binary content",
+    "docs/canvas-mcp-header.png: binary content",
+    "docs/drew-rozema.jpeg: binary, archive, media, or generated artifact"
+  ],
+  "execution": "never run by this importer"
+}

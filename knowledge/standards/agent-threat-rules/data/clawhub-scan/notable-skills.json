@@ -1,0 +1,15 @@
+{
+  "larry": "TikTok marketing tool requires sudo + full browser control \u2014 10K users don't know",
+  "clawsec": "Security tool with security vulnerabilities \u2014 direct prompt injection + RCE in a tool called 'clawsec'",
+  "tesla-fleet-api": "Tesla Fleet API skill can override system prompt \u2014 connects to your car",
+  "walletconnect-agent": "Crypto wallet agent with system prompt override \u2014 connects to your money",
+  "safe-exec-0-3-2": "Named 'safe-exec' but triggers system prompt override \u2014 ironic naming",
+  "nanobazaar": "Marketplace relay with system prompt override + privilege escalation",
+  "elevenlabs-tts": "TTS skill with privilege escalation \u2014 why does voice synthesis need admin?",
+  "coding": "Generic 'coding' skill with nested payload injection",
+  "graphic-design": "Design skill with shell injection + parameter injection \u2014 4 real criticals",
+  "self-improving": "115K downloads, #2 on ClawHub \u2014 high permissions for a memory skill",
+  "openclaw-tavily-search": "59K downloads \u2014 known search API but markup findings",
+  "local-places": "By steipete (ClawHub core dev) \u2014 even core devs trigger findings",
+  "email-prompt-injection-defense": "Ironic: email injection DEFENSE skill flagged for prompt injection"
+}

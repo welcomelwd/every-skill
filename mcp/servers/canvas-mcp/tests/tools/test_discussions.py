@@ -1,0 +1,459 @@
+"""
+Tests for discussion-related MCP tools.
+"""
+
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+
+@pytest.fixture
+def mock_canvas_api():
+    """Fixture to mock Canvas API calls for discussion tools."""
+    with patch('canvas_mcp.tools.discussions.get_course_id') as mock_get_id, \
+         patch('canvas_mcp.tools.discussions.get_course_code') as mock_get_code, \
+         patch('canvas_mcp.tools.discussions.fetch_all_paginated_results') as mock_fetch, \
+         patch('canvas_mcp.tools.discussions.make_canvas_request') as mock_request:
+
+        mock_get_id.return_value = "60366"
+        mock_get_code.return_value = "badm_350_120251"
+
+        yield {
+            'get_course_id': mock_get_id,
+            'get_course_code': mock_get_code,
+            'fetch_all_paginated_results': mock_fetch,
+            'make_canvas_request': mock_request
+        }
+
+
+def get_tool_function(tool_name: str):
+    """Get a tool function by name from the registered discussion tools."""
+    from fastmcp import FastMCP
+
+    from canvas_mcp.tools.discussions import (
+        register_educator_discussion_tools,
+        register_shared_discussion_tools,
+    )
+
+    mcp = FastMCP("test")
+    captured_functions = {}
+
+    original_tool = mcp.tool
+
+    def capturing_tool(*args, **kwargs):
+        decorator = original_tool(*args, **kwargs)
+
+        def wrapper(fn):
+            captured_functions[fn.__name__] = fn
+            return decorator(fn)
+
+        return wrapper
+
+    mcp.tool = capturing_tool
+    register_shared_discussion_tools(mcp)
+    register_educator_discussion_tools(mcp)
+
+    return captured_functions.get(tool_name)
+
+
+class TestUpdateDiscussionTopic:
+    """Tests for update_discussion_topic tool."""
+
+    @pytest.mark.asyncio
+    async def test_update_discussion_topic_message_only(self, mock_canvas_api):
+        """Test updating only the discussion body."""
+        mock_canvas_api['make_canvas_request'].return_value = {
+            "id": 42,
+            "title": "Week 1 Discussion",
+            "message": "<p>Updated prompt text</p>",
+            "published": True,
+            "is_announcement": False,
+        }
+
+        update_discussion_topic = get_tool_function('update_discussion_topic')
+        assert update_discussion_topic is not None
+
+        result = await update_discussion_topic(
+            "badm_350_120251",
+            42,
+            message="<p>Updated prompt text</p>",
+        )
+
+        mock_canvas_api['get_course_id'].assert_called_once_with("badm_350_120251")
+        mock_canvas_api['make_canvas_request'].assert_called_once()
+
+        call_args = mock_canvas_api['make_canvas_request'].call_args
+        assert call_args[0][0] == "put"
+        assert call_args[0][1] == "/courses/60366/discussion_topics/42"
+        assert call_args[1]['data'] == {"message": "<p>Updated prompt text</p>"}
+
+        assert "successfully" in result
+        assert "Week 1 Discussion" in result
+        assert "Updated fields: message" in result
+
+    @pytest.mark.asyncio
+    async def test_update_discussion_topic_multiple_fields(self, mock_canvas_api):
+        """Test updating title, message, and published together."""
+        mock_canvas_api['make_canvas_request'].return_value = {
+            "id": 42,
+            "title": "Renamed Discussion",
+            "message": "<p>New body</p>",
+            "published": True,
+            "is_announcement": False,
+        }
+
+        update_discussion_topic = get_tool_function('update_discussion_topic')
+        result = await update_discussion_topic(
+            "badm_350_120251",
+            42,
+            title="Renamed Discussion",
+            message="<p>New body</p>",
+            published=True,
+        )
+
+        call_args = mock_canvas_api['make_canvas_request'].call_args
+        assert call_args[1]['data'] == {
+            "title": "Renamed Discussion",
+            "message": "<p>New body</p>",
+            "published": True,
+        }
+
+        assert "successfully" in result
+        assert "title" in result
+        assert "message" in result
+        assert "published" in result
+
+    @pytest.mark.asyncio
+    async def test_update_discussion_topic_no_fields(self, mock_canvas_api):
+        """Test that error is returned when no fields are provided."""
+        update_discussion_topic = get_tool_function('update_discussion_topic')
+        result = await update_discussion_topic("badm_350_120251", 42)
+
+        assert "No fields provided to update" in result
+        mock_canvas_api['make_canvas_request'].assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_update_discussion_topic_api_error(self, mock_canvas_api):
+        """Test error handling when API fails."""
+        mock_canvas_api['make_canvas_request'].return_value = {"error": "Topic not found"}
+
+        update_discussion_topic = get_tool_function('update_discussion_topic')
+        result = await update_discussion_topic(
+            "badm_350_120251",
+            99999,
+            message="New text",
+        )
+
+        assert "Error updating discussion topic" in result
+        assert "Topic not found" in result
+
+    @pytest.mark.asyncio
+    async def test_update_discussion_topic_invalid_date(self, mock_canvas_api):
+        """Test validation of invalid lock_at date."""
+        update_discussion_topic = get_tool_function('update_discussion_topic')
+        result = await update_discussion_topic(
+            "badm_350_120251",
+            42,
+            lock_at="not-a-valid-date",
+        )
+
+        assert "Invalid date format for lock_at" in result
+        mock_canvas_api['make_canvas_request'].assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_update_discussion_topic_announcement(self, mock_canvas_api):
+        """Test that announcement topics are labeled correctly in output."""
+        mock_canvas_api['make_canvas_request'].return_value = {
+            "id": 7,
+            "title": "Exam reminder",
+            "message": "<p>Bring a pencil</p>",
+            "published": True,
+            "is_announcement": True,
+        }
+
+        update_discussion_topic = get_tool_function('update_discussion_topic')
+        result = await update_discussion_topic(
+            "badm_350_120251",
+            7,
+            message="<p>Bring a pencil</p>",
+        )
+
+        assert "Announcement updated successfully" in result
+        assert "Type: Announcement" in result
+
+
+class TestListDiscussionTopics:
+    """Tests for list_discussion_topics (issue #238).
+
+    Canvas's ``GET /courses/:id/discussion_topics`` index excludes announcements
+    unless ``only_announcements=true`` is passed. ``include[]=announcement`` is
+    NOT a supported include value and is silently ignored -- measured live on
+    2026-08-08 against course 41635: with and without it the endpoint returned
+    the same 19 topics, 0 of them announcements.
+    """
+
+    @pytest.mark.asyncio
+    async def test_list_discussion_topics(self, mock_canvas_api):
+        """Default call lists discussion topics via the tool itself."""
+        mock_canvas_api['fetch_all_paginated_results'].return_value = [
+            {"id": 1, "title": "Topic 1", "posted_at": "2024-01-15", "published": True},
+            {"id": 2, "title": "Topic 2", "posted_at": "2024-01-20", "published": True},
+        ]
+
+        list_discussion_topics = get_tool_function('list_discussion_topics')
+        result = await list_discussion_topics("badm_350_120251")
+
+        assert "Topic 1" in result
+        assert "Topic 2" in result
+        assert "Type: Discussion" in result
+
+    @pytest.mark.asyncio
+    async def test_default_does_not_request_announcements(self, mock_canvas_api):
+        """Default call must not ask Canvas for announcements at all."""
+        mock_canvas_api['fetch_all_paginated_results'].return_value = []
+
+        list_discussion_topics = get_tool_function('list_discussion_topics')
+        await list_discussion_topics("badm_350_120251")
+
+        assert mock_canvas_api['fetch_all_paginated_results'].call_count == 1
+        params = mock_canvas_api['fetch_all_paginated_results'].call_args[0][1]
+        assert "only_announcements" not in params
+
+    @pytest.mark.asyncio
+    async def test_never_sends_unsupported_include_announcement(self, mock_canvas_api):
+        """``include[]=announcement`` is not a valid Canvas include -- never send it."""
+        mock_canvas_api['fetch_all_paginated_results'].return_value = []
+
+        list_discussion_topics = get_tool_function('list_discussion_topics')
+        await list_discussion_topics("badm_350_120251", include_announcements=True)
+
+        for call in mock_canvas_api['fetch_all_paginated_results'].call_args_list:
+            params = call[0][1]
+            assert "announcement" not in params.get("include[]", [])
+
+    @pytest.mark.asyncio
+    async def test_include_announcements_actually_returns_announcements(self, mock_canvas_api):
+        """include_announcements=True must really yield announcements, not just discussions.
+
+        This is the issue #238 regression: the flag used to set an ignored
+        ``include[]`` value, so the caller got discussions only while believing
+        announcements were included.
+        """
+        mock_canvas_api['fetch_all_paginated_results'].side_effect = [
+            [{"id": 1, "title": "Week 1 discussion", "posted_at": "2024-01-15",
+              "published": True, "is_announcement": False}],
+            [{"id": 9, "title": "Exam moved", "posted_at": "2024-01-20",
+              "published": True, "is_announcement": True}],
+        ]
+
+        list_discussion_topics = get_tool_function('list_discussion_topics')
+        result = await list_discussion_topics("badm_350_120251", include_announcements=True)
+
+        assert mock_canvas_api['fetch_all_paginated_results'].call_count == 2
+        announcement_params = mock_canvas_api['fetch_all_paginated_results'].call_args_list[1][0][1]
+        assert announcement_params["only_announcements"] is True
+
+        assert "Week 1 discussion" in result
+        assert "Exam moved" in result
+        assert "Type: Announcement" in result
+        assert "Type: Discussion" in result
+
+    @pytest.mark.asyncio
+    async def test_include_announcements_deduplicates(self, mock_canvas_api):
+        """A topic returned by both queries must appear once."""
+        duplicate = {"id": 9, "title": "Exam moved", "posted_at": "2024-01-20",
+                     "published": True, "is_announcement": True}
+        mock_canvas_api['fetch_all_paginated_results'].side_effect = [
+            [duplicate], [dict(duplicate)],
+        ]
+
+        list_discussion_topics = get_tool_function('list_discussion_topics')
+        result = await list_discussion_topics("badm_350_120251", include_announcements=True)
+
+        assert result.count("Exam moved") == 1
+
+    @pytest.mark.asyncio
+    async def test_include_announcements_survives_announcement_error(self, mock_canvas_api):
+        """If the announcements query errors, still return the discussions."""
+        mock_canvas_api['fetch_all_paginated_results'].side_effect = [
+            [{"id": 1, "title": "Week 1 discussion", "posted_at": "2024-01-15",
+              "published": True, "is_announcement": False}],
+            {"error": "403 Forbidden"},
+        ]
+
+        list_discussion_topics = get_tool_function('list_discussion_topics')
+        result = await list_discussion_topics("badm_350_120251", include_announcements=True)
+
+        assert "Week 1 discussion" in result
+
+    @pytest.mark.asyncio
+    async def test_error_response_surfaces(self, mock_canvas_api):
+        """A failing primary query returns a readable error."""
+        mock_canvas_api['fetch_all_paginated_results'].return_value = {"error": "404 Not Found"}
+
+        list_discussion_topics = get_tool_function('list_discussion_topics')
+        result = await list_discussion_topics("badm_350_120251")
+
+        assert "Error fetching discussion topics" in result
+
+
+class TestListAnnouncements:
+    """Tests for list_announcements (issue #238)."""
+
+    @pytest.mark.asyncio
+    async def test_sends_only_announcements_filter(self, mock_canvas_api):
+        """The announcements listing must filter server-side."""
+        mock_canvas_api['fetch_all_paginated_results'].return_value = []
+
+        list_announcements = get_tool_function('list_announcements')
+        await list_announcements("badm_350_120251")
+
+        params = mock_canvas_api['fetch_all_paginated_results'].call_args[0][1]
+        assert params["only_announcements"] is True
+
+    @pytest.mark.asyncio
+    async def test_does_not_send_unsupported_include(self, mock_canvas_api):
+        """``include[]=announcement`` is a no-op against Canvas -- drop it."""
+        mock_canvas_api['fetch_all_paginated_results'].return_value = []
+
+        list_announcements = get_tool_function('list_announcements')
+        await list_announcements("badm_350_120251")
+
+        params = mock_canvas_api['fetch_all_paginated_results'].call_args[0][1]
+        assert "include[]" not in params
+
+    @pytest.mark.asyncio
+    async def test_lists_announcements(self, mock_canvas_api):
+        """Announcements are rendered with id, title and post date."""
+        mock_canvas_api['fetch_all_paginated_results'].return_value = [
+            {"id": 9, "title": "Exam moved", "posted_at": "2024-01-20", "is_announcement": True},
+        ]
+
+        list_announcements = get_tool_function('list_announcements')
+        result = await list_announcements("badm_350_120251")
+
+        assert "Exam moved" in result
+        assert "ID: 9" in result
+
+
+class TestDiscussionTools:
+    """Test discussion tool functions."""
+
+    @pytest.mark.asyncio
+    async def test_list_discussion_entries(self):
+        """Test listing discussion entries."""
+        mock_entries = [
+            {"id": 101, "message": "Great post!", "user_id": 1001},
+            {"id": 102, "message": "I agree", "user_id": 1002}
+        ]
+
+        with patch('canvas_mcp.core.client.fetch_all_paginated_results', new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = mock_entries
+
+            from canvas_mcp.core.client import fetch_all_paginated_results
+
+            result = await fetch_all_paginated_results("/courses/12345/discussion_topics/1/entries", {})
+
+            assert len(result) == 2
+            assert result[0]["message"] == "Great post!"
+
+    @pytest.mark.asyncio
+    async def test_post_discussion_entry(self):
+        """Test posting a discussion entry."""
+        new_entry = {
+            "message": "This is my reply"
+        }
+
+        with patch('canvas_mcp.core.client.make_canvas_request', new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = {"id": 103, "message": "This is my reply"}
+
+            from canvas_mcp.core.client import make_canvas_request
+
+            result = await make_canvas_request("post", "/courses/12345/discussion_topics/1/entries", data=new_entry)
+
+            assert result["message"] == "This is my reply"
+
+    @pytest.mark.asyncio
+    async def test_reply_to_discussion_entry(self):
+        """Test replying to a discussion entry."""
+        reply = {
+            "message": "Reply to your post"
+        }
+
+        with patch('canvas_mcp.core.client.make_canvas_request', new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = {"id": 104, "message": "Reply to your post"}
+
+            from canvas_mcp.core.client import make_canvas_request
+
+            result = await make_canvas_request("post", "/courses/12345/discussion_topics/1/entries/101/replies", data=reply)
+
+            assert result["message"] == "Reply to your post"
+
+    @pytest.mark.asyncio
+    async def test_empty_discussion_topics(self):
+        """Test handling empty discussion topics list."""
+        with patch('canvas_mcp.core.client.fetch_all_paginated_results', new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = []
+
+            from canvas_mcp.core.client import fetch_all_paginated_results
+
+            result = await fetch_all_paginated_results("/courses/12345/discussion_topics", {})
+
+            assert result == []
+
+
+class TestCreateAnnouncementConfirmsWrite:
+    """#220: Canvas silently drops is_announcement for tokens without
+    announcement permission and creates a regular discussion, returning 200.
+    The tool must not report success unless the response confirms the flag.
+    """
+
+    @pytest.mark.asyncio
+    async def test_silent_discussion_downgrade_is_not_success(self, mock_canvas_api):
+        mock_canvas_api['make_canvas_request'].return_value = {
+            "id": 999,
+            "title": "HI",
+            "is_announcement": False,
+            "created_at": "2026-08-03T15:00:00Z",
+        }
+
+        create_announcement = get_tool_function('create_announcement')
+        result = await create_announcement("badm_350_120251", "HI", "Hello class")
+
+        assert "created successfully" not in result
+        assert "Could not confirm" in result
+        assert "999" in result  # points at the stray discussion topic
+
+    @pytest.mark.asyncio
+    async def test_missing_flag_in_response_is_not_success(self, mock_canvas_api):
+        """A response without the is_announcement key is also unconfirmed."""
+        mock_canvas_api['make_canvas_request'].return_value = {
+            "id": 1000,
+            "title": "HI",
+            "created_at": "2026-08-03T15:00:00Z",
+        }
+
+        create_announcement = get_tool_function('create_announcement')
+        result = await create_announcement("badm_350_120251", "HI", "Hello class")
+
+        assert "created successfully" not in result
+        assert "Could not confirm" in result
+
+    @pytest.mark.asyncio
+    async def test_confirmed_announcement_reports_success(self, mock_canvas_api):
+        mock_canvas_api['make_canvas_request'].return_value = {
+            "id": 1001,
+            "title": "Real announcement",
+            "is_announcement": True,
+            "created_at": "2026-08-03T15:00:00Z",
+        }
+
+        create_announcement = get_tool_function('create_announcement')
+        result = await create_announcement("badm_350_120251", "Real announcement", "Hello")
+
+        assert "created successfully" in result
+        assert "1001" in result
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

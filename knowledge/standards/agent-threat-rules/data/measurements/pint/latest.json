@@ -1,0 +1,14 @@
+{
+  "source": "pint",
+  "file": "2026-08-04_pint-v1_atr-3-5-11.json",
+  "measured_at": "2026-08-04T17:53:56.628Z",
+  "metrics": {
+    "recall": 0.6031042128603105,
+    "precision": 1,
+    "f1": 0.752420470262794,
+    "fp_rate": 0
+  },
+  "source_version": "v1",
+  "atr_version": "3.5.11",
+  "samples": 850
+}

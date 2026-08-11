@@ -1,0 +1,287 @@
+{
+  "generated": "2026-04-16",
+  "total_verified": 40,
+  "criteria": "ATR scan passed with 0 critical/high findings + 100+ downloads",
+  "entries": [
+    {
+      "skill": "jhillin8/healthy-eating",
+      "source": "ClawHub",
+      "downloads": 2847,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "jhillin8/daily-motivation",
+      "source": "ClawHub",
+      "downloads": 2060,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "epwhesq/virtually-us",
+      "source": "ClawHub",
+      "downloads": 1833,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "ivangdavila/philosophy",
+      "source": "ClawHub",
+      "downloads": 893,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "ivangdavila/english",
+      "source": "ClawHub",
+      "downloads": 843,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "ivangdavila/polish",
+      "source": "ClawHub",
+      "downloads": 738,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "ivangdavila/spanish",
+      "source": "ClawHub",
+      "downloads": 710,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "ivangdavila/estonian",
+      "source": "ClawHub",
+      "downloads": 669,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "ivangdavila/hebrew",
+      "source": "ClawHub",
+      "downloads": 667,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "afengzi/market-news",
+      "source": "ClawHub",
+      "downloads": 665,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "ivangdavila/vietnamese",
+      "source": "ClawHub",
+      "downloads": 665,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "ivangdavila/hindi",
+      "source": "ClawHub",
+      "downloads": 658,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "ivangdavila/dutch",
+      "source": "ClawHub",
+      "downloads": 657,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "ivangdavila/slovak",
+      "source": "ClawHub",
+      "downloads": 648,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "ivangdavila/lithuanian",
+      "source": "ClawHub",
+      "downloads": 637,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "ivangdavila/catalan",
+      "source": "ClawHub",
+      "downloads": 635,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "ivangdavila/irish",
+      "source": "ClawHub",
+      "downloads": 634,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "ivangdavila/latvian",
+      "source": "ClawHub",
+      "downloads": 625,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "ivangdavila/portuguese",
+      "source": "ClawHub",
+      "downloads": 624,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "ivangdavila/hungarian",
+      "source": "ClawHub",
+      "downloads": 615,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "ivangdavila/italian",
+      "source": "ClawHub",
+      "downloads": 614,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "afengzi/quant-strategy",
+      "source": "ClawHub",
+      "downloads": 577,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "yang1002378395-cmyk/ai-code-assistant",
+      "source": "ClawHub",
+      "downloads": 567,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "dokbawi80/is-token-safe",
+      "source": "ClawHub",
+      "downloads": 537,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "nguyet601/ai-writing-agent",
+      "source": "ClawHub",
+      "downloads": 501,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "jwl1992/audio-editor",
+      "source": "ClawHub",
+      "downloads": 483,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "compass-soul/transmissions",
+      "source": "ClawHub",
+      "downloads": 446,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "yang1002378395-cmyk/ai-content-rewriter",
+      "source": "ClawHub",
+      "downloads": 343,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "robinzhang/moments-grid",
+      "source": "ClawHub",
+      "downloads": 276,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "aianonymous1993-source/kindergarten-assistant",
+      "source": "ClawHub",
+      "downloads": 276,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "yang1002378395-cmyk/ai-data-visualization",
+      "source": "ClawHub",
+      "downloads": 268,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "huangjingzhi07/daily-reminder",
+      "source": "ClawHub",
+      "downloads": 262,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "shawcc/memo-teller",
+      "source": "ClawHub",
+      "downloads": 258,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "xyezir/oc-full-ops-audit-recipe",
+      "source": "ClawHub",
+      "downloads": 247,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "calvinxhk/botlearn-writer",
+      "source": "ClawHub",
+      "downloads": 234,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "ken0122/narrative-voice",
+      "source": "ClawHub",
+      "downloads": 218,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "erich1566/official-layout-pro",
+      "source": "ClawHub",
+      "downloads": 213,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "huangjingzhi07/email-draft-oc",
+      "source": "ClawHub",
+      "downloads": 150,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "qq719528161/strategic-analyst",
+      "source": "ClawHub",
+      "downloads": 129,
+      "risk_score": 0,
+      "verified": true
+    },
+    {
+      "skill": "cr330326/writing-reboot-review",
+      "source": "ClawHub",
+      "downloads": 129,
+      "risk_score": 0,
+      "verified": true
+    }
+  ]
+}

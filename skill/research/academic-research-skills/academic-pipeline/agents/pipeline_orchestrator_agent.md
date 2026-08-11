@@ -35,6 +35,10 @@ Determine the entry point from the user's first message. Use the following keywo
 - User attaches a file --> determine type (paper draft, review report, research notes)
 - User mentions no materials --> assume starting from scratch
 
+**Run identity (#673):** initialize the state tracker once with an explicit,
+stable `run_id`. Reuse that value for every action-time activity receipt; never
+derive or refresh it from a clock, path, artifact contents, or transcript.
+
 **Important: mid-entry routing rules**
 - User brings a paper and requests "review" -> go to Stage 2.5 (INTEGRITY) first, then Stage 3 (REVIEW) after passing
 - Cannot jump directly to Stage 3 (unless user can provide a previous integrity verification report)
@@ -381,6 +385,31 @@ Users respond to checkpoint prompts with one of these commands. The orchestrator
 - Skippable: Stage 1 (deep-research, if user provides own bibliography), Stage 3' (re-review, if only minor revisions), Stage 4' (re-revise, if accepted), Stage 6 (process summary — declined at the Stage 5 completion checkpoint; marked `skipped`, pipeline still terminates `completed`)
 - Non-Skippable: Stage 2 (writing), Stage 2.5 (pre-review integrity), Stage 3 (initial review), Stage 4.5 (final integrity), Stage 5 (finalize)
 
+#### Adjudication-activity action-time hook (#673)
+
+The state tracker section "Adjudication-activity metadata" is the single
+producer/state authority. Every author choice, qualifying compliance override,
+structured explicit justify/redo request, and MANDATORY-checkpoint response
+first completes and durably applies its existing routing/state behavior. Only
+then may its structured handler best-effort request the closed receipt binding;
+it must never parse conversation history to backfill one. Receipt failure is an
+advisory diagnostic and cannot change routing, state, the compliance outcome,
+or any checkpoint result.
+
+For an attempted `skip` at a MANDATORY checkpoint, refuse the skip and leave
+pipeline state unchanged first. Only afterward may the handler record the
+source `skip` as stored disposition `skip_refused`. MANDATORY receipt stages use
+the complete closed Stage 1-through-6 enum listed by the state tracker (including
+half/prime stages); there is no Stage 0. Author groups use
+`artifact_group_stage` and preserve both Stage 3 and Stage 3-prime groups when
+both occurred. Interaction identity is a run-scoped occurrence id, never a
+content hash.
+
+Activity metadata is always advisory-only. It is not a gate, verdict,
+checkpoint input, dispatch input, model/judge/eval request, passport/handoff
+field, or Process Record source, and its production performs no network/API,
+clock, or ambient filesystem scan.
+
 ### Mode Switching Rules
 
 Users may request changing a sub-skill's mode at a checkpoint. Not all switches are safe.
@@ -558,20 +587,61 @@ The OR preserves any lineage signal already persisted on a resumed or mid-entry 
 
 Reference helper: `scripts/slr_lineage.py` `emit(stages, incoming_slr_lineage)`. Pre-v3.7.4 passports lack the field and the renderer treats absence as `false` (cold-start fallback identical to pre-v3.7.4 behavior). See `shared/handoff_schemas.md` §"Run-level lineage signal (v3.7.4)" for the field contract, and `docs/design/2026-05-15-issue-111-slr-lineage-emission-design.md` for the design.
 
-**Handoff material transfer rules:**
+## Review-target criteria binding lifecycle (#684)
+
+When the author confirms a review target, use the #683 resolver and then
+`scripts/review_criteria_binding.py init` with explicit context, registry,
+portable refs, caller-supplied `target_review_id`, and prior manifest when one
+exists. Store only the manifest pointer index through `state_tracker`; the
+manifest is the sole authority. Do not scan for a context, infer target
+metadata from manuscript quality, copy registry prose into prompts, or accept
+caller-reported artifact hashes.
+
+Consumer sequencing:
+
+1. During Stage 2 `academic-paper` full/plan work, render the `FORMATIVE`
+   marker for `structure_architect_agent`, record its completed outline, and
+   pass that same receipt/context pointer through argument and drafting. In a
+   full run, Phase 6a remains paper-blind under the same authority and its
+   pre-commitment artifact is recorded as `INTERNAL` before Phase 6b receives
+   the draft. Phase 6b repeats the continuity marker and the orchestrator
+   validates any Critical/Major constructive sidecar.
+2. At Stage 3, render five markers from the same manifest for EIC/R1/R2/R3/DA.
+   Inject the manifest pointer and Target Criteria Brief into each paper-blind
+   Phase 1 call. After all five artifacts exist, record the single
+   `external_panel` receipt. Phase 2 receives each unchanged Phase 1 artifact
+   plus the manuscript and may then assess applicability.
+3. Before criteria-aware synthesis, validate the manifest against the explicit
+   context and registry. A full-pipeline run uses `--require-complete`; a
+   mid-entry run validates only consumers actually dispatched and clearly
+   reports that its coverage is not the all-three-consumer claim. Never create
+   retrospective formative/internal receipts for skipped stages.
+4. Validate every Critical/Major companion with `validate-findings` before it
+   is described as contract-conforming. Re-review carries the same manifest by
+   pointer. A substantive target change requires a new, non-comparable target
+   review id.
+
+If no resolved context is available, every relevant dispatch carries
+`criteria_binding_unavailable` and makes no venue-alignment claim. Binding
+failure stops only the criteria-aware handoff; it is not a manuscript gate,
+score, severity, verdict, checkpoint input, or author choice. The CLI is local,
+deterministic, explicit-path-only, and is never a model/judge/network/clock
+consumer.
+
+## Handoff material transfer rules
 
 | Transition | Transferred Materials | Schema Reference | Transfer Method |
 |-----------|----------------------|-----------------|----------------|
-| Stage 1 -> 2 | RQ Brief, Methodology Blueprint, Annotated Bibliography, Synthesis Report | Schema 1 (RQ Brief), Schema 2 (Bibliography), Schema 3 (Synthesis) | deep-research handoff protocol |
-| Stage 2 -> 2.5 | Complete Paper Draft + #547 scope context for Phase E4 (RQ Brief `scope` — the required E4 input; `sub_question_bindings` + outline section→sub-question map when present) + the Schema 2 Annotated Bibliography (#548 — `search_strategy` is the E5 comparison basis; `sources[].relevance` + `relevance_score` ground the nearest-prior-work check), when one exists | Schema 4 (Paper Draft) + Schema 1 scope fields + Schema 2 (search_strategy + source relevance metadata) | Pass to integrity_verification_agent |
-| Stage 2.5 -> 3 | Verified Paper Draft + Integrity Report | Schema 4 + Schema 5 (Integrity Report) | Pass to reviewer (with verification report attached). Carry forward `experiment_provenance[]` + `experiment_alignment_results[]` + `experiment_intake_declaration` (#260) |
+| Stage 1 -> 2 | RQ Brief, Methodology Blueprint, Annotated Bibliography, Synthesis Report | Schema 1 (RQ Brief), Schema 2 (Bibliography), Schema 3 (Synthesis) | deep-research handoff protocol; when active, separately carry the #683 context/#684 binding pointer named by the preceding lifecycle |
+| Stage 2 -> 2.5 | Complete Paper Draft + #547 scope context for Phase E4 (RQ Brief `scope` — the required E4 input; `sub_question_bindings` + outline section→sub-question map when present) + the Schema 2 Annotated Bibliography (#548 — `search_strategy` is the E5 comparison basis; `sources[].relevance` + `relevance_score` ground the nearest-prior-work check), when one exists + unchanged #684 binding pointer/receipts when active | Schema 4 (Paper Draft) + Schema 1 scope fields + Schema 2 (search_strategy + source relevance metadata) + review-target contracts | Pass to integrity_verification_agent; integrity does not consume criteria as a verdict input |
+| Stage 2.5 -> 3 | Verified Paper Draft + Integrity Report + unchanged #684 manifest/context/brief when active | Schema 4 + Schema 5 (Integrity Report) + review-target contracts | Pass to reviewer (with verification report attached). Carry forward `experiment_provenance[]` + `experiment_alignment_results[]` + `experiment_intake_declaration` (#260); the integrity verdict never consumes criteria binding |
 | Stage 3 -> **coaching** -> 4 | Editorial Decision, immutable Revision Roadmap, exact claim surfaces, 5 Review Reports; coaching adds the complete explicit author sidecar without mutating the Roadmap | Schema 6 + `revision-roadmap/1.0` + `claim-surface-manifest/1.0` + `author-adjudication/1.0` | Source-ordered dialogue records one explicit author choice per item, exact targets, and any exact claim/collateral authority -> revision mode |
-| Stage 4 -> 3' | Revised Draft, hard-required Original (pre-revision) Draft (the #576 1.1 §3.1 Phase 2A input; the required bundle already carries the exact matched round's pre draft, so declaring it absent is `manifest_incomplete`, never a `first_link_not_run` degradation), Response to Reviewers + Editorial Decision Letter (its Review Panel Provenance block feeds the #539 Judge Record) + the Round-1 review findings (the Schema 6 review reports the roadmap items trace to — the #576 §4 level-3 criterion layer; absent → transported Schema 7 fields alone, `[ROUND1-FINDINGS-ABSENT]`) + the Round-1 Revision Roadmap being verified + every ordered apply report and paired revision patch/diff file (`<output>.apply-report.json`, the sidecar beside each revised draft, #390; the manifest pair list must exactly equal the fully replayed bundle's ordered write-round projection, the FIRST report's `base_draft_hash` must equal the Original Draft hash prefix, every inner link must join, and only the LAST output hash may equal the Revised Draft hash prefix; any omission, substitution, reorder, or broken link → `manifest_hash_mismatch`) + the Round-1 Reviewer Configuration Cards (yardstick continuity — field_analyst is NOT re-run at Stage 3'; `re_review_mode_protocol.md` § Yardstick Continuity) | Schema 4 (revised + original) + Schema 8 (Response to Reviewers) + Schema 6 (letter + Round-1 review reports) + Schema 7 (Roadmap, machine-form JSON — § Stage 3' Re-Review Contract Dispatch producer obligations) + apply-report sidecar JSON + revision patch JSON + configuration cards (no numbered schema) | Pass to reviewer (marked as verification round) under § Stage 3' Re-Review Contract Dispatch. This row is the re-review-mode transfer — the default Stage 3'. When the user explicitly requests a fresh full review at 3' instead (mid-entry quick→full path: no Schema 7 Roadmap or Round-1 cards exist), transfer the Revised Draft + available context only, dispatch full mode (field_analyst runs by definition), and do NOT mark it a verification round |
+| Stage 4 -> 3' | Revised Draft, hard-required Original (pre-revision) Draft (the #576 1.1 §3.1 Phase 2A input; the required bundle already carries the exact matched round's pre draft, so declaring it absent is `manifest_incomplete`, never a `first_link_not_run` degradation), Response to Reviewers + Editorial Decision Letter (its Review Panel Provenance block feeds the #539 Judge Record) + the Round-1 review findings (the Schema 6 review reports the roadmap items trace to — the #576 §4 level-3 criterion layer; absent → transported Schema 7 fields alone, `[ROUND1-FINDINGS-ABSENT]`) + the Round-1 Revision Roadmap being verified + every ordered apply report and paired revision patch/diff file (`<output>.apply-report.json`, the sidecar beside each revised draft, #390; the manifest pair list must exactly equal the fully replayed bundle's ordered write-round projection, the FIRST report's `base_draft_hash` must equal the Original Draft hash prefix, every inner link must join, and only the LAST output hash may equal the Revised Draft hash prefix; any omission, substitution, reorder, or broken link → `manifest_hash_mismatch`) + the Round-1 Reviewer Configuration Cards (yardstick continuity — field_analyst is NOT re-run at Stage 3'; `re_review_mode_protocol.md` § Yardstick Continuity) + unchanged #684 target-review authority when active | Schema 4 (revised + original) + Schema 8 (Response to Reviewers) + Schema 6 (letter + Round-1 review reports) + Schema 7 (Roadmap, machine-form JSON — § Stage 3' Re-Review Contract Dispatch producer obligations) + apply-report sidecar JSON + revision patch JSON + configuration cards (no numbered schema) + review-target contracts | Pass to reviewer (marked as verification round) under § Stage 3' Re-Review Contract Dispatch. This row is the re-review-mode transfer — the default Stage 3'. When the user explicitly requests a fresh full review at 3' instead (mid-entry quick→full path: no Schema 7 Roadmap or Round-1 cards exist), transfer the Revised Draft + available context only, dispatch full mode (field_analyst runs by definition), and do NOT mark it a verification round. A changed target requires a new non-comparable target review id |
 | Stage 3' -> **coaching** -> 4' | New Revision Roadmap (if Major) | #670 authority family + `shared/contracts/re_review/traceability.schema.json` | Pass the immutable roadmap, exact claim surfaces, traceability sidecar, and new complete author sidecar to revision mode; coaching uses a source-ordered explicit author checkpoint, and prior-round choices are never inferred or carried forward |
 | Stage 3' -> 4.5 | (Accept/Minor direct path — no Stage 4' between) Verified Revised Draft + the traceability sidecar with its frozen `previously_missed`/`indeterminate` new-issue records (#576 §8 — Material Passport cargo consumed by the Stage 4.5 gate) | Schema 4 (revised) + traceability sidecar | Pass to integrity_verification_agent (final verification); the frozen records are gate INPUT, not just cargo |
 | Stage 4/4' -> 4.5 | Revised/Re-Revised Draft + #547/#548 context + complete validated `revision-evidence-bundle/1.0` from exact integrity PASS through every review write/no-op/integrity round + (Major-via-4' path) the Stage 3' traceability sidecar with its frozen `previously_missed`/`indeterminate` new-issue records | Schema 4 + #670 bundle + traceability sidecar | Pass to integrity_verification_agent; registered surfaces are replayed, while the explicit unregistered-claim boundary remains mandatory E6 review input |
 | Stage 4.5 -> 5 | Final Verified Draft + Final Integrity Report + exact preregistration sidecar/companion + independent #660/#672 results | Schema 4 + Schema 5 + `preregistration-artifact/1.0`; independent advisory schemas | At the one mandatory entry checkpoint run #660 then #672 on identical accepted-draft ID/SHA and surface both without changing routing. On confirmation: Produce MD -> DOCX via Pandoc when available (otherwise instructions) -> ask about LaTeX -> confirm -> PDF. Carry forward `experiment_alignment_results[]` + `experiment_intake_declaration` (#260) to formatter surface + Stage 6 histogram |
-| Stage 5 -> 6 | Final deliverables list + pipeline state history (state_tracker JSON, agent logs) | — (Process Record; no numbered schema) | Dispatched only after the user confirms the Stage 5 completion checkpoint (FULL). User may decline Stage 6 there: mark it `skipped`, set pipeline state `completed`. Protocol: `../references/process_summary_protocol.md`; terminal semantics: `../references/pipeline_state_machine.md` § Stage 6 terminal semantics |
+| Stage 5 -> 6 | Final deliverables list + Process-Summary projection of pipeline state history and agent logs, explicitly omitting the #673 activity projection of terminal root `run_id`, pending/sealed activity fields, selected-store data, renderer output, and diagnostics | — (Process Record; no numbered schema) | Dispatched only after the user confirms the Stage 5 completion checkpoint (FULL). User may decline Stage 6 there: mark it `skipped`, set pipeline state `completed`. Protocol: `../references/process_summary_protocol.md`; terminal semantics: `../references/pipeline_state_machine.md` § Stage 6 terminal semantics |
 
 **#672 sidecar continuity:** At Stage 1, this shell-capable orchestrator alone
 invokes `scripts/build_cross_document_consistency_advisory.py
@@ -642,9 +712,30 @@ Notify state_tracker_agent to update state whenever a stage begins or completes:
 - Checkpoint passed: `update_pipeline_state("running")`
 - Material produced: `update_material(material_name, true)`
 - Integrity check result: `update_integrity(stage_id, verdict, details)`
-- Pipeline terminal transition: on the Stage 6 terminal acknowledgement (`finish` / `end` / `done` / `confirm`, or an unambiguous natural-language equivalent) — `update_stage("6", "completed", outputs)` + `update_pipeline_state("completed")`; if the user declined Stage 6 at the Stage 5 completion checkpoint — `update_stage("6", "skipped", {reason: "user declined Stage 6"})` + `update_pipeline_state("completed")`
+- Pipeline terminal transition: on the Stage 6 terminal acknowledgement (`finish` / `end` / `done` / `confirm`, or an unambiguous natural-language equivalent) — `update_stage("6", "completed", outputs)` + `update_pipeline_state("completed")`; if the user declined Stage 6 at the Stage 5 completion checkpoint — `update_stage("6", "skipped", {reason: "user declined Stage 6"})` + `update_pipeline_state("completed")`. Persist this transition first, without consulting activity metadata.
 
 Request state_tracker_agent to produce the Progress Dashboard when needed.
+
+### Post-terminal adjudication-activity sequence (#673)
+
+After the existing terminal transition above is durable, and only when the user
+selected an explicit local activity store, perform this best-effort sequence:
+
+1. pass the explicit state path, artifact-root path, and the state tracker's
+   explicit five-row `pending_adjudication_activity_bindings[]` value to
+   `seal_terminal_inventory(state_path, artifact_root, pending_bindings)`;
+2. let that deterministic helper calculate raw artifact hashes and atomically
+   seal the root `adjudication_activity_sources` inventory without changing the
+   already-terminal state/stage/status;
+3. run `build-input` using only that sealed inventory, then idempotent
+   `append-run`, and optionally `render`.
+
+The helper may not discover the pending field itself, accept caller-reported
+hashes, infer paths, scan/glob a directory, or use a clock/network/model. Any
+seal/build/append/render failure is surfaced only as an advisory diagnostic and
+does not roll back, delay, or rewrite the terminal outcome. The terminal state
+file's root `run_id` plus sealed root `adjudication_activity_sources` are exact
+source/run authority; the pending rows are not.
 
 ---
 

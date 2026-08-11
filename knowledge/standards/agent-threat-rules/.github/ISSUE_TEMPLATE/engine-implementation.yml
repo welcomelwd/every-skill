@@ -1,0 +1,73 @@
+name: Engine Implementation
+description: Announce or discuss an ATR engine in a new language (Python, Go, Rust, etc.)
+title: "[Engine] "
+labels: ["ecosystem", "high-impact"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ATR needs engines in multiple languages to become a real standard.
+        The TypeScript engine is the reference implementation, but Python, Go,
+        and Rust implementations are critical for enterprise adoption.
+
+        Use this template to:
+        - Announce an engine you're building or have built
+        - Discuss design decisions before starting
+        - Request help or co-maintainers
+
+  - type: dropdown
+    id: language
+    attributes:
+      label: Language
+      options:
+        - Python
+        - Go
+        - Rust
+        - Java
+        - C#
+        - Ruby
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: status
+    attributes:
+      label: Status
+      options:
+        - Planning / seeking co-maintainers
+        - In progress
+        - MVP ready (can evaluate rules)
+        - Feature-complete (passes reference test suite)
+        - Published (available on package manager)
+    validations:
+      required: true
+
+  - type: input
+    id: repo-url
+    attributes:
+      label: Repository URL (if exists)
+      placeholder: "https://github.com/your-name/pyatr"
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: |
+        Which ATR features does your engine support or plan to support?
+      placeholder: |
+        - [x] Load YAML rules
+        - [x] Layer 1: regex evaluation
+        - [ ] Layer 2: behavioral fingerprinting
+        - [ ] Layer 3: semantic analysis
+        - [x] Array-format conditions
+        - [ ] Named-map conditions
+        - [ ] Session tracking
+    validations:
+      required: true
+
+  - type: textarea
+    id: design-questions
+    attributes:
+      label: Design Questions or Discussion Points
+      description: Any schema ambiguities, operator questions, or architectural decisions you'd like input on?

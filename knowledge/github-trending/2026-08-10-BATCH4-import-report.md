@@ -5,11 +5,11 @@
 | 项目 | 状态 | 目录或原因 |
 | --- | --- | --- |
 | `microsoft/markitdown` | up-to-date | `knowledge/tools/markitdown @ fd239d5d2be43d9b68329730206b9312c7d5a388` |
-| `ollama/ollama` | updated | `knowledge/tools/ollama @ 4f066a6fb0c05d7dcf68e02858a5ddd399af716a (1177 files, 12041932 bytes); excluded 73 files` |
-| `huggingface/transformers` | updated | `knowledge/tools/transformers @ c7e57f79348480f73d3ef0ad8c47f807ef1378c8 (2716 files, 26214400 bytes); excluded 3660 files` |
-| `BerriAI/litellm` | updated | `knowledge/tools/litellm @ 20354bfcdcdd0130d257c844c4368d37a4be8990 (1794 files, 26214395 bytes); excluded 7408 files` |
-| `promptfoo/promptfoo` | updated | `knowledge/evaluations/promptfoo @ 00f6c3868d98ed8de649b0ad06eb71bf0d0b35a2 (3019 files, 26214397 bytes); excluded 2453 files` |
-| `Arize-ai/phoenix` | updated | `knowledge/evaluations/phoenix @ 75de295360b2eb483e94a318d938ec1c395ccb18 (4407 files, 26214400 bytes); excluded 2671 files` |
-| `Giskard-AI/giskard-oss` | up-to-date | `knowledge/evaluations/giskard-oss @ 62b07bbc703e0774c38e5737a6d128b52ecc2be1` |
-| `openai/codex-security` | updated | `knowledge/security/codex-security @ b0d4fec532c957772c5af79738a173100f63933f (214 files, 3246585 bytes); excluded 3 files` |
-| `NationalSecurityAgency/ghidra` | updated | `knowledge/reverse-engineering/ghidra @ 2a81006bf6554f7e5986fcf5fe6eec8c013194bf (2637 files, 26214400 bytes); excluded 17724 files` |
+| `ollama/ollama` | updated | `knowledge/tools/ollama @ 400164d47c0e48c53dfe095bb078780947035d40 (1185 files, 12215829 bytes); excluded 73 files` |
+| `huggingface/transformers` | up-to-date | `knowledge/tools/transformers @ c7e57f79348480f73d3ef0ad8c47f807ef1378c8` |
+| `BerriAI/litellm` | updated | `knowledge/tools/litellm @ b0fac57fe404349335aa847f1f7214f17309af79 (1793 files, 26214400 bytes); excluded 7419 files` |
+| `promptfoo/promptfoo` | updated | `knowledge/evaluations/promptfoo @ a1f22f56c686028e0ab9f8a1ae6cb99af831fdf1 (3017 files, 26214395 bytes); excluded 2456 files` |
+| `Arize-ai/phoenix` | updated | `knowledge/evaluations/phoenix @ 92c33ef585b86b4fd6c4ba3d0c14aebb6cdae9e8 (4404 files, 26214400 bytes); excluded 2678 files` |
+| `Giskard-AI/giskard-oss` | updated | `knowledge/evaluations/giskard-oss @ 86f031290e2bc9b8b91103d22438d56498c20b50 (411 files, 2831068 bytes); excluded 5 files` |
+| `openai/codex-security` | updated | `knowledge/security/codex-security @ c475ef36a29916fc62eebfa46bc111741339860d (216 files, 3267063 bytes); excluded 3 files` |
+| `NationalSecurityAgency/ghidra` | up-to-date | `knowledge/reverse-engineering/ghidra @ 2a81006bf6554f7e5986fcf5fe6eec8c013194bf` |

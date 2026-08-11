@@ -1,0 +1,4 @@
+/Users/user/Downloads/agent-threat-rules/rules/prompt-injection/ATR-2026-00153-tool-with-embedded-instruction-to-bypass.yaml
+/Users/user/Downloads/agent-threat-rules/rules/prompt-injection/ATR-2026-00154-unauthorized-background-task-execution-v.yaml
+/Users/user/Downloads/agent-threat-rules/rules/prompt-injection/ATR-2026-00155-hidden-llm-instructions-in-skill-descrip.yaml
+/Users/user/Downloads/agent-threat-rules/rules/prompt-injection/ATR-2026-00156-ssh-remote-command-execution-with-creden.yaml

@@ -1,0 +1,66 @@
+title: "[Integration] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Integration Support
+
+        Get help integrating ATR into your platform, CI/CD pipeline, or security stack.
+
+  - type: dropdown
+    id: integration-type
+    attributes:
+      label: Integration Type
+      options:
+        - npm package (agent-threat-rules)
+        - GitHub Action (atr-action)
+        - CI/CD pipeline
+        - Custom engine / runtime
+        - MCP server / client
+        - Enterprise deployment
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Your Platform / Framework
+      options:
+        - Node.js / TypeScript
+        - Python
+        - Go
+        - Rust
+        - Java / Kotlin
+        - LangChain / LangGraph
+        - CrewAI
+        - Dify
+        - Microsoft AGT
+        - Custom framework
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What are you trying to do? What's not working?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: |
+        Relevant code, error messages, or configuration.
+        Include your ATR version (`npm list agent-threat-rules`).
+      render: shell
+
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What I've Tried
+      description: What approaches have you already attempted?

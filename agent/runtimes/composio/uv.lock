@@ -714,11 +714,12 @@ wheels = [
 
 [[package]]
 name = "composio"
-version = "0.18.2"
+version = "0.19.0"
 source = { editable = "python" }
 dependencies = [
     { name = "composio-client" },
     { name = "json-schema-to-pydantic" },
+    { name = "jsonschema" },
     { name = "openai" },
     { name = "pydantic" },
     { name = "pysher" },
@@ -746,6 +747,7 @@ dev = [
 requires-dist = [
     { name = "composio-client", specifier = "==1.43.0" },
     { name = "json-schema-to-pydantic", specifier = ">=0.4.11" },
+    { name = "jsonschema", specifier = ">=4.23.0" },
     { name = "openai", specifier = ">=2.48.0" },
     { name = "pydantic", specifier = ">=2.11.9" },
     { name = "pysher", specifier = ">=1.0.8" },
@@ -771,7 +773,7 @@ dev = [
 
 [[package]]
 name = "composio-anthropic"
-version = "0.18.2"
+version = "0.19.0"
 source = { editable = "python/providers/anthropic" }
 dependencies = [
     { name = "anthropic" },
@@ -803,7 +805,7 @@ wheels = [
 
 [[package]]
 name = "composio-crewai"
-version = "0.18.2"
+version = "0.19.0"
 source = { editable = "python/providers/crewai" }
 dependencies = [
     { name = "composio" },
@@ -818,7 +820,7 @@ requires-dist = [
 
 [[package]]
 name = "composio-gemini"
-version = "0.18.2"
+version = "0.19.0"
 source = { virtual = "python/providers/gemini" }
 dependencies = [
     { name = "composio" },
@@ -833,7 +835,7 @@ requires-dist = [
 
 [[package]]
 name = "composio-google"
-version = "0.18.2"
+version = "0.19.0"
 source = { editable = "python/providers/google" }
 dependencies = [
     { name = "composio" },
@@ -848,7 +850,7 @@ requires-dist = [
 
 [[package]]
 name = "composio-google-adk"
-version = "0.18.2"
+version = "0.19.0"
 source = { editable = "python/providers/google_adk" }
 dependencies = [
     { name = "composio" },
@@ -863,7 +865,7 @@ requires-dist = [
 
 [[package]]
 name = "composio-langchain"
-version = "0.18.2"
+version = "0.19.0"
 source = { editable = "python/providers/langchain" }
 dependencies = [
     { name = "composio" },
@@ -878,7 +880,7 @@ requires-dist = [
 
 [[package]]
 name = "composio-openai"
-version = "0.18.2"
+version = "0.19.0"
 source = { editable = "python/providers/openai" }
 dependencies = [
     { name = "composio" },
@@ -893,7 +895,7 @@ requires-dist = [
 
 [[package]]
 name = "composio-openai-agents"
-version = "0.18.2"
+version = "0.19.0"
 source = { editable = "python/providers/openai_agents" }
 dependencies = [
     { name = "composio" },

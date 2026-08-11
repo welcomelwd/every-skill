@@ -1,0 +1,312 @@
+name: Rule Quality Gate
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'rules/**'
+
+jobs:
+  quality-check:
+    name: ATR Rule Quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Identify changed rule files
+        id: changed-rules
+        run: |
+          CHANGED=$(git diff --name-only --diff-filter=ACMR origin/main...HEAD -- 'rules/**/*.yaml' 'rules/**/*.yml' || true)
+          if [ -z "$CHANGED" ]; then
+            echo "No rule files changed."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Changed rule files:"
+            echo "$CHANGED"
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            # Write to file for later steps
+            echo "$CHANGED" > changed_rules.txt
+          fi
+
+      # The validate and test steps below each used to spawn one `npx` process
+      # per changed file. That is fine for a three-rule PR and quadratic pain
+      # for a sweep: PR #436 touched 787 files and this job took 1h24m, almost
+      # all of it Node start-up. Both commands accept a directory and recurse,
+      # so the changed files are staged once and each command runs once.
+      # Paths are preserved under the stage so reported files still read as
+      # rules/<category>/<id>.yaml.
+      - name: Stage changed rules
+        if: steps.changed-rules.outputs.has_changes == 'true'
+        run: |
+          rm -rf .rulestage
+          while IFS= read -r file; do
+            if [ -f "$file" ]; then
+              mkdir -p ".rulestage/$(dirname "$file")"
+              cp "$file" ".rulestage/$file"
+            fi
+          done < changed_rules.txt
+          echo "Staged $(find .rulestage -name '*.yaml' -o -name '*.yml' | wc -l) rule file(s)."
+
+      - name: Validate changed rules
+        if: steps.changed-rules.outputs.has_changes == 'true'
+        id: validate
+        run: |
+          npx agent-threat-rules validate .rulestage --json > validate.json || true
+
+          PASS=$(jq -r '.passed // 0' validate.json)
+          FAIL=$(jq -r '.failed // 0' validate.json)
+          ERRORS=$(jq -r '
+            [.results[]? | select(.valid | not)
+             | "- " + (.file | sub("^.*/\\.rulestage/"; "")) + ": " + ((.errors // []) | join("; "))]
+            | join("\n")' validate.json)
+
+          jq -r '.results[]? | select(.valid | not)
+                 | "INVALID " + (.file | sub("^.*/\\.rulestage/"; ""))' validate.json
+          echo "Validated $(jq -r '.total // 0' validate.json) rule file(s): $PASS ok, $FAIL invalid."
+
+          echo "validate_pass=$PASS" >> "$GITHUB_OUTPUT"
+          echo "validate_fail=$FAIL" >> "$GITHUB_OUTPUT"
+          echo "validate_errors<<EOF" >> "$GITHUB_OUTPUT"
+          echo -e "$ERRORS" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          if [ "$FAIL" -gt 0 ]; then
+            echo "validation_status=failed" >> "$GITHUB_OUTPUT"
+          else
+            echo "validation_status=passed" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Test changed rules
+        if: steps.changed-rules.outputs.has_changes == 'true'
+        id: test
+        run: |
+          npx agent-threat-rules test .rulestage --json > test.json || true
+
+          # Counts are per test case now, not per file. The old loop grepped for
+          # "All tests passed", which a rule reports even when every one of its
+          # cases was unevaluable — so a rule nothing could evaluate counted as a
+          # pass. failed == 0 is the gate; unevaluable is surfaced separately.
+          PASS=$(jq -r '.passed // 0' test.json)
+          FAIL=$(jq -r '.failed // 0' test.json)
+          SKIPPED=$(jq -r '.skipped // 0' test.json)
+          ERRORS=$(jq -r '
+            [.failures[]? | "- " + .ruleId + " [" + .testType + "]: expected "
+             + .expected + ", got " + .got]
+            | unique | join("\n")' test.json)
+
+          jq -r '.failures[]? | "FAIL " + .ruleId + " [" + .testType + "] " + (.input // "")' test.json
+          jq -r '.skippedRules[]? | "UNEVALUABLE " + .ruleId + " (" + (.cases|tostring) + " case(s)): " + .reason' test.json
+          echo "Ran $(jq -r '.totalTests // 0' test.json) case(s) across $(jq -r '.totalRules // 0' test.json) rule(s): $PASS pass, $FAIL fail, $SKIPPED unevaluable."
+
+          echo "test_pass=$PASS" >> "$GITHUB_OUTPUT"
+          echo "test_fail=$FAIL" >> "$GITHUB_OUTPUT"
+          echo "test_errors<<EOF" >> "$GITHUB_OUTPUT"
+          echo -e "$ERRORS" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          if [ "$FAIL" -gt 0 ]; then
+            echo "test_status=failed" >> "$GITHUB_OUTPUT"
+          else
+            echo "test_status=passed" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run full rule collection stats
+        if: steps.changed-rules.outputs.has_changes == 'true'
+        id: stats
+        run: |
+          STATS=$(npx agent-threat-rules stats --json 2>&1) || true
+          echo "stats_json<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$STATS" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Post quality report comment
+        # External-fork PRs receive a read-only GITHUB_TOKEN, so this POST
+        # returns 403 "Resource not accessible by integration". Treat the
+        # comment as best-effort so benchmark + PINT gates still run and
+        # the job status reflects actual quality, not a permission quirk.
+        if: steps.changed-rules.outputs.has_changes == 'true'
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const validatePass = '${{ steps.validate.outputs.validate_pass }}';
+            const validateFail = '${{ steps.validate.outputs.validate_fail }}';
+            const validateErrors = `${{ steps.validate.outputs.validate_errors }}`;
+            const testPass = '${{ steps.test.outputs.test_pass }}';
+            const testFail = '${{ steps.test.outputs.test_fail }}';
+            const testErrors = `${{ steps.test.outputs.test_errors }}`;
+            const validationStatus = '${{ steps.validate.outputs.validation_status }}';
+            const testStatus = '${{ steps.test.outputs.test_status }}';
+
+            const allPassed = validationStatus === 'passed' && testStatus === 'passed';
+            const statusIcon = allPassed ? 'PASS' : 'FAIL';
+            const label = allPassed ? 'quality-ready' : 'needs-work';
+
+            let body = `## ATR Rule Quality Report\n\n`;
+            body += `**Status: ${statusIcon}**\n\n`;
+            body += `### Validation\n`;
+            body += `- Passed: ${validatePass}\n`;
+            body += `- Failed: ${validateFail}\n`;
+            if (validateErrors.trim()) {
+              body += `- Errors:${validateErrors}\n`;
+            }
+            body += `\n### Test Cases\n`;
+            body += `- Passed: ${testPass}\n`;
+            body += `- Failed: ${testFail}\n`;
+            if (testErrors.trim()) {
+              body += `- Errors:${testErrors}\n`;
+            }
+            body += `\n### Quality Checklist\n`;
+            body += `- [${validationStatus === 'passed' ? 'x' : ' '}] Schema validation\n`;
+            body += `- [${testStatus === 'passed' ? 'x' : ' '}] Test cases pass\n`;
+            body += `\n---\n`;
+            body += `Label: \`${label}\`\n`;
+
+            // Post comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
+
+            // Apply label
+            try {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: [label]
+              });
+            } catch (e) {
+              console.log(`Could not apply label ${label}: ${e.message}`);
+            }
+
+            // Remove opposite label if present
+            const oppositeLabel = allPassed ? 'needs-work' : 'quality-ready';
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                name: oppositeLabel
+              });
+            } catch (e) {
+              // Label might not exist, that's fine
+            }
+
+      - name: Benchmark regression gate
+        if: steps.changed-rules.outputs.has_changes == 'true'
+        id: benchmark
+        run: |
+          echo "Running SKILL.md benchmark regression check..."
+          RESULT=$(node -e "
+            const { runSkillBenchmark } = require('./dist/eval/skill-benchmark.js');
+            runSkillBenchmark().then(r => {
+              const pass = r.overall_recall >= 0.8 && r.overall_precision >= 0.95 && r.fp_rate <= 0.02;
+              console.log(JSON.stringify({
+                recall: r.overall_recall,
+                precision: r.overall_precision,
+                fp_rate: r.fp_rate,
+                tp: r.true_positives,
+                fp: r.false_positives,
+                pass
+              }));
+              process.exit(pass ? 0 : 1);
+            }).catch(e => { console.error(e); process.exit(1); });
+          " 2>&1)
+          echo "Benchmark result: $RESULT"
+          if echo "$RESULT" | grep -q '"pass":true'; then
+            echo "benchmark_status=passed" >> "$GITHUB_OUTPUT"
+          else
+            echo "benchmark_status=failed" >> "$GITHUB_OUTPUT"
+            echo "BENCHMARK REGRESSION DETECTED"
+            echo "$RESULT"
+          fi
+
+      # ── PINT regression gate ──────────────────────────────────────────────
+      # This step used to be called "Run PINT eval regression check" and did
+      # none of the three things that name claims:
+      #   1. it ran `npm run eval` (src/eval/run-eval.ts, the internal
+      #      self-test harness) — PINT never ran;
+      #   2. it then read data/pint-benchmark/pint-eval-report.json, a file
+      #      COMMITTED TO GIT that step 1 does not write — so it reported a
+      #      run performed by a human on an earlier commit and rule set;
+      #   3. it read `.recall`, which does not exist at the top level of that
+      #      report (it is .report.overall.recall), so every run printed the
+      #      literal "PINT recall: undefined".
+      # And no later step read steps.pint.outputs.* — a PINT regression could
+      # not fail a PR. Snapshot first, then actually run PINT, then gate.
+      - name: Snapshot PINT baseline (before the run overwrites it)
+        if: steps.changed-rules.outputs.has_changes == 'true'
+        run: |
+          # `npm run eval:pint` rewrites BOTH the report and
+          # data/measurements/pint/latest.json, so the baseline has to be taken
+          # off the committed tree before the run, not after.
+          cp data/measurements/pint/latest.json "${RUNNER_TEMP}/pint-baseline.json"
+          cp data/pint-benchmark/pint-eval-report.json "${RUNNER_TEMP}/pint-report-before.json"
+
+      - name: Run PINT benchmark
+        if: steps.changed-rules.outputs.has_changes == 'true'
+        id: pint-run
+        run: |
+          set -o pipefail
+          # The runner exits 1 on its own thresholds, one of which is a p95
+          # latency bound that depends on the shared GitHub runner rather than
+          # on this PR's rules. Capture the status and let the deterministic
+          # recall/FP comparison below decide the gate.
+          if npm run eval:pint 2>&1 | tail -40; then
+            echo "eval:pint exited 0"
+          else
+            echo "eval:pint exited non-zero — see its own threshold output above"
+          fi
+
+      - name: PINT regression gate
+        if: steps.changed-rules.outputs.has_changes == 'true'
+        id: pint
+        run: |
+          if node scripts/ci/pint-regression-gate.mjs \
+               --report data/pint-benchmark/pint-eval-report.json \
+               --before "${RUNNER_TEMP}/pint-report-before.json" \
+               --baseline "${RUNNER_TEMP}/pint-baseline.json" \
+               --tolerance 0.02; then
+            echo "pint_status=passed" >> "$GITHUB_OUTPUT"
+          else
+            echo "pint_status=failed" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fail if quality gate not met
+        if: steps.changed-rules.outputs.has_changes == 'true'
+        run: |
+          if [ "${{ steps.validate.outputs.validation_status }}" != "passed" ]; then
+            echo "Validation failed. Fix errors and re-push."
+            exit 1
+          fi
+          if [ "${{ steps.test.outputs.test_status }}" != "passed" ]; then
+            echo "Test cases failed. Fix failing tests and re-push."
+            exit 1
+          fi
+          if [ "${{ steps.benchmark.outputs.benchmark_status }}" != "passed" ]; then
+            echo "Benchmark regression detected. New rules caused recall drop or FP increase."
+            exit 1
+          fi
+          if [ "${{ steps.pint.outputs.pint_status }}" != "passed" ]; then
+            echo "PINT regression detected (or the PINT run produced no fresh report)."
+            exit 1
+          fi
+          echo "All quality checks passed (schema + tests + skill benchmark + PINT)."

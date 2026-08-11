@@ -1,0 +1,75 @@
+name: Schema Change Proposal
+description: Propose a change to the ATR schema specification
+title: "[Schema] "
+labels: ["schema-change"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Schema changes affect every rule and every engine implementation.
+        Changes require a minimum 7-day community discussion period before merging.
+
+        Before proposing, check if your change can be achieved within the
+        existing schema (e.g., using metadata fields or custom extensions).
+
+  - type: dropdown
+    id: change-type
+    attributes:
+      label: Change Type
+      options:
+        - New field (backward-compatible)
+        - New operator (backward-compatible)
+        - Field modification (may break existing rules)
+        - Field removal (breaking)
+        - New agent_source type (backward-compatible)
+        - Validation/constraint change
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Change
+      description: Describe the change in detail. Include before/after YAML examples.
+      placeholder: |
+        Add a `version` field to individual rules for tracking rule evolution:
+
+        Before:
+          id: ATR-2026-001
+          status: experimental
+
+        After:
+          id: ATR-2026-001
+          version: "1.2.0"
+          status: experimental
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: What problem does this solve? Include concrete examples.
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact Analysis
+      description: |
+        - How many existing rules would need to be updated?
+        - Would existing engines need code changes?
+        - Is this backward-compatible?
+      placeholder: |
+        - 0 existing rules affected (new optional field)
+        - Engines: no change needed (field is optional)
+        - Backward-compatible: yes
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: What other approaches did you consider? Why is this one better?

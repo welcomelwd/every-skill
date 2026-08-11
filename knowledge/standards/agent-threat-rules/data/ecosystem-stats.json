@@ -1,0 +1,19 @@
+{
+  "generatedAt": "2026-06-20T04:25:21.127Z",
+  "totalPackages": 3410,
+  "totalTools": 38215,
+  "riskDistribution": {
+    "HIGH": 267,
+    "MEDIUM": 354,
+    "CRITICAL": 381,
+    "CLEAN": 2042,
+    "LOW": 360,
+    "ERROR": 6
+  },
+  "supplyChain": {
+    "withPostInstall": 125,
+    "typosquatRisk": 10
+  },
+  "threatRate": 19,
+  "lastScanDate": "2026-06-20T04:25:19.162Z"
+}

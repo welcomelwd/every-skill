@@ -1,0 +1,160 @@
+{
+  "scanDate": "2026-03-26T16:16:42.203Z",
+  "engine": "ATR scan-core v1.4.0",
+  "atrRules": 71,
+  "owaspCoverage": "10/10",
+  "totalCrawled": 36394,
+  "totalScanned": 9676,
+  "noContent": 27718,
+  "summary": {
+    "MEDIUM": 1016,
+    "LOW": 7354,
+    "HIGH": 1124,
+    "CRITICAL": 182
+  },
+  "flaggedCount": 1306,
+  "criticalCount": 182,
+  "highCount": 1124,
+  "topCritical": [
+    {
+      "author": "olliewazza",
+      "name": "larry",
+      "downloads": 10659,
+      "riskScore": 100,
+      "topFinding": "Malicious Content in MCP Tool Response"
+    },
+    {
+      "author": "olliewazza",
+      "name": "larry",
+      "downloads": 10659,
+      "riskScore": 100,
+      "topFinding": "Malicious Content in MCP Tool Response"
+    },
+    {
+      "author": "ivangdavila",
+      "name": "coding",
+      "downloads": 10090,
+      "riskScore": 100,
+      "topFinding": "Malicious Content in MCP Tool Response (hidden in markup)"
+    },
+    {
+      "author": "ivangdavila",
+      "name": "coding",
+      "downloads": 10090,
+      "riskScore": 100,
+      "topFinding": "Malicious Content in MCP Tool Response (hidden in markup)"
+    },
+    {
+      "author": "chrisochrisochriso-cmyk",
+      "name": "clawsec",
+      "downloads": 9491,
+      "riskScore": 100,
+      "topFinding": "Direct Prompt Injection via User Input"
+    },
+    {
+      "author": "chrisochrisochriso-cmyk",
+      "name": "clawsec",
+      "downloads": 9491,
+      "riskScore": 100,
+      "topFinding": "Direct Prompt Injection via User Input"
+    },
+    {
+      "author": "shaharsha",
+      "name": "elevenlabs-tts",
+      "downloads": 5304,
+      "riskScore": 100,
+      "topFinding": "System Prompt Override Attempt (hidden in markup)"
+    },
+    {
+      "author": "shaharsha",
+      "name": "elevenlabs-tts",
+      "downloads": 5304,
+      "riskScore": 100,
+      "topFinding": "System Prompt Override Attempt (hidden in markup)"
+    },
+    {
+      "author": "ivangdavila",
+      "name": "graphic-design",
+      "downloads": 4257,
+      "riskScore": 100,
+      "topFinding": "Unauthorized Tool Call Detection"
+    },
+    {
+      "author": "ivangdavila",
+      "name": "graphic-design",
+      "downloads": 4257,
+      "riskScore": 100,
+      "topFinding": "Unauthorized Tool Call Detection"
+    },
+    {
+      "author": "nextfrontierbuilds",
+      "name": "moltbot-best-practices",
+      "downloads": 4151,
+      "riskScore": 100,
+      "topFinding": "Malicious Content in MCP Tool Response (hidden in markup)"
+    },
+    {
+      "author": "nextfrontierbuilds",
+      "name": "moltbot-best-practices",
+      "downloads": 4151,
+      "riskScore": 100,
+      "topFinding": "Malicious Content in MCP Tool Response (hidden in markup)"
+    },
+    {
+      "author": "nitishgargiitd",
+      "name": "story-cog",
+      "downloads": 4086,
+      "riskScore": 100,
+      "topFinding": "Malicious Content in MCP Tool Response (hidden in markup)"
+    },
+    {
+      "author": "nitishgargiitd",
+      "name": "story-cog",
+      "downloads": 4086,
+      "riskScore": 100,
+      "topFinding": "Malicious Content in MCP Tool Response (hidden in markup)"
+    },
+    {
+      "author": "madsb",
+      "name": "nanobazaar",
+      "downloads": 3472,
+      "riskScore": 100,
+      "topFinding": "System Prompt Override Attempt"
+    },
+    {
+      "author": "madsb",
+      "name": "nanobazaar",
+      "downloads": 3472,
+      "riskScore": 100,
+      "topFinding": "System Prompt Override Attempt"
+    },
+    {
+      "author": "ashrf-in",
+      "name": "odoo-openclaw-skill",
+      "downloads": 3155,
+      "riskScore": 100,
+      "topFinding": "Malicious Content in MCP Tool Response (hidden in markup)"
+    },
+    {
+      "author": "tlxue",
+      "name": "everclaw",
+      "downloads": 3124,
+      "riskScore": 100,
+      "topFinding": "Malicious Content in MCP Tool Response (hidden in markup)"
+    },
+    {
+      "author": "matanle51",
+      "name": "agentic-paper-digest-skill",
+      "downloads": 2866,
+      "riskScore": 100,
+      "topFinding": "System Prompt Override Attempt"
+    },
+    {
+      "author": "odrobnik",
+      "name": "tesla-fleet-api",
+      "downloads": 2839,
+      "riskScore": 100,
+      "topFinding": "System Prompt Override Attempt"
+    }
+  ]
+}

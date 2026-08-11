@@ -1,0 +1,22 @@
+# ATR Contributors
+# Add yourself via PR! See .github/ISSUE_TEMPLATE/add-contributor.md
+#
+# Fields:
+#   github:        GitHub username (required)
+#   country:       ISO 3166-1 alpha-2 code (required) — e.g. TW, US, DE, JP
+#   role:          maintainer | contributor | reporter (required)
+#   contributions: list of contribution types (required)
+#                  rules, engine, website, benchmark, docs, evasion-report, fp-report, review
+#   pr:            notable PR reference (optional)
+
+- github: eeee2345
+  country: TW
+  role: maintainer
+  contributions: [rules, engine, website, benchmark, docs]
+
+# Cisco AI Defense — merged 34 ATR rules as upstream (PR #79)
+- github: cisco-ai-defense
+  country: US
+  role: contributor
+  contributions: [rules]
+  pr: "cisco-ai-defense/skill-scanner#79"

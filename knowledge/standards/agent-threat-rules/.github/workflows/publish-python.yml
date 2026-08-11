@@ -1,0 +1,120 @@
+name: Publish pyATR to PyPI
+
+on:
+  push:
+    tags:
+      - 'pyatr-v*'
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Version bump type (patch/minor/major)'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Publish pyATR
+    runs-on: ubuntu-latest
+    environment: pypi
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build tools
+        run: pip install build twine
+
+      - name: Bump version (manual dispatch only)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        working-directory: python
+        run: |
+          BUMP="${{ github.event.inputs.bump_type }}"
+          CURRENT=$(grep -E '^version = ' pyproject.toml | sed -E 's/version = "([^"]+)"/\1/')
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+          NEW="$MAJOR.$MINOR.$PATCH"
+          sed -i "s/^version = \"$CURRENT\"/version = \"$NEW\"/" pyproject.toml
+          cd ..
+          git config user.name "ATR Release Bot"
+          git config user.email "release@atr-framework.org"
+          git add python/pyproject.toml
+          git commit -m "release: pyatr v$NEW"
+          git tag "pyatr-v$NEW"
+          git push origin main
+          git push origin "pyatr-v$NEW"
+          echo "VERSION=$NEW" >> "$GITHUB_ENV"
+
+      - name: Get version from tag
+        if: ${{ github.event_name == 'push' }}
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/pyatr-v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Install pyATR deps + run tests
+        working-directory: python
+        run: |
+          pip install -e ".[dev]"
+          python -m pytest tests/ -v
+
+      - name: Bundle rules into package
+        working-directory: python
+        run: python scripts/bundle_rules.py
+
+      - name: Build sdist + wheel
+        working-directory: python
+        run: python -m build
+
+      - name: Verify built package
+        working-directory: python
+        run: |
+          python -m twine check dist/*
+          ls -la dist/
+
+      - name: Publish to PyPI
+        working-directory: python
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: python -m twine upload dist/*
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "pyatr-v${{ env.VERSION }}" \
+            --title "pyATR v${{ env.VERSION }}" \
+            --notes "Python reference engine for Agent Threat Rules (Layer 1 regex detection).
+
+          Install:
+          \`\`\`
+          pip install pyatr==${{ env.VERSION }}
+          \`\`\`
+
+          Use:
+          \`\`\`python
+          from pyatr import ATREngine, AgentEvent
+          engine = ATREngine()
+          engine.load_rules_from_directory('rules')
+          matches = engine.evaluate(AgentEvent(content=user_input, event_type='llm_input'))
+          \`\`\`
+
+          See python/README.md for full docs."

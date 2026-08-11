@@ -1,0 +1,892 @@
+"""Microsoft Entra ID (Azure AD) authentication provider implementation."""
+
+import logging
+import os
+import time
+from typing import Any
+from urllib.parse import urlencode
+
+import httpx
+import jwt
+import requests
+
+from .base import AuthProvider
+
+# Constants for self-signed token validation
+JWT_ISSUER = os.environ.get("JWT_ISSUER", "mcp-auth-server")
+JWT_AUDIENCE = os.environ.get("JWT_AUDIENCE", "mcp-registry")
+# SECRET_KEY is enforced at process startup by auth_server/server.py and
+# registry/core/config.py; we read it at import time but do not provide a
+# fallback. Self-signed token validation (which consumes this constant)
+# raises if it is missing rather than silently using a known-bad value.
+SECRET_KEY = os.environ.get("SECRET_KEY")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s,p%(process)s,{%(filename)s:%(lineno)d},%(levelname)s,%(message)s",
+)
+
+logger = logging.getLogger(__name__)
+
+# Default Entra ID login base URL. Sovereign clouds override via env:
+#   Public (default): https://login.microsoftonline.com
+#   US Gov:           https://login.microsoftonline.us
+#   China:            https://login.partner.microsoftonline.cn
+DEFAULT_ENTRA_LOGIN_BASE_URL = "https://login.microsoftonline.com"
+
+# Default Microsoft Graph base URL. Inferred from the login base URL via the
+# fixed sovereign-cloud mapping below; ENTRA_GRAPH_BASE_URL can override for
+# edge cases (e.g. a Graph proxy in front of the cluster). Operators on the
+# three documented sovereign clouds only need to set ENTRA_LOGIN_BASE_URL.
+DEFAULT_ENTRA_GRAPH_BASE_URL = "https://graph.microsoft.com"
+
+# Fixed Microsoft mapping from login host -> Graph host across sovereign clouds.
+# Documented at https://learn.microsoft.com/en-us/graph/deployments
+_LOGIN_TO_GRAPH_HOST: dict[str, str] = {
+    "login.microsoftonline.com": "https://graph.microsoft.com",
+    "login.microsoftonline.us": "https://graph.microsoft.us",
+    "login.partner.microsoftonline.cn": "https://microsoftgraph.chinacloudapi.cn",
+}
+
+
+def _infer_graph_base_url(login_base_url: str) -> str:
+    """Infer the Graph base URL from the configured login base URL.
+
+    Returns the matching Graph host for one of Microsoft's three documented
+    sovereign clouds. Unknown login hosts fall back to the public Graph
+    endpoint; operators should set ENTRA_GRAPH_BASE_URL explicitly in that
+    case (e.g. air-gapped or proxied deployments).
+    """
+    from urllib.parse import urlparse
+
+    host = urlparse(login_base_url).hostname or ""
+    return _LOGIN_TO_GRAPH_HOST.get(host, DEFAULT_ENTRA_GRAPH_BASE_URL)
+
+
+class EntraIdProvider(AuthProvider):
+    """Microsoft Entra ID (Azure AD) authentication provider.
+
+    This provider implements OAuth2/OIDC authentication using Microsoft Entra ID
+    (formerly Azure Active Directory). It supports:
+    - User authentication via OAuth2 authorization code flow
+    - Machine-to-machine authentication via client credentials flow
+    - JWT token validation using Azure AD JWKS
+    - Group-based authorization with Azure AD security groups
+    """
+
+    def __init__(self, tenant_id: str, client_id: str, client_secret: str):
+        """Initialize Entra ID provider.
+
+        Args:
+            tenant_id: Azure AD tenant ID (GUID)
+            client_id: App registration client ID (GUID)
+            client_secret: App registration client secret
+        """
+        self.tenant_id = tenant_id
+        self.client_id = client_id
+        self.client_secret = client_secret
+
+        # JWKS cache
+        self._jwks_cache: dict[str, Any] | None = None
+        self._jwks_cache_time: float = 0
+        self._jwks_cache_ttl: int = 3600  # 1 hour
+
+        # Login base URL: explicit env override, defaulting to the public
+        # cloud. Graph base URL: explicit override (rare — for proxied
+        # deployments) takes precedence; otherwise inferred from the login
+        # base URL via the documented sovereign-cloud mapping.
+        login_base_url = os.environ.get("ENTRA_LOGIN_BASE_URL", DEFAULT_ENTRA_LOGIN_BASE_URL)
+        graph_override = os.environ.get("ENTRA_GRAPH_BASE_URL")
+        self.graph_base_url = (
+            graph_override.rstrip("/") if graph_override else _infer_graph_base_url(login_base_url)
+        )
+
+        # Entra ID endpoints
+        base_url = f"{login_base_url}/{tenant_id}"
+        self.auth_url = f"{base_url}/oauth2/v2.0/authorize"
+        self.token_url = f"{base_url}/oauth2/v2.0/token"
+        self.userinfo_url = f"{self.graph_base_url}/oidc/userinfo"
+        self.jwks_url = f"{base_url}/discovery/v2.0/keys"
+        self.logout_url = f"{base_url}/oauth2/v2.0/logout"
+
+        # Entra ID supports two issuer formats:
+        # v2.0 endpoint: https://login.microsoftonline.com/{tenant}/v2.0
+        # v1.0/M2M endpoint: https://sts.windows.net/{tenant}/
+        self.issuer_v2 = f"{base_url}/v2.0"
+        self.issuer_v1 = f"https://sts.windows.net/{tenant_id}/"
+        self.valid_issuers = [self.issuer_v2, self.issuer_v1]
+
+        logger.debug(f"Initialized Entra ID provider for tenant '{tenant_id}'")
+
+    def validate_token(self, token: str, **kwargs: Any) -> dict[str, Any]:
+        """Validate Entra ID JWT token.
+
+        Args:
+            token: The JWT access token to validate
+            **kwargs: Additional provider-specific arguments
+
+        Returns:
+            Dictionary containing:
+                - valid: True if token is valid
+                - username: User's preferred_username or sub claim
+                - email: User's email address
+                - groups: List of Azure AD group Object IDs
+                - scopes: List of token scopes
+                - client_id: Client ID that issued the token
+                - method: 'entra'
+                - data: Raw token claims
+
+        Raises:
+            ValueError: If token validation fails
+        """
+        try:
+            logger.debug("Validating Entra ID JWT token")
+
+            # First check if this is a self-signed token from our auth server
+            try:
+                unverified_claims = jwt.decode(token, options={"verify_signature": False})
+                if unverified_claims.get("iss") == JWT_ISSUER:
+                    logger.debug("Token appears to be self-signed, validating...")
+                    return self._validate_self_signed_token(token)
+            except Exception as e:
+                logger.debug(f"Not a self-signed token: {e}")
+
+            # Get JWKS for validation
+            jwks = self.get_jwks()
+
+            # Decode token header to get key ID
+            unverified_header = jwt.get_unverified_header(token)
+            kid = unverified_header.get("kid")
+
+            if not kid:
+                raise ValueError("Token missing 'kid' in header")
+
+            # Find matching key
+            signing_key = None
+            for key in jwks.get("keys", []):
+                if key.get("kid") == kid:
+                    from jwt import PyJWK
+
+                    signing_key = PyJWK(key).key
+                    break
+
+            if not signing_key:
+                raise ValueError(f"No matching key found for kid: {kid}")
+
+            # First, decode without validation to check issuer
+            unverified_claims = jwt.decode(token, options={"verify_signature": False})
+            token_issuer = unverified_claims.get("iss")
+
+            # Check if issuer is valid (v1.0 or v2.0)
+            if token_issuer not in self.valid_issuers:
+                raise ValueError(
+                    f"Invalid issuer: {token_issuer}. Expected one of: {self.valid_issuers}"
+                )
+
+            # Validate and decode token with the correct issuer.
+            # Accepted audience formats:
+            #   - bare client_id (default Entra format)
+            #   - api://<client_id> (default Application ID URI)
+            #   - operator-configured Application ID URI (e.g. the gateway URL),
+            #     read from ENTRA_APPLICATION_ID_URI when present
+            accepted_audiences = [self.client_id, f"api://{self.client_id}"]
+            app_id_uri = os.environ.get("ENTRA_APPLICATION_ID_URI")
+            if app_id_uri:
+                accepted_audiences.append(app_id_uri.rstrip("/"))
+            # Per-server OBO resource audiences (RFC 8707). The OBO ingress token
+            # is audienced to the per-server resource URL (e.g.
+            # https://gw/<server>/mcp); the caller passes the expected value(s)
+            # for the server being accessed so we accept it without a static env
+            # list. Still a closed allowlist -- only caller-provided, registry-
+            # derived audiences are added, never a wildcard.
+            for extra in kwargs.get("extra_audiences") or []:
+                if extra:
+                    accepted_audiences.append(extra.rstrip("/"))
+            claims = jwt.decode(
+                token,
+                signing_key,
+                algorithms=["RS256"],
+                issuer=token_issuer,
+                audience=accepted_audiences,
+                options={"verify_exp": True, "verify_iat": True, "verify_aud": True},
+            )
+
+            logger.debug(
+                f"Token validation successful for user: {claims.get('preferred_username', 'unknown')}"
+            )
+
+            # Extract user info from claims
+            # For M2M tokens, group memberships are in 'roles' claim instead of 'groups'
+            # For user tokens, they're in 'groups' claim
+            groups = claims.get("groups", [])
+            if not groups and "roles" in claims:
+                # M2M token - use roles claim as groups
+                groups = claims.get("roles", [])
+                # Count only: role/group names reveal the internal authz structure.
+                logger.debug("M2M token detected, using %d roles as groups", len(groups))
+
+            return {
+                "valid": True,
+                "username": claims.get("preferred_username", claims.get("sub")),
+                "email": claims.get("email"),
+                "groups": groups,
+                "scopes": claims.get("scope", "").split() if claims.get("scope") else [],
+                "client_id": claims.get("azp", self.client_id),
+                "method": "entra",
+                "data": claims,
+            }
+
+        except jwt.ExpiredSignatureError:
+            logger.warning("Token validation failed: Token has expired")
+            raise ValueError("Token has expired")
+        except jwt.InvalidTokenError as e:
+            logger.warning(f"Token validation failed: Invalid token - {e}")
+            raise ValueError(f"Invalid token: {e}")
+        except Exception as e:
+            logger.error(f"Entra ID token validation error: {e}")
+            raise ValueError(f"Token validation failed: {e}")
+
+    def validate_id_token(
+        self,
+        id_token: str,
+        expected_nonce: str | None = None,
+    ) -> dict[str, Any]:
+        """Verify an Entra ID OIDC id_token and return its verified claims.
+
+        Verifies the RS256 signature against the tenant JWKS and enforces
+        issuer (Entra v2.0 or v1.0 tenant issuer), audience (the gateway's
+        client_id — the id_token ``aud`` for Entra), and expiry before any
+        claim is trusted. When ``expected_nonce`` is supplied, the token's
+        ``nonce`` claim must match it. Fails closed.
+
+        Args:
+            id_token: The raw id_token string from the token endpoint.
+            expected_nonce: The nonce bound to this login (replay protection).
+
+        Returns:
+            The verified id_token claim set.
+
+        Raises:
+            IdTokenVerificationError: If verification fails.
+        """
+        # Entra id_tokens carry the app registration's client_id as 'aud'
+        # (not the api:// Application ID URI, which applies to access tokens).
+        accepted_audiences = [self.client_id]
+        return self._verify_id_token_with_jwks(
+            id_token, self.valid_issuers, accepted_audiences, expected_nonce=expected_nonce
+        )
+
+    def _validate_self_signed_token(self, token: str) -> dict[str, Any]:
+        """Validate a self-signed JWT token generated by our auth server.
+
+        Self-signed tokens are generated for OAuth users to use for programmatic
+        API access. They contain the user's identity, groups, and scopes.
+
+        Args:
+            token: The self-signed JWT token to validate
+
+        Returns:
+            Dictionary containing validation results
+
+        Raises:
+            ValueError: If token validation fails
+        """
+        try:
+            if not SECRET_KEY:
+                raise ValueError("SECRET_KEY is required for self-signed token validation")
+            claims = jwt.decode(
+                token,
+                SECRET_KEY,
+                algorithms=["HS256"],
+                audience=JWT_AUDIENCE,
+                issuer=JWT_ISSUER,
+                options={"verify_exp": True, "verify_iat": True, "verify_aud": True},
+            )
+
+            # Check token_use claim
+            token_use = claims.get("token_use")
+            if token_use != "access":  # nosec B105 - OAuth2 token type validation per RFC 6749, not a password
+                raise ValueError(f"Invalid token_use: {token_use}")
+
+            # Extract scopes from claims
+            scopes = []
+            if "scope" in claims:
+                scope_value = claims["scope"]
+                if isinstance(scope_value, str):
+                    scopes = scope_value.split() if scope_value else []
+                elif isinstance(scope_value, list):
+                    scopes = scope_value
+
+            # Extract groups from claims
+            groups = claims.get("groups", [])
+            if isinstance(groups, str):
+                groups = [groups]
+
+            logger.info(
+                f"Successfully validated self-signed token for user: {claims.get('sub')}, "
+                f"groups: {groups}, scopes: {scopes}"
+            )
+
+            return {
+                "valid": True,
+                "method": "self_signed",
+                "data": claims,
+                "client_id": claims.get("client_id", "user-generated"),
+                "username": claims.get("sub", ""),
+                "email": claims.get("email", ""),
+                "expires_at": claims.get("exp"),
+                "scopes": scopes,
+                "groups": groups,
+                "token_type": "user_generated",
+            }
+
+        except jwt.ExpiredSignatureError:
+            logger.warning("Self-signed token validation failed: Token has expired")
+            raise ValueError("Token has expired")
+        except jwt.InvalidTokenError as e:
+            logger.warning(f"Self-signed token validation failed: {e}")
+            raise ValueError(f"Invalid self-signed token: {e}")
+        except Exception as e:
+            logger.error(f"Self-signed token validation error: {e}")
+            raise ValueError(f"Self-signed token validation failed: {e}")
+
+    def get_jwks(self) -> dict[str, Any]:
+        """Get JSON Web Key Set from Entra ID with caching.
+
+        Returns:
+            Dictionary containing the JWKS data
+
+        Raises:
+            ValueError: If JWKS cannot be retrieved
+        """
+        current_time = time.time()
+
+        # Check if cache is still valid
+        if self._jwks_cache and (current_time - self._jwks_cache_time) < self._jwks_cache_ttl:
+            logger.debug("Using cached JWKS")
+            return self._jwks_cache
+
+        try:
+            logger.debug(f"Fetching JWKS from {self.jwks_url}")
+            response = requests.get(self.jwks_url, timeout=10)
+            response.raise_for_status()
+
+            self._jwks_cache = response.json()
+            self._jwks_cache_time = current_time
+
+            logger.debug("JWKS fetched and cached successfully")
+            return self._jwks_cache
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve JWKS from Entra ID: {e}")
+            raise ValueError(f"Cannot retrieve JWKS: {e}")
+
+    def exchange_code_for_token(self, code: str, redirect_uri: str) -> dict[str, Any]:
+        """Exchange authorization code for access token.
+
+        Args:
+            code: Authorization code from OAuth2 flow
+            redirect_uri: Redirect URI used in the authorization request
+
+        Returns:
+            Dictionary containing token response:
+                - access_token: The access token
+                - id_token: The ID token
+                - refresh_token: The refresh token (if available)
+                - token_type: "Bearer"
+                - expires_in: Token expiration time in seconds
+
+        Raises:
+            ValueError: If code exchange fails
+        """
+        try:
+            logger.debug("Exchanging authorization code for token")
+
+            data = {
+                "grant_type": "authorization_code",
+                "code": code,
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "redirect_uri": redirect_uri,
+            }
+
+            headers = {"Content-Type": "application/x-www-form-urlencoded"}
+
+            response = requests.post(self.token_url, data=data, headers=headers, timeout=10)
+            response.raise_for_status()
+
+            token_data = response.json()
+            logger.debug("Token exchange successful")
+
+            return token_data
+
+        except requests.RequestException as e:
+            logger.error(f"Failed to exchange code for token: {e}")
+            raise ValueError(f"Token exchange failed: {e}")
+
+    # Path for the user's direct group memberships. Combined with the
+    # tenant's Graph base URL (varies by sovereign cloud) at call time. We
+    # use /me/memberOf rather than /me/getMemberObjects because memberOf
+    # works with the User.Read scope already granted by 'openid email profile';
+    # getMemberObjects requires Directory.Read.All / GroupMember.Read.All
+    # which would force a tenant admin to grant new consent.
+    GRAPH_MEMBEROF_PATH: str = "/v1.0/me/memberOf?$select=id"
+
+    # Hard cap so a misconfigured tenant cannot pull an unbounded list. 1000
+    # covers any realistic user; pages past this are dropped with a warning.
+    GROUP_FETCH_HARD_CAP: int = 1000
+
+    @staticmethod
+    def has_group_overage(claims: dict[str, Any]) -> bool:
+        """Detect Entra group-overage indicators in an ID token.
+
+        Entra signals overage in two ways:
+        - `hasgroups` claim set to True (v1.0 endpoint behavior)
+        - `_claim_names` dict containing key `groups` pointing to a Graph
+          endpoint (v2.0 endpoint behavior)
+
+        Either form means the inline `groups` claim is unreliable and the
+        caller should fall back to Microsoft Graph.
+        """
+        if claims.get("hasgroups") is True:
+            return True
+        claim_names = claims.get("_claim_names")
+        if isinstance(claim_names, dict) and "groups" in claim_names:
+            return True
+        return False
+
+    @classmethod
+    def _graph_memberof_url(cls) -> str:
+        """Build the full Graph /me/memberOf URL.
+
+        Resolves the base URL at call time using the same precedence as
+        __init__ (explicit ENTRA_GRAPH_BASE_URL override, otherwise inferred
+        from ENTRA_LOGIN_BASE_URL). Resolved per-call so sovereign-cloud
+        overrides set after module import are honored.
+        """
+        graph_override = os.environ.get("ENTRA_GRAPH_BASE_URL")
+        if graph_override:
+            base = graph_override.rstrip("/")
+        else:
+            login_base = os.environ.get("ENTRA_LOGIN_BASE_URL", DEFAULT_ENTRA_LOGIN_BASE_URL)
+            base = _infer_graph_base_url(login_base)
+        return f"{base}{cls.GRAPH_MEMBEROF_PATH}"
+
+    @classmethod
+    async def fetch_groups_via_graph(cls, access_token: str) -> list[str]:
+        """Fetch the user's direct group object IDs from Microsoft Graph.
+
+        Used when the ID token signals group overage (see has_group_overage).
+        Calls GET /me/memberOf, follows @odata.nextLink for pagination, and
+        returns deduplicated group object IDs only (filters out directoryRole
+        and other directory-object types).
+
+        Returns [] on any HTTP/network failure so the caller can degrade
+        gracefully — the user ends up with whatever groups were inline (often
+        none in the overage case), which is the same as today's behavior.
+        """
+        ids: list[str] = []
+        seen: set[str] = set()
+        url: str | None = cls._graph_memberof_url()
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                page = 0
+                while url:
+                    page += 1
+                    response = await client.get(
+                        url, headers={"Authorization": f"Bearer {access_token}"}
+                    )
+                    response.raise_for_status()
+                    body = response.json()
+
+                    for item in body.get("value", []):
+                        if item.get("@odata.type") != "#microsoft.graph.group":
+                            continue
+                        gid = item.get("id")
+                        if not gid or gid in seen:
+                            continue
+                        seen.add(gid)
+                        ids.append(gid)
+                        if len(ids) >= cls.GROUP_FETCH_HARD_CAP:
+                            logger.warning(
+                                "Entra Graph group fetch hit hard cap "
+                                f"({cls.GROUP_FETCH_HARD_CAP}); truncating"
+                            )
+                            return ids
+
+                    url = body.get("@odata.nextLink")
+
+                logger.info(
+                    f"Resolved {len(ids)} Entra group IDs via Graph memberOf across {page} page(s)"
+                )
+        except httpx.HTTPStatusError as e:
+            logger.warning(
+                f"Entra Graph memberOf returned {e.response.status_code}; "
+                "falling back to inline groups (may be empty)"
+            )
+            return []
+        except httpx.HTTPError as e:
+            logger.warning(f"Entra Graph memberOf request failed: {e}")
+            return []
+        except Exception as e:
+            logger.warning(f"Unexpected error during Entra Graph memberOf fetch: {e}")
+            return []
+
+        return ids
+
+    def get_user_info(self, access_token: str) -> dict[str, Any]:
+        """Get user information from Entra ID.
+
+        Args:
+            access_token: Valid access token
+
+        Returns:
+            Dictionary containing user information:
+                - username: User's preferred_username
+                - email: User's email
+                - groups: User's group memberships (Object IDs)
+
+        Raises:
+            ValueError: If user info cannot be retrieved
+        """
+        try:
+            logger.debug("Fetching user info from Entra ID")
+
+            headers = {"Authorization": f"Bearer {access_token}"}
+            response = requests.get(self.userinfo_url, headers=headers, timeout=10)
+            response.raise_for_status()
+
+            user_info = response.json()
+            logger.debug(
+                f"User info retrieved for: {user_info.get('preferred_username', 'unknown')}"
+            )
+
+            return user_info
+
+        except requests.RequestException as e:
+            logger.error(f"Failed to get user info: {e}")
+            raise ValueError(f"User info retrieval failed: {e}")
+
+    def get_auth_url(self, redirect_uri: str, state: str, scope: str | None = None) -> str:
+        """Get Entra ID authorization URL.
+
+        Args:
+            redirect_uri: URI to redirect to after authorization
+            state: State parameter for CSRF protection
+            scope: Optional scope parameter (defaults to openid email profile)
+
+        Returns:
+            Full authorization URL
+        """
+        logger.debug(f"Generating auth URL with redirect_uri: {redirect_uri}")
+
+        params = {
+            "client_id": self.client_id,
+            "response_type": "code",
+            "scope": scope or "openid email profile",
+            "redirect_uri": redirect_uri,
+            "state": state,
+        }
+
+        auth_url = f"{self.auth_url}?{urlencode(params)}"
+        logger.debug(f"Generated auth URL: {auth_url}")
+
+        return auth_url
+
+    def get_logout_url(self, redirect_uri: str) -> str:
+        """Get Entra ID logout URL.
+
+        Args:
+            redirect_uri: URI to redirect to after logout
+
+        Returns:
+            Full logout URL
+        """
+        logger.debug(f"Generating logout URL with redirect_uri: {redirect_uri}")
+
+        params = {"client_id": self.client_id, "post_logout_redirect_uri": redirect_uri}
+
+        logout_url = f"{self.logout_url}?{urlencode(params)}"
+        logger.debug(f"Generated logout URL: {logout_url}")
+
+        return logout_url
+
+    def refresh_token(self, refresh_token: str) -> dict[str, Any]:
+        """Refresh an access token using a refresh token.
+
+        Args:
+            refresh_token: The refresh token
+
+        Returns:
+            Dictionary containing new token response
+
+        Raises:
+            ValueError: If token refresh fails
+        """
+        try:
+            logger.debug("Refreshing access token")
+
+            data = {
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+            }
+
+            headers = {"Content-Type": "application/x-www-form-urlencoded"}
+
+            response = requests.post(self.token_url, data=data, headers=headers, timeout=10)
+            response.raise_for_status()
+
+            token_data = response.json()
+            logger.debug("Token refresh successful")
+
+            return token_data
+
+        except requests.RequestException as e:
+            logger.error(f"Failed to refresh token: {e}")
+            raise ValueError(f"Token refresh failed: {e}")
+
+    def validate_m2m_token(self, token: str) -> dict[str, Any]:
+        """Validate a machine-to-machine token.
+
+        Args:
+            token: The M2M access token to validate
+
+        Returns:
+            Dictionary containing validation result
+
+        Raises:
+            ValueError: If token validation fails
+        """
+        return self.validate_token(token)
+
+    def get_m2m_token(
+        self,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+        scope: str | None = None,
+    ) -> dict[str, Any]:
+        """Get machine-to-machine token using client credentials.
+
+        This method is used for AI agent authentication using Azure AD service principals.
+        Each AI agent should have its own service principal (app registration) in Azure AD.
+
+        Args:
+            client_id: Optional client ID (uses default if not provided)
+            client_secret: Optional client secret (uses default if not provided)
+            scope: Optional scope for the token (defaults to .default)
+
+        Returns:
+            Dictionary containing token response:
+                - access_token: The M2M access token
+                - token_type: "Bearer"
+                - expires_in: Token expiration time in seconds
+
+        Raises:
+            ValueError: If token generation fails
+        """
+        try:
+            logger.debug("Requesting M2M token using client credentials")
+
+            # Default scope for Entra ID M2M tokens
+            if not scope:
+                scope = f"api://{client_id or self.client_id}/.default"
+
+            data = {
+                "grant_type": "client_credentials",
+                "client_id": client_id or self.client_id,
+                "client_secret": client_secret or self.client_secret,
+                "scope": scope,
+            }
+
+            headers = {"Content-Type": "application/x-www-form-urlencoded"}
+
+            response = requests.post(self.token_url, data=data, headers=headers, timeout=10)
+            response.raise_for_status()
+
+            token_data = response.json()
+            logger.debug("M2M token generation successful")
+
+            return token_data
+
+        except requests.RequestException as e:
+            logger.error(f"Failed to get M2M token: {e}")
+            raise ValueError(f"M2M token generation failed: {e}")
+
+    def initiate_device_code_flow(self, scope: str | None = None) -> dict[str, Any]:
+        """Initiate device code flow for user authentication.
+
+        This allows CLI applications to authenticate users by displaying a code
+        that the user enters at a browser URL. The user logs in with their
+        credentials and the CLI receives a token on their behalf.
+
+        Args:
+            scope: OAuth scopes to request (defaults to openid profile email)
+
+        Returns:
+            Dictionary containing:
+                - device_code: Code for polling
+                - user_code: Code for user to enter
+                - verification_uri: URL for user to visit
+                - expires_in: Seconds until codes expire
+                - interval: Polling interval in seconds
+                - message: User-friendly instruction message
+
+        Raises:
+            ValueError: If device code request fails
+        """
+        try:
+            logger.info("Initiating device code flow")
+
+            # Default scopes for user authentication
+            if not scope:
+                scope = f"api://{self.client_id}/user_impersonation openid profile email"
+
+            data = {"client_id": self.client_id, "scope": scope}
+
+            headers = {"Content-Type": "application/x-www-form-urlencoded"}
+
+            # Device code endpoint
+            device_code_url = self.token_url.replace("/token", "/devicecode")
+
+            response = requests.post(device_code_url, data=data, headers=headers, timeout=10)
+            response.raise_for_status()
+
+            result = response.json()
+            logger.info(f"Device code flow initiated, user_code: {result.get('user_code')}")
+
+            return result
+
+        except requests.RequestException as e:
+            logger.error(f"Failed to initiate device code flow: {e}")
+            raise ValueError(f"Device code flow initiation failed: {e}")
+
+    def poll_device_code_token(
+        self, device_code: str, interval: int = 5, timeout: int = 300
+    ) -> dict[str, Any]:
+        """Poll for token after user completes device code authentication.
+
+        Args:
+            device_code: The device code from initiate_device_code_flow
+            interval: Polling interval in seconds (default 5)
+            timeout: Maximum time to wait in seconds (default 300)
+
+        Returns:
+            Dictionary containing token response:
+                - access_token: The user's access token
+                - token_type: "Bearer"
+                - expires_in: Token expiration time in seconds
+                - refresh_token: Token for refreshing access
+                - id_token: OpenID Connect ID token
+
+        Raises:
+            ValueError: If polling times out or fails
+        """
+        try:
+            logger.info("Polling for device code token")
+
+            data = {
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                "client_id": self.client_id,
+                "device_code": device_code,
+            }
+
+            headers = {"Content-Type": "application/x-www-form-urlencoded"}
+
+            start_time = time.time()
+
+            while (time.time() - start_time) < timeout:
+                response = requests.post(self.token_url, data=data, headers=headers, timeout=10)
+
+                if response.status_code == 200:
+                    token_data = response.json()
+                    logger.info("Device code authentication successful")
+                    return token_data
+
+                error_data = response.json()
+                error = error_data.get("error", "")
+
+                if error == "authorization_pending":
+                    # User hasn't completed auth yet, keep polling
+                    logger.debug("Authorization pending, continuing to poll")
+                    time.sleep(interval)
+                    continue
+                elif error == "slow_down":
+                    # Polling too fast, increase interval
+                    interval += 5
+                    logger.debug(f"Slowing down, new interval: {interval}s")
+                    time.sleep(interval)
+                    continue
+                elif error == "expired_token":
+                    raise ValueError("Device code expired. Please start over.")
+                elif error == "access_denied":
+                    raise ValueError("User denied the authorization request.")
+                else:
+                    raise ValueError(
+                        f"Token request failed: {error_data.get('error_description', error)}"
+                    )
+
+            raise ValueError("Device code authentication timed out")
+
+        except requests.RequestException as e:
+            logger.error(f"Failed to poll device code token: {e}")
+            raise ValueError(f"Device code token polling failed: {e}")
+
+    def authorization_server_metadata(self) -> dict[str, Any]:
+        """Return Entra ID's RFC 8414 metadata for the v2.0 endpoint.
+
+        Phase 1 emits the Entra v2 OIDC metadata only. The v1 issuer
+        (`https://sts.windows.net/{tenant}/`) is a valid token source
+        recognized in validate_token but is not advertised here. The
+        `api://<app-id>/<scope>` verbatim scope-format support required
+        for Entra v1 deployments is tracked in sub-issue F (#990).
+        """
+        # TODO(#990): Sub-issue F adds Entra v1 `api://<app-id>/<scope>` verbatim
+        # scope passthrough. When that lands, this method should accept a
+        # caller-supplied `scopes_supported` and emit them unchanged for the
+        # v1 issuer, plus expose a separate v1 metadata document if needed.
+        return {
+            "issuer": self.issuer_v2,
+            "authorization_endpoint": self.auth_url,
+            "token_endpoint": self.token_url,
+            "userinfo_endpoint": self.userinfo_url,
+            "jwks_uri": self.jwks_url,
+            "end_session_endpoint": self.logout_url,
+            "response_types_supported": ["code", "id_token", "code id_token"],
+            "grant_types_supported": [
+                "authorization_code",
+                "refresh_token",
+                "client_credentials",
+            ],
+            "token_endpoint_auth_methods_supported": [
+                "client_secret_basic",
+                "client_secret_post",
+                "private_key_jwt",
+            ],
+            "code_challenge_methods_supported": ["S256"],
+            "subject_types_supported": ["pairwise"],
+            "id_token_signing_alg_values_supported": ["RS256"],
+            "scopes_supported": ["openid", "email", "profile", "offline_access"],
+        }
+
+    def get_provider_info(self) -> dict[str, Any]:
+        """Get provider-specific information.
+
+        Returns:
+            Dictionary containing provider configuration and endpoints
+        """
+        return {
+            "provider_type": "entra",
+            "tenant_id": self.tenant_id,
+            "client_id": self.client_id,
+            "endpoints": {
+                "auth": self.auth_url,
+                "token": self.token_url,
+                "userinfo": self.userinfo_url,
+                "jwks": self.jwks_url,
+                "logout": self.logout_url,
+            },
+            "issuers": {"v2": self.issuer_v2, "v1": self.issuer_v1},
+        }

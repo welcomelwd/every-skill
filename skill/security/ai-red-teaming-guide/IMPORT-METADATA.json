@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "repository": "requie/AI-Red-Teaming-Guide",
+  "source_url": "https://github.com/requie/AI-Red-Teaming-Guide",
+  "ref": "main",
+  "resolved_commit": "a1974c9c777a82cad3e6bd358fc25b01d9a38529",
+  "category": "skill",
+  "subcategory": "security",
+  "slug": "ai-red-teaming-guide",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-11T10:11:41+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 18,
+  "copied_bytes": 617072,
+  "excluded_files": [],
+  "execution": "never run by this importer"
+}

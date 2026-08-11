@@ -1,0 +1,4252 @@
+{
+  "scanDate": "2026-03-26T01:56:24.840Z",
+  "total": 200,
+  "fetched": 90,
+  "notFound": 110,
+  "errors": 2,
+  "summary": {
+    "MEDIUM": 23,
+    "LOW": 58,
+    "ERROR": 2,
+    "CRITICAL": 7,
+    "NO_CONTENT": 110
+  },
+  "flaggedCount": 7,
+  "results": [
+    {
+      "author": "pskoett",
+      "name": "self-improving-agent",
+      "downloads": 305143,
+      "riskScore": 8,
+      "riskLevel": "MEDIUM",
+      "findingCount": 10,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00001",
+          "severity": "info",
+          "title": "Direct Prompt Injection via User Input"
+        },
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "low",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "info",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00051",
+          "severity": "info",
+          "title": "Agent Resource Exhaustion Detection"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:53:54.025Z"
+    },
+    {
+      "author": "steipete",
+      "name": "summarize",
+      "downloads": 208323,
+      "riskScore": 7,
+      "riskLevel": "LOW",
+      "findingCount": 6,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "low",
+          "title": "Skill Description-Behavior Mismatch (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00066",
+          "severity": "medium",
+          "title": "Parameter Injection via Tool Arguments (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:53:54.710Z"
+    },
+    {
+      "author": "thesethrose",
+      "name": "agent-browser",
+      "downloads": 168624,
+      "riskScore": -1,
+      "riskLevel": "ERROR",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:53:55.468Z",
+      "error": "TypeError: declaredTools.some is not a function"
+    },
+    {
+      "author": "spclaudehome",
+      "name": "skill-vetter",
+      "downloads": 153237,
+      "riskScore": 9,
+      "riskLevel": "LOW",
+      "findingCount": 11,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00030",
+          "severity": "medium",
+          "title": "Cross-Agent Attack Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "low",
+          "title": "Skill Description-Behavior Mismatch (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:53:56.029Z"
+    },
+    {
+      "author": "steipete",
+      "name": "gog",
+      "downloads": 133268,
+      "riskScore": 5,
+      "riskLevel": "LOW",
+      "findingCount": 5,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "low",
+          "title": "Skill Description-Behavior Mismatch (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "medium",
+          "title": "Multi-Skill Chain Attack (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00099",
+          "severity": "low",
+          "title": "High-Risk Tool Invocation Without Human Confirmation (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:53:56.583Z"
+    },
+    {
+      "author": "oswalpalash",
+      "name": "ontology",
+      "downloads": 132855,
+      "riskScore": 4,
+      "riskLevel": "LOW",
+      "findingCount": 7,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00004",
+          "severity": "low",
+          "title": "System Prompt Override Attempt"
+        },
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:53:57.459Z"
+    },
+    {
+      "author": "steipete",
+      "name": "github",
+      "downloads": 132399,
+      "riskScore": 5,
+      "riskLevel": "LOW",
+      "findingCount": 5,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00066",
+          "severity": "medium",
+          "title": "Parameter Injection via Tool Arguments (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00099",
+          "severity": "info",
+          "title": "High-Risk Tool Invocation Without Human Confirmation"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:53:58.151Z"
+    },
+    {
+      "author": "halthelobster",
+      "name": "proactive-agent",
+      "downloads": 120643,
+      "riskScore": 5,
+      "riskLevel": "LOW",
+      "findingCount": 11,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00002",
+          "severity": "low",
+          "title": "Indirect Prompt Injection via External Content (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00020",
+          "severity": "info",
+          "title": "System Prompt and Internal Instruction Leakage"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "info",
+          "title": "Privilege Escalation and Admin Function Access"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:53:59.901Z"
+    },
+    {
+      "author": "ivangdavila",
+      "name": "self-improving",
+      "downloads": 115306,
+      "riskScore": 85,
+      "riskLevel": "CRITICAL",
+      "findingCount": 5,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "critical",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "high",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "high",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "critical",
+          "title": "Multi-Skill Chain Attack"
+        },
+        {
+          "id": "atr-ATR-2026-00099",
+          "severity": "high",
+          "title": "High-Risk Tool Invocation Without Human Confirmation"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:01.355Z"
+    },
+    {
+      "author": "steipete",
+      "name": "weather",
+      "downloads": 113590,
+      "riskScore": 6,
+      "riskLevel": "LOW",
+      "findingCount": 6,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00066",
+          "severity": "medium",
+          "title": "Parameter Injection via Tool Arguments (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:01.920Z"
+    },
+    {
+      "author": "gpyangyoujun",
+      "name": "multi-search-engine",
+      "downloads": 85233,
+      "riskScore": 7,
+      "riskLevel": "LOW",
+      "findingCount": 4,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "low",
+          "title": "Skill Description-Behavior Mismatch (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00066",
+          "severity": "medium",
+          "title": "Parameter Injection via Tool Arguments (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:02.686Z"
+    },
+    {
+      "author": "fly0pants",
+      "name": "admapix",
+      "downloads": 76380,
+      "riskScore": 8,
+      "riskLevel": "LOW",
+      "findingCount": 14,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00020",
+          "severity": "info",
+          "title": "System Prompt and Internal Instruction Leakage"
+        },
+        {
+          "id": "atr-ATR-2026-00021",
+          "severity": "medium",
+          "title": "Credential and Secret Exposure in Agent Output (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:03.904Z"
+    },
+    {
+      "author": "steipete",
+      "name": "nano-pdf",
+      "downloads": 74086,
+      "riskScore": 7,
+      "riskLevel": "LOW",
+      "findingCount": 5,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00066",
+          "severity": "medium",
+          "title": "Parameter Injection via Tool Arguments (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00099",
+          "severity": "low",
+          "title": "High-Risk Tool Invocation Without Human Confirmation (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:04.466Z"
+    },
+    {
+      "author": "biostartechnology",
+      "name": "humanizer",
+      "downloads": 70549,
+      "riskScore": 2,
+      "riskLevel": "LOW",
+      "findingCount": 4,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "medium",
+          "title": "Multi-Skill Chain Attack (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00064",
+          "severity": "info",
+          "title": "Over-Permissioned MCP Skill"
+        },
+        {
+          "id": "atr-ATR-2026-00099",
+          "severity": "info",
+          "title": "High-Risk Tool Invocation Without Human Confirmation"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:05.250Z"
+    },
+    {
+      "author": "steipete",
+      "name": "nano-banana-pro",
+      "downloads": 67325,
+      "riskScore": 10,
+      "riskLevel": "LOW",
+      "findingCount": 7,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00020",
+          "severity": "info",
+          "title": "System Prompt and Internal Instruction Leakage"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "low",
+          "title": "Skill Description-Behavior Mismatch (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:05.906Z"
+    },
+    {
+      "author": "steipete",
+      "name": "sonoscli",
+      "downloads": 67183,
+      "riskScore": 1,
+      "riskLevel": "LOW",
+      "findingCount": 2,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00099",
+          "severity": "info",
+          "title": "High-Risk Tool Invocation Without Human Confirmation"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:06.471Z"
+    },
+    {
+      "author": "steipete",
+      "name": "notion",
+      "downloads": 65875,
+      "riskScore": 5,
+      "riskLevel": "LOW",
+      "findingCount": 7,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "low",
+          "title": "Skill Description-Behavior Mismatch (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00066",
+          "severity": "medium",
+          "title": "Parameter Injection via Tool Arguments (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:07.385Z"
+    },
+    {
+      "author": "steipete",
+      "name": "obsidian",
+      "downloads": 65063,
+      "riskScore": 2,
+      "riskLevel": "LOW",
+      "findingCount": 4,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00066",
+          "severity": "low",
+          "title": "Parameter Injection via Tool Arguments"
+        },
+        {
+          "id": "atr-ATR-2026-00099",
+          "severity": "info",
+          "title": "High-Risk Tool Invocation Without Human Confirmation"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:07.934Z"
+    },
+    {
+      "author": "ide-rea",
+      "name": "baidu-search",
+      "downloads": 61612,
+      "riskScore": 9,
+      "riskLevel": "LOW",
+      "findingCount": 6,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00066",
+          "severity": "medium",
+          "title": "Parameter Injection via Tool Arguments (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:08.666Z"
+    },
+    {
+      "author": "jacky1n7",
+      "name": "openclaw-tavily-search",
+      "downloads": 58939,
+      "riskScore": 79,
+      "riskLevel": "CRITICAL",
+      "findingCount": 7,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "critical",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "high",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "critical",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "low",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "critical",
+          "title": "Multi-Skill Chain Attack (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:09.588Z"
+    },
+    {
+      "author": "maximeprades",
+      "name": "auto-updater",
+      "downloads": 57382,
+      "riskScore": 10,
+      "riskLevel": "LOW",
+      "findingCount": 6,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00004",
+          "severity": "low",
+          "title": "System Prompt Override Attempt"
+        },
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00066",
+          "severity": "medium",
+          "title": "Parameter Injection via Tool Arguments (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:10.924Z"
+    },
+    {
+      "author": "steipete",
+      "name": "openai-whisper",
+      "downloads": 57106,
+      "riskScore": 0,
+      "riskLevel": "LOW",
+      "findingCount": 1,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00099",
+          "severity": "low",
+          "title": "High-Risk Tool Invocation Without Human Confirmation (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:11.533Z"
+    },
+    {
+      "author": "chindden",
+      "name": "skill-creator",
+      "downloads": 55194,
+      "riskScore": 11,
+      "riskLevel": "MEDIUM",
+      "findingCount": 9,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00005",
+          "severity": "info",
+          "title": "Multi-Turn Prompt Injection"
+        },
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00032",
+          "severity": "info",
+          "title": "Agent Goal Hijacking Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:12.792Z"
+    },
+    {
+      "author": "byungkyu",
+      "name": "api-gateway",
+      "downloads": 54964,
+      "riskScore": 7,
+      "riskLevel": "LOW",
+      "findingCount": 9,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00002",
+          "severity": "low",
+          "title": "Indirect Prompt Injection via External Content (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:22.675Z"
+    },
+    {
+      "author": "jk-0001",
+      "name": "automation-workflows",
+      "downloads": 51806,
+      "riskScore": 4,
+      "riskLevel": "LOW",
+      "findingCount": 10,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00051",
+          "severity": "info",
+          "title": "Agent Resource Exhaustion Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:23.454Z"
+    },
+    {
+      "author": "joelchance",
+      "name": "polymarket-trade",
+      "downloads": 46344,
+      "riskScore": 4,
+      "riskLevel": "LOW",
+      "findingCount": 8,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "low",
+          "title": "Multi-Skill Chain Attack"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:24.544Z"
+    },
+    {
+      "author": "matrixy",
+      "name": "agent-browser-clawdbot",
+      "downloads": 45993,
+      "riskScore": 8,
+      "riskLevel": "LOW",
+      "findingCount": 6,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00004",
+          "severity": "medium",
+          "title": "System Prompt Override Attempt (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00066",
+          "severity": "medium",
+          "title": "Parameter Injection via Tool Arguments (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:25.262Z"
+    },
+    {
+      "author": "steipete",
+      "name": "mcporter",
+      "downloads": 45761,
+      "riskScore": 3,
+      "riskLevel": "LOW",
+      "findingCount": 4,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "low",
+          "title": "Skill Description-Behavior Mismatch (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00099",
+          "severity": "info",
+          "title": "High-Risk Tool Invocation Without Human Confirmation"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:25.972Z"
+    },
+    {
+      "author": "steipete",
+      "name": "brave-search",
+      "downloads": 44763,
+      "riskScore": 10,
+      "riskLevel": "LOW",
+      "findingCount": 6,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00066",
+          "severity": "medium",
+          "title": "Parameter Injection via Tool Arguments (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:26.699Z"
+    },
+    {
+      "author": "nextfrontierbuilds",
+      "name": "elite-longterm-memory",
+      "downloads": 40739,
+      "riskScore": 12,
+      "riskLevel": "LOW",
+      "findingCount": 9,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00004",
+          "severity": "medium",
+          "title": "System Prompt Override Attempt (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "low",
+          "title": "Skill Description-Behavior Mismatch (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:27.430Z"
+    },
+    {
+      "author": "udiedrichsen",
+      "name": "stock-analysis",
+      "downloads": 38496,
+      "riskScore": 13,
+      "riskLevel": "LOW",
+      "findingCount": 7,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "medium",
+          "title": "Multi-Skill Chain Attack (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00064",
+          "severity": "low",
+          "title": "Over-Permissioned MCP Skill (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:29.061Z"
+    },
+    {
+      "author": "matagul",
+      "name": "desktop-control",
+      "downloads": 37418,
+      "riskScore": 78,
+      "riskLevel": "CRITICAL",
+      "findingCount": 8,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "critical",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "high",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "low",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00064",
+          "severity": "high",
+          "title": "Over-Permissioned MCP Skill (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:30.242Z"
+    },
+    {
+      "author": "autogame-17",
+      "name": "evolver",
+      "downloads": 37193,
+      "riskScore": 100,
+      "riskLevel": "CRITICAL",
+      "findingCount": 11,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00004",
+          "severity": "critical",
+          "title": "System Prompt Override Attempt"
+        },
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "critical",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "high",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00030",
+          "severity": "critical",
+          "title": "Cross-Agent Attack Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "critical",
+          "title": "Privilege Escalation and Admin Function Access"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:35.707Z"
+    },
+    {
+      "author": "michaelgathara",
+      "name": "youtube-watcher",
+      "downloads": 35635,
+      "riskScore": 10,
+      "riskLevel": "LOW",
+      "findingCount": 6,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00066",
+          "severity": "medium",
+          "title": "Parameter Injection via Tool Arguments (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:36.413Z"
+    },
+    {
+      "author": "ivangdavila",
+      "name": "word-docx",
+      "downloads": 34512,
+      "riskScore": 3,
+      "riskLevel": "LOW",
+      "findingCount": 3,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00099",
+          "severity": "info",
+          "title": "High-Risk Tool Invocation Without Human Confirmation"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:37.249Z"
+    },
+    {
+      "author": "steipete",
+      "name": "video-frames",
+      "downloads": 33633,
+      "riskScore": 10,
+      "riskLevel": "LOW",
+      "findingCount": 5,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00066",
+          "severity": "medium",
+          "title": "Parameter Injection via Tool Arguments (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00099",
+          "severity": "low",
+          "title": "High-Risk Tool Invocation Without Human Confirmation (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:38.006Z"
+    },
+    {
+      "author": "moltbro",
+      "name": "humanize-ai-text",
+      "downloads": 33372,
+      "riskScore": 3,
+      "riskLevel": "LOW",
+      "findingCount": 7,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "low",
+          "title": "Malicious Content in MCP Tool Response"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "low",
+          "title": "Multi-Skill Chain Attack"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:38.765Z"
+    },
+    {
+      "author": "steipete",
+      "name": "slack",
+      "downloads": 32606,
+      "riskScore": 4,
+      "riskLevel": "LOW",
+      "findingCount": 5,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "medium",
+          "title": "Multi-Skill Chain Attack (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00099",
+          "severity": "info",
+          "title": "High-Risk Tool Invocation Without Human Confirmation"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:54:39.366Z"
+    },
+    {
+      "author": "lamelas",
+      "name": "himalaya",
+      "downloads": 32147,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:39.982Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "autogame-17",
+      "name": "feishu-evolver-wrapper",
+      "downloads": 32046,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:40.399Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "nicholasspisak",
+      "name": "clawddocs",
+      "downloads": 32021,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:40.909Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "byteroverinc",
+      "name": "byterover",
+      "downloads": 31866,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:41.416Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "joargp",
+      "name": "news-summary",
+      "downloads": 30538,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:41.844Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "shawnpana",
+      "name": "browser-use",
+      "downloads": 30091,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:42.265Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "gzlicanyi",
+      "name": "imap-smtp-email",
+      "downloads": 29733,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:42.710Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "steipete",
+      "name": "trello",
+      "downloads": 29705,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:43.119Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "ivangdavila",
+      "name": "excel-xlsx",
+      "downloads": 29693,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:43.521Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "steipete",
+      "name": "blogwatcher",
+      "downloads": 29038,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:43.956Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "steipete",
+      "name": "model-usage",
+      "downloads": 27977,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:44.371Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "steipete",
+      "name": "markdown-converter",
+      "downloads": 27972,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:44.798Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "peytoncasper",
+      "name": "browser-automation",
+      "downloads": 27465,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:45.706Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "spiceman161",
+      "name": "playwright-mcp",
+      "downloads": 26787,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:46.228Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "jrbobbyhansen-pixel",
+      "name": "memory-setup",
+      "downloads": 26669,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:46.645Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "byungkyu",
+      "name": "gmail",
+      "downloads": 26575,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:47.457Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "autogame-17",
+      "name": "capability-evolver",
+      "downloads": 26106,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:47.902Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "bert-builder",
+      "name": "tavily",
+      "downloads": 25311,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:48.378Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "steipete",
+      "name": "gemini",
+      "downloads": 25028,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:48.804Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "steipete",
+      "name": "clawdhub",
+      "downloads": 24620,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:49.217Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "steipete",
+      "name": "discord",
+      "downloads": 24550,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:49.635Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "steipete",
+      "name": "qmd",
+      "downloads": 24308,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:50.058Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "mpociot",
+      "name": "superdesign",
+      "downloads": 24262,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:50.496Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "awspace",
+      "name": "pdf",
+      "downloads": 24254,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:50.937Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "borye",
+      "name": "xiaohongshu-mcp",
+      "downloads": 24211,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:51.365Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "steipete",
+      "name": "apple-notes",
+      "downloads": 24021,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:51.816Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "byungkyu",
+      "name": "youtube-api-skill",
+      "downloads": 23254,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:52.270Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "guogang1024",
+      "name": "session-logs",
+      "downloads": 22671,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:52.782Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "arnarsson",
+      "name": "docker-essentials",
+      "downloads": 22552,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:53.295Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "theishangoswami",
+      "name": "web-search-exa",
+      "downloads": 22453,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:53.762Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "bestrocky",
+      "name": "proactive-agent-lite",
+      "downloads": 22307,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:54.173Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "kys42",
+      "name": "stock-market-pro",
+      "downloads": 22294,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:54.578Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "robin797860",
+      "name": "stock-watcher",
+      "downloads": 22156,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:55.050Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "asleep123",
+      "name": "caldav-calendar",
+      "downloads": 22150,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:55.481Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "adboio",
+      "name": "agentmail",
+      "downloads": 21767,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:55.956Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "ide-rea",
+      "name": "ai-ppt-generator",
+      "downloads": 21725,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:56.378Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "billyutw",
+      "name": "web-search",
+      "downloads": 21191,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:56.886Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "kowl64",
+      "name": "n8n-workflow-automation",
+      "downloads": 21040,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:57.349Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "steipete",
+      "name": "peekaboo",
+      "downloads": 20588,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:57.790Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "10e9928a",
+      "name": "duckduckgo-search",
+      "downloads": 20385,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:58.209Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "steipete",
+      "name": "apple-reminders",
+      "downloads": 20348,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:58.643Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "parags",
+      "name": "deep-research-pro",
+      "downloads": 20321,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:59.083Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "xobi667",
+      "name": "ui-ux-pro-max",
+      "downloads": 20286,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:59.516Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "arnarsson",
+      "name": "git-essentials",
+      "downloads": 20080,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:54:59.955Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "jamestsetsekas",
+      "name": "lnbits-with-qrcode",
+      "downloads": 20060,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:00.372Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "waisimon",
+      "name": "playwright-scraper-skill",
+      "downloads": 20021,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:00.779Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "matthew77",
+      "name": "liang-tavily-search",
+      "downloads": 19815,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:01.183Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "steipete",
+      "name": "sag",
+      "downloads": 19726,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:01.604Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "jakelin",
+      "name": "ddg-web-search",
+      "downloads": 19647,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:02.035Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "ivangdavila",
+      "name": "powerpoint-pptx",
+      "downloads": 19563,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:02.528Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "byungkyu",
+      "name": "outlook-api",
+      "downloads": 19562,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:02.961Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "byungkyu",
+      "name": "whatsapp-business",
+      "downloads": 19476,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:03.901Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "thomaslwang",
+      "name": "moltguard",
+      "downloads": 19166,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:04.321Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "thesethrose",
+      "name": "marketing-mode",
+      "downloads": 18977,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:04.720Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "whiteknight07",
+      "name": "exa-web-search-free",
+      "downloads": 18950,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:05.131Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "steipete",
+      "name": "tmux",
+      "downloads": 18901,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:05.568Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "byungkyu",
+      "name": "stripe-api",
+      "downloads": 18814,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:06.001Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "steipete",
+      "name": "1password",
+      "downloads": 18813,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:06.486Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "ivangdavila",
+      "name": "playwright",
+      "downloads": 18732,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:06.934Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "steipete",
+      "name": "openai-image-gen",
+      "downloads": 18729,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:07.425Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "wwlyzzyorg",
+      "name": "ppt-generator",
+      "downloads": 18545,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:07.879Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "steipete",
+      "name": "spotify-player",
+      "downloads": 18435,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:08.305Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "guohongbin-git",
+      "name": "skill-finder-cn",
+      "downloads": 18295,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:08.715Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "byungkyu",
+      "name": "shopify",
+      "downloads": 17935,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:09.160Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "xiucheng",
+      "name": "xiucheng-self-improving-agent",
+      "downloads": 17844,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:09.580Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "brandonwise",
+      "name": "ai-humanizer",
+      "downloads": 17751,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:10.008Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "gtrusler",
+      "name": "clawdbot-filesystem",
+      "downloads": 17740,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:10.440Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "joelchance",
+      "name": "markdown-convert",
+      "downloads": 17456,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:11.251Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "steipete",
+      "name": "openai-whisper-api",
+      "downloads": 17438,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:11.726Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "marmikcfc",
+      "name": "memory-manager",
+      "downloads": 17293,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:12.155Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "byungkyu",
+      "name": "microsoft-excel",
+      "downloads": 17282,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:12.570Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "byungkyu",
+      "name": "xero",
+      "downloads": 17279,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:13.002Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "byungkyu",
+      "name": "google-slides",
+      "downloads": 17153,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:13.416Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "ivangdavila",
+      "name": "data-analysis",
+      "downloads": 17085,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:13.847Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "byungkyu",
+      "name": "typeform",
+      "downloads": 16962,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:14.284Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "byungkyu",
+      "name": "salesforce-api",
+      "downloads": 16924,
+      "riskScore": 14,
+      "riskLevel": "MEDIUM",
+      "findingCount": 10,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "medium",
+          "title": "Multi-Skill Chain Attack (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:15.313Z"
+    },
+    {
+      "author": "stellarhold170nt",
+      "name": "healthcheck",
+      "downloads": 16722,
+      "riskScore": 10,
+      "riskLevel": "LOW",
+      "findingCount": 6,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "low",
+          "title": "Skill Description-Behavior Mismatch (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00066",
+          "severity": "medium",
+          "title": "Parameter Injection via Tool Arguments (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:15.941Z"
+    },
+    {
+      "author": "xthezealot",
+      "name": "youtube-transcript",
+      "downloads": 16609,
+      "riskScore": 10,
+      "riskLevel": "LOW",
+      "findingCount": 6,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00066",
+          "severity": "medium",
+          "title": "Parameter Injection via Tool Arguments (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:16.963Z"
+    },
+    {
+      "author": "robbyczgw-cla",
+      "name": "web-search-plus",
+      "downloads": 16555,
+      "riskScore": 6,
+      "riskLevel": "LOW",
+      "findingCount": 11,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00013",
+          "severity": "low",
+          "title": "SSRF via Agent Tool Calls"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00051",
+          "severity": "info",
+          "title": "Agent Resource Exhaustion Detection"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:18.157Z"
+    },
+    {
+      "author": "zlc000190",
+      "name": "using-superpowers",
+      "downloads": 16491,
+      "riskScore": 4,
+      "riskLevel": "LOW",
+      "findingCount": 6,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00001",
+          "severity": "info",
+          "title": "Direct Prompt Injection via User Input"
+        },
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:18.827Z"
+    },
+    {
+      "author": "alex3alex",
+      "name": "openclaw-backup",
+      "downloads": 16335,
+      "riskScore": 11,
+      "riskLevel": "LOW",
+      "findingCount": 7,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "low",
+          "title": "Multi-Skill Chain Attack"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:19.566Z"
+    },
+    {
+      "author": "byungkyu",
+      "name": "google-meet",
+      "downloads": 16276,
+      "riskScore": 14,
+      "riskLevel": "MEDIUM",
+      "findingCount": 10,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "medium",
+          "title": "Multi-Skill Chain Attack (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:20.476Z"
+    },
+    {
+      "author": "byungkyu",
+      "name": "clickup-api",
+      "downloads": 16274,
+      "riskScore": 14,
+      "riskLevel": "MEDIUM",
+      "findingCount": 10,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "medium",
+          "title": "Multi-Skill Chain Attack (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:22.019Z"
+    },
+    {
+      "author": "mjrussell",
+      "name": "todoist",
+      "downloads": 16247,
+      "riskScore": 10,
+      "riskLevel": "LOW",
+      "findingCount": 5,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00066",
+          "severity": "medium",
+          "title": "Parameter Injection via Tool Arguments (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00099",
+          "severity": "info",
+          "title": "High-Risk Tool Invocation Without Human Confirmation"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:22.808Z"
+    },
+    {
+      "author": "byungkyu",
+      "name": "calendly-api",
+      "downloads": 16218,
+      "riskScore": 14,
+      "riskLevel": "MEDIUM",
+      "findingCount": 10,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "medium",
+          "title": "Multi-Skill Chain Attack (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:23.739Z"
+    },
+    {
+      "author": "steipete",
+      "name": "goplaces",
+      "downloads": 16142,
+      "riskScore": 1,
+      "riskLevel": "LOW",
+      "findingCount": 3,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00064",
+          "severity": "low",
+          "title": "Over-Permissioned MCP Skill (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:24.336Z"
+    },
+    {
+      "author": "dennis-da-menace",
+      "name": "agent-memory",
+      "downloads": 16007,
+      "riskScore": 11,
+      "riskLevel": "LOW",
+      "findingCount": 6,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00004",
+          "severity": "medium",
+          "title": "System Prompt Override Attempt (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00066",
+          "severity": "medium",
+          "title": "Parameter Injection via Tool Arguments (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:25.573Z"
+    },
+    {
+      "author": "jgarrison929",
+      "name": "security-auditor",
+      "downloads": 15827,
+      "riskScore": 11,
+      "riskLevel": "LOW",
+      "findingCount": 12,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00021",
+          "severity": "medium",
+          "title": "Credential and Secret Exposure in Agent Output (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00030",
+          "severity": "medium",
+          "title": "Cross-Agent Attack Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:26.298Z"
+    },
+    {
+      "author": "byungkyu",
+      "name": "asana-api",
+      "downloads": 15735,
+      "riskScore": 14,
+      "riskLevel": "MEDIUM",
+      "findingCount": 11,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "medium",
+          "title": "Multi-Skill Chain Attack (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:27.280Z"
+    },
+    {
+      "author": "byungkyu",
+      "name": "google-workspace-admin",
+      "downloads": 15711,
+      "riskScore": 22,
+      "riskLevel": "MEDIUM",
+      "findingCount": 12,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00004",
+          "severity": "medium",
+          "title": "System Prompt Override Attempt (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00021",
+          "severity": "medium",
+          "title": "Credential and Secret Exposure in Agent Output (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:28.243Z"
+    },
+    {
+      "author": "lunarcmd",
+      "name": "moltbook-interact",
+      "downloads": 15688,
+      "riskScore": 8,
+      "riskLevel": "LOW",
+      "findingCount": 7,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "low",
+          "title": "Multi-Skill Chain Attack"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:29.358Z"
+    },
+    {
+      "author": "ajanraj",
+      "name": "yahoo-finance",
+      "downloads": 15675,
+      "riskScore": 4,
+      "riskLevel": "LOW",
+      "findingCount": 8,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00064",
+          "severity": "low",
+          "title": "Over-Permissioned MCP Skill (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:30.219Z"
+    },
+    {
+      "author": "byungkyu",
+      "name": "fathom-api",
+      "downloads": 15668,
+      "riskScore": 15,
+      "riskLevel": "MEDIUM",
+      "findingCount": 11,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "medium",
+          "title": "Multi-Skill Chain Attack (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:31.176Z"
+    },
+    {
+      "author": "dylanbaker24",
+      "name": "memory-hygiene",
+      "downloads": 15662,
+      "riskScore": 5,
+      "riskLevel": "LOW",
+      "findingCount": 7,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "low",
+          "title": "Skill Description-Behavior Mismatch (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "low",
+          "title": "Multi-Skill Chain Attack"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:31.907Z"
+    },
+    {
+      "author": "byungkyu",
+      "name": "trello-api",
+      "downloads": 15584,
+      "riskScore": 14,
+      "riskLevel": "MEDIUM",
+      "findingCount": 10,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "medium",
+          "title": "Multi-Skill Chain Attack (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:32.912Z"
+    },
+    {
+      "author": "ivangdavila",
+      "name": "code",
+      "downloads": 15400,
+      "riskScore": 4,
+      "riskLevel": "LOW",
+      "findingCount": 5,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00099",
+          "severity": "info",
+          "title": "High-Risk Tool Invocation Without Human Confirmation"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:33.760Z"
+    },
+    {
+      "author": "matthewyin",
+      "name": "diagram-generator",
+      "downloads": 15265,
+      "riskScore": 60,
+      "riskLevel": "CRITICAL",
+      "findingCount": 6,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00004",
+          "severity": "medium",
+          "title": "System Prompt Override Attempt"
+        },
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "critical",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "high",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00066",
+          "severity": "critical",
+          "title": "Parameter Injection via Tool Arguments (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00084",
+          "severity": "high",
+          "title": "Structured Data Injection via JSON/CSV Payloads (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:35.009Z"
+    },
+    {
+      "author": "byungkyu",
+      "name": "pipedrive-api",
+      "downloads": 15129,
+      "riskScore": 15,
+      "riskLevel": "MEDIUM",
+      "findingCount": 11,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "medium",
+          "title": "Multi-Skill Chain Attack (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:35.960Z"
+    },
+    {
+      "author": "byungkyu",
+      "name": "klaviyo",
+      "downloads": 15097,
+      "riskScore": 14,
+      "riskLevel": "MEDIUM",
+      "findingCount": 10,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "medium",
+          "title": "Multi-Skill Chain Attack (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:36.874Z"
+    },
+    {
+      "author": "byungkyu",
+      "name": "mailchimp",
+      "downloads": 15073,
+      "riskScore": 14,
+      "riskLevel": "MEDIUM",
+      "findingCount": 10,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "medium",
+          "title": "Multi-Skill Chain Attack (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:37.865Z"
+    },
+    {
+      "author": "karatla",
+      "name": "opencode-controller",
+      "downloads": 15011,
+      "riskScore": 36,
+      "riskLevel": "CRITICAL",
+      "findingCount": 2,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "critical",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00099",
+          "severity": "high",
+          "title": "High-Risk Tool Invocation Without Human Confirmation"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:39.292Z"
+    },
+    {
+      "author": "byungkyu",
+      "name": "google-play",
+      "downloads": 14821,
+      "riskScore": 20,
+      "riskLevel": "MEDIUM",
+      "findingCount": 11,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "medium",
+          "title": "Multi-Skill Chain Attack (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:40.329Z"
+    },
+    {
+      "author": "gvillanueva84",
+      "name": "wed-1-0-1",
+      "downloads": 14634,
+      "riskScore": 4,
+      "riskLevel": "LOW",
+      "findingCount": 5,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "low",
+          "title": "Multi-Skill Chain Attack"
+        },
+        {
+          "id": "atr-ATR-2026-00099",
+          "severity": "info",
+          "title": "High-Risk Tool Invocation Without Human Confirmation"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:41.722Z"
+    },
+    {
+      "author": "ashwingupy",
+      "name": "firecrawl-search",
+      "downloads": 14614,
+      "riskScore": 13,
+      "riskLevel": "LOW",
+      "findingCount": 7,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "medium",
+          "title": "Multi-Skill Chain Attack (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:42.563Z"
+    },
+    {
+      "author": "shreefentsar",
+      "name": "remotion-video-toolkit",
+      "downloads": 14604,
+      "riskScore": 7,
+      "riskLevel": "LOW",
+      "findingCount": 7,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "low",
+          "title": "Multi-Skill Chain Attack"
+        },
+        {
+          "id": "atr-ATR-2026-00066",
+          "severity": "medium",
+          "title": "Parameter Injection via Tool Arguments (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:55:45.153Z"
+    },
+    {
+      "author": "i3130002",
+      "name": "edge-tts",
+      "downloads": 14572,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:45.585Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "abk234",
+      "name": "searxng",
+      "downloads": 14551,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:45.985Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "cmanfre7",
+      "name": "debug-pro",
+      "downloads": 14455,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:46.409Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "rhyssullivan",
+      "name": "answeroverflow",
+      "downloads": 14379,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:46.822Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "stanleychanh",
+      "name": "tushare-finance",
+      "downloads": 14305,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:47.553Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "ryancampbell",
+      "name": "agent-autonomy-kit",
+      "downloads": 14261,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:47.964Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "ivangdavila",
+      "name": "productivity",
+      "downloads": 13959,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:48.450Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "thomasansems",
+      "name": "n8n",
+      "downloads": 13893,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:48.897Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "kesslerio",
+      "name": "academic-deep-research",
+      "downloads": 13884,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:49.325Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "arminnaimi",
+      "name": "agent-team-orchestration",
+      "downloads": 13832,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:49.835Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "codedao12",
+      "name": "telegram",
+      "downloads": 13739,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:50.331Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "mbpz",
+      "name": "akshare-stock",
+      "downloads": 13686,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:50.844Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "iahmadzain",
+      "name": "home-assistant",
+      "downloads": 13652,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:51.417Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "byungkyu",
+      "name": "github-api",
+      "downloads": 13591,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:51.847Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "zhangdong",
+      "name": "post-job",
+      "downloads": 13523,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:52.281Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "byungkyu",
+      "name": "monday",
+      "downloads": 13225,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:52.789Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "jchopard69",
+      "name": "marketing-skills",
+      "downloads": 13203,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:53.202Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "veeramanikandanr48",
+      "name": "us-stock-analysis",
+      "downloads": 13155,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:53.618Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "steipete",
+      "name": "gifgrep",
+      "downloads": 13053,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:54.054Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "lstpsche",
+      "name": "gcalcli-calendar",
+      "downloads": 13048,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:54.837Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "byungkyu",
+      "name": "woocommerce",
+      "downloads": 13034,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:55.290Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "tomstools11",
+      "name": "prompt-engineering-expert",
+      "downloads": 12762,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:55.719Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "financial-ai-analyst",
+      "name": "mx-stocks-screener",
+      "downloads": 12659,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:56.130Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "i-mw",
+      "name": "cron-mastery",
+      "downloads": 12501,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:56.885Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "xejrax",
+      "name": "pdf-extract",
+      "downloads": 12382,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:57.317Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "hopyky",
+      "name": "self-reflection",
+      "downloads": 12254,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:57.764Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "rknoche6",
+      "name": "fast-browser-use",
+      "downloads": 12236,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:58.180Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "byungkyu",
+      "name": "zoho-mail",
+      "downloads": 12228,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:58.601Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "mxfeinberg",
+      "name": "google-search",
+      "downloads": 12211,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:59.105Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "byungkyu",
+      "name": "zoho-crm",
+      "downloads": 12206,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:55:59.809Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "byungkyu",
+      "name": "linear-api",
+      "downloads": 12151,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:56:00.255Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "jk-0001",
+      "name": "copywriting",
+      "downloads": 12079,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:56:00.664Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "buksan1950",
+      "name": "reddit-readonly",
+      "downloads": 12047,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:56:01.088Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "zats",
+      "name": "perplexity",
+      "downloads": 11852,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:56:01.853Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "gitgoodordietrying",
+      "name": "sql-toolkit",
+      "downloads": 11813,
+      "riskScore": -1,
+      "riskLevel": "NO_CONTENT",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:56:02.270Z",
+      "error": "No SKILL.md"
+    },
+    {
+      "author": "bvinci1-design",
+      "name": "skill-scanner",
+      "downloads": 11762,
+      "riskScore": 1,
+      "riskLevel": "LOW",
+      "findingCount": 7,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "low",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "info",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "info",
+          "title": "Multi-Skill Chain Attack"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:56:03.012Z"
+    },
+    {
+      "author": "byungkyu",
+      "name": "zoho-inventory",
+      "downloads": 11751,
+      "riskScore": 14,
+      "riskLevel": "MEDIUM",
+      "findingCount": 10,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "medium",
+          "title": "Multi-Skill Chain Attack (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:56:04.088Z"
+    },
+    {
+      "author": "byungkyu",
+      "name": "zoho-calendar",
+      "downloads": 11718,
+      "riskScore": 14,
+      "riskLevel": "MEDIUM",
+      "findingCount": 10,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "medium",
+          "title": "Multi-Skill Chain Attack (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:56:05.620Z"
+    },
+    {
+      "author": "byungkyu",
+      "name": "attio-api",
+      "downloads": 11713,
+      "riskScore": 14,
+      "riskLevel": "MEDIUM",
+      "findingCount": 11,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "medium",
+          "title": "Multi-Skill Chain Attack (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:56:06.563Z"
+    },
+    {
+      "author": "steipete",
+      "name": "camsnap",
+      "downloads": 11682,
+      "riskScore": 4,
+      "riskLevel": "LOW",
+      "findingCount": 2,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00013",
+          "severity": "medium",
+          "title": "SSRF via Agent Tool Calls (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:56:07.268Z"
+    },
+    {
+      "author": "byungkyu",
+      "name": "zoho-recruit",
+      "downloads": 11682,
+      "riskScore": 14,
+      "riskLevel": "MEDIUM",
+      "findingCount": 10,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "medium",
+          "title": "Multi-Skill Chain Attack (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:56:08.207Z"
+    },
+    {
+      "author": "10e9928a",
+      "name": "email-daily-summary",
+      "downloads": 11641,
+      "riskScore": -1,
+      "riskLevel": "ERROR",
+      "findingCount": 0,
+      "findings": [],
+      "scannedAt": "2026-03-26T01:56:08.981Z",
+      "error": "TypeError: declaredTools.some is not a function"
+    },
+    {
+      "author": "byungkyu",
+      "name": "zoho-bigin",
+      "downloads": 11607,
+      "riskScore": 14,
+      "riskLevel": "MEDIUM",
+      "findingCount": 10,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "medium",
+          "title": "Multi-Skill Chain Attack (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:56:10.091Z"
+    },
+    {
+      "author": "kesslerio",
+      "name": "frontend-design-ultimate",
+      "downloads": 11604,
+      "riskScore": 6,
+      "riskLevel": "LOW",
+      "findingCount": 6,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00066",
+          "severity": "medium",
+          "title": "Parameter Injection via Tool Arguments (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00091",
+          "severity": "medium",
+          "title": "Advanced Structured Data Injection with Nested Payloads (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:56:11.482Z"
+    },
+    {
+      "author": "steipete",
+      "name": "oracle",
+      "downloads": 11585,
+      "riskScore": 7,
+      "riskLevel": "LOW",
+      "findingCount": 7,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00013",
+          "severity": "medium",
+          "title": "SSRF via Agent Tool Calls (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00030",
+          "severity": "low",
+          "title": "Cross-Agent Attack Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:56:12.030Z"
+    },
+    {
+      "author": "byungkyu",
+      "name": "zoho-people",
+      "downloads": 11524,
+      "riskScore": 14,
+      "riskLevel": "MEDIUM",
+      "findingCount": 10,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "medium",
+          "title": "Multi-Skill Chain Attack (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:56:12.997Z"
+    },
+    {
+      "author": "eddygk",
+      "name": "skill-vetting",
+      "downloads": 11437,
+      "riskScore": 1,
+      "riskLevel": "LOW",
+      "findingCount": 10,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "low",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00030",
+          "severity": "info",
+          "title": "Cross-Agent Attack Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "info",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:56:14.327Z"
+    },
+    {
+      "author": "adrianmiller99",
+      "name": "google-calendar",
+      "downloads": 11368,
+      "riskScore": 11,
+      "riskLevel": "LOW",
+      "findingCount": 9,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "low",
+          "title": "Multi-Skill Chain Attack"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:56:14.982Z"
+    },
+    {
+      "author": "steipete",
+      "name": "imsg",
+      "downloads": 11334,
+      "riskScore": 1,
+      "riskLevel": "LOW",
+      "findingCount": 2,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "low",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:56:15.542Z"
+    },
+    {
+      "author": "ram-raghav-s",
+      "name": "computer-use",
+      "downloads": 11309,
+      "riskScore": 18,
+      "riskLevel": "MEDIUM",
+      "findingCount": 12,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00004",
+          "severity": "low",
+          "title": "System Prompt Override Attempt"
+        },
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00013",
+          "severity": "medium",
+          "title": "SSRF via Agent Tool Calls (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:56:17.656Z"
+    },
+    {
+      "author": "ivangdavila",
+      "name": "market-research",
+      "downloads": 11255,
+      "riskScore": 2,
+      "riskLevel": "LOW",
+      "findingCount": 3,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00099",
+          "severity": "info",
+          "title": "High-Risk Tool Invocation Without Human Confirmation"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:56:18.657Z"
+    },
+    {
+      "author": "ivangdavila",
+      "name": "image",
+      "downloads": 11240,
+      "riskScore": 2,
+      "riskLevel": "LOW",
+      "findingCount": 4,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00063",
+          "severity": "low",
+          "title": "Multi-Skill Chain Attack"
+        },
+        {
+          "id": "atr-ATR-2026-00099",
+          "severity": "info",
+          "title": "High-Risk Tool Invocation Without Human Confirmation"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:56:19.884Z"
+    },
+    {
+      "author": "byungkyu",
+      "name": "google-drive",
+      "downloads": 11008,
+      "riskScore": 17,
+      "riskLevel": "MEDIUM",
+      "findingCount": 12,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00004",
+          "severity": "medium",
+          "title": "System Prompt Override Attempt (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "medium",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:56:20.796Z"
+    },
+    {
+      "author": "bluesbell",
+      "name": "ai-act-risk-check",
+      "downloads": 10979,
+      "riskScore": 72,
+      "riskLevel": "CRITICAL",
+      "findingCount": 6,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "critical",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "high",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "medium",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "low",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00066",
+          "severity": "critical",
+          "title": "Parameter Injection via Tool Arguments (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:56:21.783Z"
+    },
+    {
+      "author": "michaelmonetized",
+      "name": "frontend-design-3",
+      "downloads": 10908,
+      "riskScore": 1,
+      "riskLevel": "LOW",
+      "findingCount": 4,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "info",
+          "title": "Unauthorized Tool Call Detection"
+        },
+        {
+          "id": "atr-ATR-2026-00040",
+          "severity": "low",
+          "title": "Privilege Escalation and Admin Function Access"
+        },
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00099",
+          "severity": "info",
+          "title": "High-Risk Tool Invocation Without Human Confirmation"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:56:22.859Z"
+    },
+    {
+      "author": "biostartechnology",
+      "name": "linkedin",
+      "downloads": 10893,
+      "riskScore": 16,
+      "riskLevel": "MEDIUM",
+      "findingCount": 3,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00010",
+          "severity": "critical",
+          "title": "Malicious Content in MCP Tool Response (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00012",
+          "severity": "high",
+          "title": "Unauthorized Tool Call Detection (hidden in markup)"
+        },
+        {
+          "id": "atr-ATR-2026-00065",
+          "severity": "low",
+          "title": "Malicious Skill Update or Mutation"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:56:23.749Z"
+    },
+    {
+      "author": "ndcccccc",
+      "name": "calendar",
+      "downloads": 10872,
+      "riskScore": 1,
+      "riskLevel": "LOW",
+      "findingCount": 2,
+      "findings": [
+        {
+          "id": "atr-ATR-2026-00061",
+          "severity": "info",
+          "title": "Skill Description-Behavior Mismatch"
+        },
+        {
+          "id": "atr-ATR-2026-00064",
+          "severity": "low",
+          "title": "Over-Permissioned MCP Skill (hidden in markup)"
+        }
+      ],
+      "scannedAt": "2026-03-26T01:56:24.337Z"
+    }
+  ]
+}

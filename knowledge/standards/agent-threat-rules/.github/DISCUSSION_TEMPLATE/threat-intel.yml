@@ -1,0 +1,63 @@
+title: "[Intel] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Threat Intelligence
+
+        Share new attack techniques, CVEs, research papers, or real-world incidents
+        related to AI agent security. This feeds into ATR rule development.
+
+  - type: dropdown
+    id: type
+    attributes:
+      label: Intel Type
+      options:
+        - New attack technique
+        - CVE / vulnerability disclosure
+        - Research paper
+        - Real-world incident
+        - Evasion of existing controls
+        - Emerging threat pattern
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What is the threat? 2-3 sentences.
+    validations:
+      required: true
+
+  - type: textarea
+    id: technical-details
+    attributes:
+      label: Technical Details
+      description: |
+        How does it work? Include payloads, code samples, or attack chains if available.
+      placeholder: |
+        Attack chain:
+        1. Attacker publishes malicious MCP skill with poisoned tool description
+        2. Agent reads description containing hidden instructions
+        3. Agent executes data exfiltration via approved tool calls
+
+  - type: textarea
+    id: atr-relevance
+    attributes:
+      label: ATR Relevance
+      description: |
+        Which ATR categories or rules are relevant? Can ATR detect this today?
+      placeholder: |
+        - Related to ATR category: tool-poisoning
+        - Current ATR rules may not catch this because...
+        - Suggested new detection approach: ...
+
+  - type: textarea
+    id: sources
+    attributes:
+      label: Sources
+      description: Links to CVEs, papers, blog posts, or advisories.
+    validations:
+      required: true

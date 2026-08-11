@@ -1,0 +1,108 @@
+name: Deployment Report
+description: Share ATR detection results from your real-world agent pipeline
+title: "[Deploy] "
+labels: ["deployment-report", "high-impact"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **This is the highest-impact contribution you can make.**
+
+        Real-world deployment data is what turns ATR from a format into a standard.
+        Your report helps us understand detection rates, false positive rates,
+        and coverage gaps in production environments.
+
+        All data is optional. Share as much or as little as you're comfortable with.
+
+  - type: input
+    id: framework
+    attributes:
+      label: Agent Framework
+      description: What agent framework are you using?
+      placeholder: "e.g., LangChain, CrewAI, AutoGen, Claude Code, custom"
+    validations:
+      required: true
+
+  - type: input
+    id: llm-provider
+    attributes:
+      label: LLM Provider
+      description: Which LLM provider(s) does your agent use?
+      placeholder: "e.g., Claude, GPT-4, Gemini, local Llama"
+
+  - type: dropdown
+    id: integration-method
+    attributes:
+      label: How did you integrate ATR?
+      options:
+        - npm library (ATREngine)
+        - MCP server
+        - CLI (atr scan)
+        - Claude Code hook (atr guard)
+        - Custom integration
+    validations:
+      required: true
+
+  - type: input
+    id: duration
+    attributes:
+      label: Observation Period
+      description: How long has ATR been running in your pipeline?
+      placeholder: "e.g., 3 days, 2 weeks, 1 month"
+    validations:
+      required: true
+
+  - type: input
+    id: event-volume
+    attributes:
+      label: Approximate Event Volume
+      placeholder: "e.g., ~500 events/day, ~10K events/week"
+
+  - type: textarea
+    id: detection-stats
+    attributes:
+      label: Detection Statistics
+      description: |
+        Share what you can. Any of these are valuable:
+        - How many events processed?
+        - How many rules triggered?
+        - Which rules triggered most frequently?
+        - False positive rate (estimated)?
+        - Any attacks caught that you confirmed as real?
+        - Any attacks missed that you discovered through other means?
+      placeholder: |
+        Events processed: ~5,000
+        Rules triggered: ATR-2026-00001 (12x), ATR-2026-00013 (3x)
+        Confirmed true positives: 2 prompt injection attempts
+        False positives: ATR-2026-00001 triggered on user asking about AI safety (3x)
+        Missed: 1 paraphrased injection we caught via LLM review
+    validations:
+      required: true
+
+  - type: textarea
+    id: coverage-gaps
+    attributes:
+      label: Coverage Gaps Observed
+      description: Any attack patterns you encountered that ATR has no rule for?
+      placeholder: "Saw tool response injection via image alt text -- no ATR rule covers multimodal injection."
+
+  - type: textarea
+    id: performance
+    attributes:
+      label: Performance Observations
+      description: Latency, memory usage, or any operational concerns?
+      placeholder: "Layer 1 adds ~0.5ms per event. No noticeable impact on agent latency."
+
+  - type: textarea
+    id: feedback
+    attributes:
+      label: General Feedback
+      description: Anything else about schema design, rule quality, engine API, documentation?
+
+  - type: checkboxes
+    id: permissions
+    attributes:
+      label: Permissions
+      options:
+        - label: I consent to this report being referenced in ATR documentation and release notes (anonymized if preferred)
+          required: true

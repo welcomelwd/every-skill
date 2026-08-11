@@ -1,0 +1,10 @@
+# Hosts/patterns lychee should skip during link checking.
+# One regex per line. Add entries for endpoints that rate-limit bots,
+# require auth, or otherwise 4xx despite being valid.
+
+# Slack workspace channels referenced in prose (not real URLs)
+^https?://.*slack\.com/
+
+# Example/localhost URLs used in code snippets
+^https?://localhost
+^https?://127\.0\.0\.1

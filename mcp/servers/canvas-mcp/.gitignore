@@ -1,0 +1,120 @@
+# Python files to ignore
+# Uncomment the following lines if you want to ignore specific Python files
+# some_specific_file.py
+# temp_*.py
+
+# Python virtual environment
+venv/
+fresh_venv/
+.venv/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Tool caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Environment variables
+.env
+.env.bak-*
+
+# IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+.cursorrules
+
+# macOS specific files
+.DS_Store
+
+# Logs
+*.log
+
+# Documentation folder
+documents/
+
+# Development tools and files
+extract_canvas_api_docs.py
+canvas_api_docs/
+get_course_grades.py
+gradebook.json
+# Student data and utility scripts
+student_anonymization_mapping.txt
+show_student_mappings.py
+/_**
+.aider*
+/test_*.py
+!tests/
+
+# Local de-anonymization maps (contains PII)
+local_maps/
+docs/hybrid_builder_launch.md
+
+# Internal planning/tracking files
+CLEANUP.md
+CLEANUP_STATE.json
+cleanup/
+
+# Archive directory - old structure and development files
+archive/
+node_modules/
+
+# Smithery build artifacts
+.smithery/
+smithery-wrapper/node_modules/
+smithery-wrapper/.smithery/
+
+# Claude Code per-project working directory (local-only: permissions, in-flight plans, drafts)
+# Canonical skills live in top-level skills/ for skills.sh distribution.
+.claude/
+
+# Cloudflare Wrangler local cache and state
+.wrangler/
+
+# Ephemeral TypeScript execution temp files (from execute_typescript tool)
+src/canvas_mcp/code_api/tmp*.ts
+src/canvas_mcp/code_api/tmp*.cjs
+.mcp.json
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Editor swap/backup files
+*.swp
+*.swo
+*~
+
+# Private hosted-deployment ops (Gies-internal, not public).
+# Live in internal/ (outside the docs/ publish dir). The docs/ patterns are a
+# defensive backstop in case a local-only file is ever dropped there again.
+internal/*.local.*
+docs/*.local.*
+
+# Internal compliance email drafts (not public)
+internal/compliance/
+docs/compliance/
+
+# Internal security/FERPA evaluation — shared privately with IT, not published
+# (publishes our own gap list + open questions; no secrets, but operator-only)
+internal/SECURITY-COMPLIANCE.md
+
+# Hosted Desktop Extension sources (contains the private hosted endpoint URL)
+internal/mcpb-hosted/
+
+# Claude Desktop Extension build artifact
+*.mcpb
+
+# Local agent skills (not part of the public package)
+.agents/
+internal/hosted-spec-draft/
