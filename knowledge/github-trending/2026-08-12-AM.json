@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "source_date": "2026-08-12",
+  "batch": "AM",
+  "source_markdown": "knowledge/github-trending/2026-08-12.md",
+  "projects": [
+    {
+      "repository": "cathrynlavery/diagram-design",
+      "source_url": "https://github.com/cathrynlavery/diagram-design",
+      "category": "skill",
+      "subcategory": "development",
+      "slug": "diagram-design",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "da45d4a79a76dc0742c8554b7eabe551db100701"
+    },
+    {
+      "repository": "datalayer/jupyter-mcp-server",
+      "source_url": "https://github.com/datalayer/jupyter-mcp-server",
+      "category": "mcp",
+      "subcategory": "servers",
+      "slug": "jupyter-mcp-server",
+      "license": "BSD-3-Clause",
+      "download": true,
+      "ref": "main",
+      "commit": "cf707a133123ea58a5a1db84b5260985c7dae330"
+    },
+    {
+      "repository": "HKUDS/DeepTutor",
+      "source_url": "https://github.com/HKUDS/DeepTutor",
+      "category": "agent",
+      "subcategory": "workflows",
+      "slug": "deeptutor",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "456f9c24226e008f1ff07a7e3455d7b4d39f6221"
+    },
+    {
+      "repository": "stablyai/orca",
+      "source_url": "https://github.com/stablyai/orca",
+      "category": "agent",
+      "subcategory": "runtimes",
+      "slug": "orca",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "648d17372b75eb0f0bfae4fb95d39449331bc89f"
+    },
+    {
+      "repository": "harveyai/harvey-labs",
+      "source_url": "https://github.com/harveyai/harvey-labs",
+      "category": "agent",
+      "subcategory": "evaluations",
+      "slug": "harvey-labs",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "60071cc424d6479569626b8c76d90b958fe2d6c0"
+    },
+    {
+      "repository": "calesthio/OpenMontage",
+      "source_url": "https://github.com/calesthio/OpenMontage",
+      "category": "agent",
+      "subcategory": "workflows",
+      "slug": "openmontage",
+      "license": "AGPL-3.0",
+      "download": true,
+      "ref": "main",
+      "commit": "4eab34c5cfcccaa4f1970554928feccce73ee930"
+    },
+    {
+      "repository": "huhusmang/Awesome-LLMs-for-Vulnerability-Detection",
+      "source_url": "https://github.com/huhusmang/Awesome-LLMs-for-Vulnerability-Detection",
+      "category": "knowledge",
+      "subcategory": "security",
+      "slug": "awesome-llms-for-vulnerability-detection",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "25cae9f7293c4069c3c4a6245270fa57d1370719"
+    }
+  ]
+}
