@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "source_date": "2026-08-13",
+  "batch": "AM",
+  "source_markdown": "knowledge/github-trending/2026-08-13.md",
+  "projects": [
+    {
+      "repository": "mukul975/Privacy-Data-Protection-Skills",
+      "source_url": "https://github.com/mukul975/Privacy-Data-Protection-Skills",
+      "category": "skill",
+      "subcategory": "security",
+      "slug": "privacy-data-protection-skills",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "9b2ef9eae161c00a17241d42a388571321b33e9f"
+    },
+    {
+      "repository": "lyonzin/knowledge-rag",
+      "source_url": "https://github.com/lyonzin/knowledge-rag",
+      "category": "mcp",
+      "subcategory": "servers",
+      "slug": "knowledge-rag",
+      "license": "MIT",
+      "download": true,
+      "ref": "master",
+      "commit": "5c1eeba9326a6c2b3e2e433b0aae6f59e74c7048"
+    },
+    {
+      "repository": "NVIDIA-NeMo/Switchyard",
+      "source_url": "https://github.com/NVIDIA-NeMo/Switchyard",
+      "category": "agent",
+      "subcategory": "runtimes",
+      "slug": "switchyard",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "0151621f6f7a07c267e321f085391862dd31149d"
+    },
+    {
+      "repository": "embabel/embabel-agent",
+      "source_url": "https://github.com/embabel/embabel-agent",
+      "category": "agent",
+      "subcategory": "workflows",
+      "slug": "embabel-agent",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "07378f92f39ee5b160dca4e6369948fe20feb327"
+    },
+    {
+      "repository": "cactus-compute/needle",
+      "source_url": "https://github.com/cactus-compute/needle",
+      "category": "knowledge",
+      "subcategory": "products",
+      "slug": "needle",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "eb57267f713f9bda0638ba92f7602083e85a6b62"
+    }
+  ]
+}
