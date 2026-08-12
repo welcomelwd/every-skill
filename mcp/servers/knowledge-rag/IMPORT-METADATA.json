@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "repository": "lyonzin/knowledge-rag",
+  "source_url": "https://github.com/lyonzin/knowledge-rag",
+  "ref": "master",
+  "resolved_commit": "5c1eeba9326a6c2b3e2e433b0aae6f59e74c7048",
+  "category": "mcp",
+  "subcategory": "servers",
+  "slug": "knowledge-rag",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-12T23:15:04+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 156,
+  "copied_bytes": 1372232,
+  "excluded_files": [
+    "perf-baseline-v4.7.1.json: file exceeds 2097152 bytes"
+  ],
+  "execution": "never run by this importer"
+}

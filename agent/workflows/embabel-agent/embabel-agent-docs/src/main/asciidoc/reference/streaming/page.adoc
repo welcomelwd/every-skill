@@ -1,0 +1,116 @@
+[[reference.streaming]]
+=== Working with Streams
+
+Developer can choose piping data from LLM gradually, using Embabel streaming capabilities.
+
+In addition to streaming the raw text output from the LLM, Embabel streams can also include LLM reasoning events, so-called "thinking", and stream of objects created by the LLM.
+This feature is well aligned with Embabel focus on object-oriented programming model.
+
+==== Concepts
+
+- ``StreamingEvent`` - wraps Thinking or user Object
+-  ```StreamingPromptRunnerBuilder``` - runner with streaming capabilities
+- ``LlmMessageStreamer`` - vendor-neutral SPI for one streaming LLM inference
+- ``StreamingToolLoop`` - vendor-neutral counterpart of the blocking `ToolLoop` abstraction
+- ``DefaultStreamingToolLoop`` - executes tools and updates the conversation between inference turns
+- All reactive callbacks, such as _doOnNext_, _doOnComplete_, etc. are at developer's disposal
+
+==== Streaming with Tools
+
+Streaming tool calls use the same provider-neutral execution model as blocking calls.
+The `LlmMessageStreamer.streamInference` method advertises the currently available tools and streams
+one LLM inference, but it does not execute tools. Embabel assembles the assistant response, executes
+requested tools, adds their results to conversation history, and starts the next streaming inference.
+
+The original three-argument `LlmMessageStreamer.stream` method remains available for compatibility
+with provider-managed streaming integrations. Existing implementations can continue returning raw
+content chunks. Integrations that participate in Embabel's streaming tool loop override
+`streamInference` to expose the assembled assistant message and tool calls.
+
+Content from every inference turn remains in the returned stream. This includes thinking content
+emitted before or between tool calls. Because the tool set is evaluated between turns,
+`ToolInjectionStrategy` implementations such as `UnfoldingToolInjectionStrategy` can replace a
+facade with its child tools before the next request.
+
+Provider integrations override `LlmMessageStreamer.streamInference` by emitting incremental
+`LlmInferenceStreamEvent.Content` events followed by one `LlmInferenceStreamEvent.Complete` event containing
+the assembled assistant message. The completed message must include provider-assigned tool-call IDs,
+names, and complete arguments. Provider adapters must not execute those calls themselves.
+
+==== Example - Simple Thinking and Object Streaming with Callbacks
+[source,java]
+----
+
+        PromptRunner runner = ai.withDefaultLlm()  // Example uses qwen3:latest
+                                .withToolObject(Tooling.class);
+
+        String prompt = "What are exactly two the most hottest months in Florida and their respective highest temperatures";
+
+        // Use StreamingPromptBuilder instead of Kotlin extension function
+        Flux<StreamingEvent<MonthItem>> results = new StreamingPromptRunnerBuilder(runner)
+                .streaming()
+                .withPrompt(prompt)
+                .createObjectStreamWithThinking(MonthItem.class);
+
+        // Subscribe with real reactive callbacks using builder pattern
+        results
+                .timeout(Duration.ofSeconds(150))
+                .doOnSubscribe(subscription -> {
+                    logger.info("Stream subscription started");
+                })
+                .doOnNext(event -> {
+                    if (event.isThinking()) {
+                        String content = event.getThinking();
+                        receivedEvents.add("THINKING: " + content);
+                        logger.info("Integration test received thinking: {}", content);
+                    } else if (event.isObject()) {
+                        MonthItem obj = event.getObject();
+                        receivedEvents.add("OBJECT: " + obj.getName());
+                        logger.info("Integration test received object: {}", obj.getName());
+                    }
+                })
+                .doOnError(error -> {
+                    errorOccurred.set(error);
+                    logger.error("Integration test stream error: {}", error.getMessage());
+                })
+                .doOnComplete(() -> {
+                    completionCalled.set(true);
+                    logger.info("Integration test stream completed successfully");
+                })
+                .blockLast(Duration.ofSeconds(6000));
+----
+
+==== Example - Simple Raw Text Streaming with Callbacks
+[source,java]
+----
+
+        PromptRunner runner = ai.withDefaultLlm()  // Example uses qwen3:latest;
+
+        String prompt = "What is the highest building in Paris?";
+
+        // Use StreamingPromptBuilder instead of Kotlin extension function
+        Flux<String> results = new StreamingPromptRunnerBuilder(runner)
+                .streaming()
+                .withPrompt(prompt)
+                .generateStream();
+
+        // Subscribe with real reactive callbacks using builder pattern
+        results
+                .timeout(Duration.ofSeconds(150))
+                .doOnSubscribe(subscription -> {
+                    logger.info("Stream subscription started");
+                })
+                .doOnNext(content -> {
+                        receivedTextChunks.add(content);
+                        logger.info("Integration test received text chunk: {}", content);
+                })
+                .doOnError(error -> {
+                    errorOccurred.set(error);
+                    logger.error("Integration test stream error: {}", error.getMessage());
+                })
+                .doOnComplete(() -> {
+                    completionCalled.set(true);
+                    logger.info("Integration test stream completed successfully");
+                })
+                .blockLast(Duration.ofSeconds(6000));
+----

@@ -134,9 +134,18 @@ def parse_textproto_tokens(
   return obj, idx
 
 def dict_to_widget(data: dict[str, Any]) -> Widget:
-  """Converts a parsed textproto dictionary into a structured Widget hierarchy."""
+  """Converts a parsed textproto dictionary into a structured Widget hierarchy, enforcing strict field boundaries."""
   if "widget" in data and isinstance(data["widget"], dict):
+    # Only allow "widget" or expected fields at the top level
+    if set(data.keys()) - {"widget"} != set():
+      bad_keys = set(data.keys()) - {"widget"}
+      raise ValueError(f"Unknown properties at top level: {bad_keys}")
     data = data["widget"]
+
+  expected_widget_keys = {"title", "xy_chart"}
+  bad_widget_keys = set(data.keys()) - expected_widget_keys
+  if bad_widget_keys:
+    raise ValueError(f"Unknown properties in Widget: {bad_widget_keys}")
 
   title = str(data.get("title", ""))
 
@@ -144,7 +153,17 @@ def dict_to_widget(data: dict[str, Any]) -> Widget:
   if not xy_data or not isinstance(xy_data, dict):
     return Widget(title=title, xy_chart=None)
 
+  expected_xy_keys = {"chart_options", "data_sets", "y_axis"}
+  bad_xy_keys = set(xy_data.keys()) - expected_xy_keys
+  if bad_xy_keys:
+    raise ValueError(f"Unknown properties in xy_chart: {bad_xy_keys}")
+
   opts_data = xy_data.get("chart_options", {})
+  if isinstance(opts_data, dict):
+    bad_opts_keys = set(opts_data.keys()) - {"mode"}
+    if bad_opts_keys:
+      raise ValueError(f"Unknown properties in chart_options: {bad_opts_keys}")
+  
   mode = (
       str(opts_data.get("mode", "COLOR"))
       if isinstance(opts_data, dict)
@@ -154,6 +173,9 @@ def dict_to_widget(data: dict[str, Any]) -> Widget:
 
   yaxis_data = xy_data.get("y_axis", {})
   if isinstance(yaxis_data, dict):
+    bad_yaxis_keys = set(yaxis_data.keys()) - {"label", "scale"}
+    if bad_yaxis_keys:
+      raise ValueError(f"Unknown properties in y_axis: {bad_yaxis_keys}")
     label = str(yaxis_data.get("label", ""))
     scale = str(yaxis_data.get("scale", "LINEAR"))
   else:
@@ -170,16 +192,33 @@ def dict_to_widget(data: dict[str, Any]) -> Widget:
   for ds_dict in raw_ds_list:
     if not isinstance(ds_dict, dict):
       continue
+    
+    bad_ds_keys = set(ds_dict.keys()) - {"time_series_query", "plot_type", "target_axis"}
+    if bad_ds_keys:
+      raise ValueError(f"Unknown properties in data_sets: {bad_ds_keys}")
+
     ts_dict = ds_dict.get("time_series_query", {})
     ts_filter = None
     if isinstance(ts_dict, dict):
+      bad_ts_keys = set(ts_dict.keys()) - {"prometheus_query", "time_series_filter", "unit_override"}
+      if bad_ts_keys:
+        raise ValueError(f"Unknown properties in time_series_query: {bad_ts_keys}")
+      
       promql = str(ts_dict.get("prometheus_query", ""))
       unit = str(ts_dict.get("unit_override", ""))
       ts_filter_dict = ts_dict.get("time_series_filter")
       if isinstance(ts_filter_dict, dict):
+        bad_lts_keys = set(ts_filter_dict.keys()) - {"filter", "aggregation"}
+        if bad_lts_keys:
+          raise ValueError(f"Unknown properties in time_series_filter: {bad_lts_keys}")
+
         agg_dict = ts_filter_dict.get("aggregation", {})
         agg_obj = None
         if isinstance(agg_dict, dict) and agg_dict:
+          bad_agg_keys = set(agg_dict.keys()) - {"alignment_period", "per_series_aligner", "cross_series_reducer", "group_by_fields"}
+          if bad_agg_keys:
+            raise ValueError(f"Unknown properties in aggregation: {bad_agg_keys}")
+
           group_by = agg_dict.get("group_by_fields", [])
           if isinstance(group_by, str):
             group_by = [group_by]

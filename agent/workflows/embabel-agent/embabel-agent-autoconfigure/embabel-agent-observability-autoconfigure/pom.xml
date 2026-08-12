@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.embabel.agent</groupId>
+        <artifactId>embabel-agent-autoconfigure</artifactId>
+        <version>2.0.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>embabel-agent-observability-autoconfigure</artifactId>
+    <packaging>jar</packaging>
+    <name>Embabel Agent Observability AutoConfiguration</name>
+    <description>Spring Boot AutoConfiguration for Embabel Agent Observability</description>
+    <url>https://github.com/embabel/embabel-agent</url>
+
+    <scm>
+        <url>https://github.com/embabel/embabel-agent</url>
+        <connection>scm:git:https://github.com/embabel/embabel-agent.git</connection>
+        <developerConnection>scm:git:https://github.com/embabel/embabel-agent.git</developerConnection>
+        <tag>HEAD</tag>
+    </scm>
+
+    <dependencies>
+        <!-- Embabel Agent Observability core module -->
+        <dependency>
+            <groupId>com.embabel.agent</groupId>
+            <artifactId>embabel-agent-observability</artifactId>
+        </dependency>
+
+        <!-- Spring Boot AutoConfigure -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+        </dependency>
+
+        <!-- Spring Boot Actuator (ObservationRegistryCustomizer) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!--
+            Spring Boot 4 moved ObservationRegistryCustomizer out of
+            spring-boot-actuator-autoconfigure into the dedicated
+            spring-boot-micrometer-observation artifact and renamed its package
+            (org.springframework.boot.micrometer.observation.autoconfigure).
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-micrometer-observation</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!--
+            Spring Boot 4 moved MicrometerTracingAutoConfiguration out of
+            spring-boot-actuator-autoconfigure into spring-boot-micrometer-tracing
+            (org.springframework.boot.micrometer.tracing.autoconfigure).
+            Optional here so afterName FQCN can resolve when present; the
+            observability starter brings spring-boot-micrometer-tracing-opentelemetry.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-micrometer-tracing</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- AspectJ weaver for @Tracked aspect support (direct dep, not spring-boot-starter-aspectj); provides org.aspectj.lang.* -->
+        <dependency>
+            <groupId>org.aspectj</groupId>
+            <artifactId>aspectjweaver</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Micrometer Tracing Bridge to OpenTelemetry (OtelTracer, OtelCurrentTraceContext) -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-otel</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- OpenTelemetry SDK (SdkTracerProvider, SpanExporter, SpanProcessor) -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-sdk</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Spring Web (for HTTP body caching and observation filters) -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-web</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Servlet API (for OncePerRequestFilter, HttpServletRequest/Response) -->
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- OpenTelemetry Semantic Conventions (ServiceAttributes) -->
+        <dependency>
+            <groupId>io.opentelemetry.semconv</groupId>
+            <artifactId>opentelemetry-semconv</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Test Dependencies -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-sdk-testing</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!--
+            Boot's OpenTelemetryTracingAutoConfiguration lives here. The observability starter
+            ships it, so consumers always have it on the classpath; test scope lets this module
+            verify how Embabel's auto-configuration composes with Boot's (#1871).
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-micrometer-tracing-opentelemetry</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!--
+            Boot's CompositeMeterRegistryAutoConfiguration lives here; test scope so this module
+            can verify MeterRegistry-dependent wiring across auto-configuration boundaries (#1871).
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-micrometer-metrics</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>com.embabel.agent</groupId>
+            <artifactId>embabel-agent-test-internal</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

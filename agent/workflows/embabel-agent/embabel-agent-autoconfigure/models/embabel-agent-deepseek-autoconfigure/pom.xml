@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.embabel.agent</groupId>
+        <artifactId>embabel-agent-autoconfigure</artifactId>
+        <version>2.0.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>embabel-agent-deepseek-autoconfigure</artifactId>
+    <packaging>jar</packaging>
+    <name>Embabel Agent Autoconfiguration Models Deepseek</name>
+    <description>Deepseek Models for Embabel Agent API</description>
+    <url>https://github.com/embabel/embabel-agent</url>
+
+    <properties>
+        <brotli.version>0.1.2</brotli.version>
+    </properties>
+
+    <scm>
+        <url>https://github.com/embabel/embabel-agent</url>
+        <connection>scm:git:https://github.com/embabel/embabel-agent.git</connection>
+        <developerConnection>scm:git:https://github.com/embabel/embabel-agent.git</developerConnection>
+        <tag>HEAD</tag>
+    </scm>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.embabel.agent</groupId>
+            <artifactId>embabel-agent-api</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-deepseek</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.embabel.agent</groupId>
+            <artifactId>embabel-agent-test-internal</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- The integration test drives the real API through the platform, as the OpenAI ones do. -->
+        <dependency>
+            <groupId>com.embabel.agent</groupId>
+            <artifactId>embabel-agent-platform-autoconfigure</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Spring Boot 4 split JacksonAutoConfiguration into its own module
+             (org.springframework.boot.jackson.autoconfigure). Tests import it explicitly. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-jackson</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Supplies the shared aiModelRestClientBuilder, so the test covers the client an
+             application really runs on rather than the fallback. -->
+        <dependency>
+            <groupId>com.embabel.agent</groupId>
+            <artifactId>embabel-agent-netty-client-autoconfigure</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!--
+          Keeps the classpath hostile on purpose. Apache HttpClient is what Spring's detection picks
+          first, and the brotli decoder is what makes it advertise brotli to the API. If this provider
+          ever goes back to building its own RestClient, the tests fail here instead of in production.
+        -->
+        <dependency>
+            <groupId>org.apache.httpcomponents.client5</groupId>
+            <artifactId>httpclient5</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.brotli</groupId>
+            <artifactId>dec</artifactId>
+            <version>${brotli.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+</project>

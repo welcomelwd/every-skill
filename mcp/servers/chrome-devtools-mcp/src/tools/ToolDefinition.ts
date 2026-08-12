@@ -10,7 +10,8 @@ import type {
   HeapSnapshotClassDiff,
   HeapSnapshotDetailedClassDiff,
   DuplicateStringGroup,
-} from '../HeapSnapshotManager.js';
+  HeapEdgesQueryOptions,
+} from '../processors/HeapSnapshotManager.js';
 import type {McpPage} from '../McpPage.js';
 import {zod} from '../third_party/index.js';
 import type {
@@ -28,14 +29,17 @@ import type {
   Protocol,
   Page,
 } from '../third_party/index.js';
-import type {InsightName, TraceResult} from '../trace-processing/parse.js';
+import type {InsightName, TraceResult} from '../processors/PerformanceTrace.js';
 import type {
   TextSnapshotNode,
   GeolocationOptions,
   ExtensionServiceWorker,
 } from '../types.js';
 import type {PaginationOptions} from '../types.js';
-import type {WaitForEventsResult, DialogAction} from '../WaitForHelper.js';
+import type {
+  WaitForEventsResult,
+  DialogAction,
+} from '../utils/WaitForHelper.js';
 
 import type {ToolCategory} from './categories.js';
 import type {ToolGroups} from './thirdPartyDeveloper.js';
@@ -290,6 +294,7 @@ export type Context = Readonly<{
   getHeapSnapshotEdges(
     filePath: string,
     nodeId: number,
+    options?: HeapEdgesQueryOptions,
   ): Promise<DevTools.HeapSnapshotModel.HeapSnapshotModel.ItemsRange>;
   getHeapSnapshotClassDiffs(
     baseFilePath: string,

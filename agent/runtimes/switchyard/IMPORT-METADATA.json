@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "repository": "NVIDIA-NeMo/Switchyard",
+  "source_url": "https://github.com/NVIDIA-NeMo/Switchyard",
+  "ref": "main",
+  "resolved_commit": "0151621f6f7a07c267e321f085391862dd31149d",
+  "category": "agent",
+  "subcategory": "runtimes",
+  "slug": "switchyard",
+  "license": "Apache-2.0",
+  "source_date": null,
+  "imported_at": "2026-08-12T23:15:04+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 280,
+  "copied_bytes": 3268728,
+  "excluded_files": [
+    "assets/logo.png: binary content",
+    "examples/experimental/litellm/.env.example: sensitive filename"
+  ],
+  "execution": "never run by this importer"
+}

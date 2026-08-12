@@ -24,6 +24,11 @@ Protocol Buffer textprotos. These generated textprotos are designed to be
 ingested by the Cloud Monitoring Dashboards API, gcloud CLI, or declarative
 dashboard provisioning pipelines.
 
+> [!IMPORTANT] **Preferred API & Mutually Exclusive Queries**:
+> - **API Preference**: Always prefer generating `ListTimeSeries` (`time_series_filter`) configurations for widgets over PromQL, unless the user explicitly requested PromQL or the metric math strictly requires it.
+> - **Mutually Exclusive**: A widget dataset `time_series_query` must contain **EITHER** a `time_series_filter` OR a `prometheus_query`. You must never populate both fields in the same dataset simultaneously.
+> - **Strict Passthrough**: You MUST copy the provided PromQL query or ListTimeSeries JSON exact filter string character-for-character. DO NOT invent, rewrite, or modify the queries under any circumstances.
+
 > [!CAUTION] **CRITICAL EXECUTION & WORKING DIRECTORY RULES**:
 >
 > -   **DO NOT CHANGE WORKING DIRECTORY**: Keep your working directory at your
@@ -180,7 +185,19 @@ xy_chart {
 > output from Stage 3:
 >
 > ```bash
->    python3 scripts/validate_chart.py --input_file "GENERATED_FILE.textproto"
+>    # For PromQL charts:
+>    python3 scripts/validate_chart.py --input_file "GENERATED_FILE.textproto" \
+>       --expected_promql_substring "SOME_IDENTIFYING_SUBSTRING_FROM_QUERY" \
+>       --expected_unit_override "UNIT_OVERRIDE_CANDIDATE"
+>
+>    # For ListTimeSeries (LTS) charts:
+>    python3 scripts/validate_chart.py --input_file "GENERATED_FILE.textproto" \
+>       --expected_lts_filter_substring "SOME_IDENTIFYING_SUBSTRING_FROM_FILTER" \
+>       --expected_unit_override "UNIT_OVERRIDE_CANDIDATE"
+>
+>    # ALWAYS provide an identifying substring and the Stage 1 unit override candidate to verify you didn't mutate the data.
+    
+>    # CRITICAL: If you generated multiple charts for multiple metrics, you MUST run this validation script independently for EACH file generated to ensure every chart is correct!
 > ```
 >
 > 2.  **Auto-Retry if Missing or Failed**: If `validate_chart` reports that the

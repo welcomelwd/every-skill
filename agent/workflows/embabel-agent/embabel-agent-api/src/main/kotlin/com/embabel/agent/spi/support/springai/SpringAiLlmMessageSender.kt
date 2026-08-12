@@ -1,0 +1,230 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.embabel.agent.spi.support.springai
+
+import com.embabel.agent.api.tool.Tool
+import com.embabel.agent.spi.loop.LlmMessageRequest
+import com.embabel.agent.spi.loop.LlmMessageResponse
+import com.embabel.agent.spi.loop.LlmMessageSender
+import com.embabel.agent.spi.loop.RequestAwareLlmMessageSender
+import com.embabel.agent.spi.loop.StructuredOutputRequest
+import com.embabel.chat.Message
+import com.embabel.common.ai.autoconfig.NativeSupport
+import com.embabel.common.ai.model.LlmMetadata
+import com.embabel.common.util.loggerFor
+import com.embabel.agent.spi.support.nativeoutput.shouldUseNativeStructuredOutput
+import org.springframework.ai.chat.model.ChatModel
+import org.springframework.ai.chat.model.ChatResponse
+import org.springframework.ai.chat.prompt.ChatOptions
+import org.springframework.ai.chat.prompt.Prompt
+import org.springframework.ai.model.tool.ToolCallingChatOptions
+import org.springframework.ai.tool.ToolCallback
+
+/**
+ * Spring AI implementation of [LlmMessageSender].
+ *
+ * Makes a single LLM inference call using Spring AI's ChatModel.
+ * Does NOT execute tools - just returns the response including any tool call requests.
+ * Tool execution is handled by [com.embabel.agent.spi.loop.ToolLoop].
+ *
+ * @param chatModel The Spring AI ChatModel to use for LLM calls
+ * @param chatOptions Options for the LLM call (temperature, etc.)
+ * @param toolResponseContentAdapter Adapts tool response content for provider-specific
+ *        format requirements (e.g., JSON wrapping for Google GenAI)
+ */
+internal class SpringAiLlmMessageSender(
+    private val chatModel: ChatModel,
+    private val chatOptions: ChatOptions,
+    private val toolResponseContentAdapter: ToolResponseContentAdapter = ToolResponseContentAdapter.PASSTHROUGH,
+    private val nativeStructuredOutputConfigurer: SpringAiNativeStructuredOutputConfigurer =
+        SpringAiNativeStructuredOutputConfigurer.NOOP,
+    private val nativeSupport: NativeSupport? = null,
+    private val llmMetadata: LlmMetadata? = null,
+) : RequestAwareLlmMessageSender {
+
+    private val logger = loggerFor<SpringAiLlmMessageSender>()
+
+    override fun call(
+        messages: List<Message>,
+        tools: List<Tool>,
+    ): LlmMessageResponse = call(
+        LlmMessageRequest(
+            messages = messages,
+            tools = tools,
+        )
+    )
+
+    override fun call(request: LlmMessageRequest): LlmMessageResponse {
+        // Convert Embabel messages to Spring AI messages, applying provider-specific
+        // tool response formatting (e.g., JSON wrapping for Google GenAI)
+        val springAiMessages = request.messages
+            .map { it.toSpringAiMessage(toolResponseContentAdapter) }
+            .mergeConsecutiveToolResponses()
+
+        // Convert Embabel tools to Spring AI tool callbacks using existing adapter
+        val toolCallbacks = request.tools.toSpringToolCallbacks()
+
+        // Build prompt with tool definitions (but NOT tool execution)
+        val effectiveStructuredOutput = if (nativeSupport.shouldUseNativeStructuredOutput(request)) {
+            logger.debug("Native structured output enabled for this call")
+            request.nativeStructuredOutputRequest?.structuredOutputRequest
+        } else {
+            logger.debug("Native structured output disabled for this call; using fallback path")
+            null
+        }
+
+        val prompt = Prompt(
+            springAiMessages,
+            buildChatOptions(effectiveStructuredOutput, toolCallbacks),
+        )
+
+        // Call LLM - returns response which may include tool call requests
+        val response: ChatResponse = chatModel.call(prompt)
+
+        logger.debug("Prompt: {}\nResponse: {}", prompt, response)
+
+        // Convert response to Embabel message
+        // Note: Some providers (e.g., Bedrock) may return multiple generations where
+        // the first is empty and the second contains tool calls. We need to find the
+        // generation with tool calls, or fall back to the first one if none have them.
+        // See: https://github.com/embabel/embabel-agent/issues/1350
+        val assistantMessage = findGenerationWithToolCalls(response) ?: response.result!!.output
+        val embabelMessage = assistantMessage.toEmbabelMessage()
+
+        // Extract usage information
+        val usage = response.metadata?.usage?.toEmbabelUsage()
+
+        return LlmMessageResponse(
+            message = embabelMessage,
+            textContent = assistantMessage.text ?: "",
+            usage = usage,
+        )
+    }
+
+    /**
+     * Find the best generation to use from the response.
+     *
+     * Some providers (e.g., Bedrock) may return multiple generations where
+     * the first is empty and a subsequent one contains tool calls.
+     *
+     * Strategy:
+     * 1. Collect all tool calls from all generations
+     * 2. Collect all text content from all generations
+     * 3. If there are tool calls, create a merged AssistantMessage with all tool calls and combined text
+     * 4. If no tool calls, return null to fall back to first generation
+     *
+     * This ensures we don't lose valuable content (text or tool calls) from any generation.
+     *
+     * @return A merged AssistantMessage with all tool calls and text, or null if no tool calls found
+     */
+    private fun findGenerationWithToolCalls(response: ChatResponse): org.springframework.ai.chat.messages.AssistantMessage? {
+        val allOutputs = response.results.map { it.output }
+
+        // Collect all tool calls from all generations
+        val allToolCalls = allOutputs
+            .flatMap { it.toolCalls ?: emptyList() }
+
+        if (allToolCalls.isEmpty()) {
+            return null // No tool calls found, let caller use first generation
+        }
+
+        // Collect all metadata from all generations
+        val allMetaData: Map<String, Any> = allOutputs
+            .mapNotNull { it.metadata }
+            .fold(emptyMap()) { acc, metadata -> acc + metadata }
+
+        // Collect all non-empty text from all generations
+        val allText = allOutputs
+            .mapNotNull { it.text?.takeIf { text -> text.isNotBlank() } }
+            .joinToString("\n")
+
+        // Log if we're merging content from multiple generations
+        val generationsWithToolCalls = allOutputs.count { !it.toolCalls.isNullOrEmpty() }
+        val generationsWithText = allOutputs.count { !it.text.isNullOrBlank() }
+        if (generationsWithToolCalls > 1 || generationsWithText > 1) {
+            logger.debug(
+                "Merging content from multiple generations: {} with tool calls, {} with text",
+                generationsWithToolCalls,
+                generationsWithText
+            )
+        }
+
+        return org.springframework.ai.chat.messages.AssistantMessage.builder()
+            .content(allText)
+            .toolCalls(allToolCalls)
+            .properties(allMetaData)
+            .build()
+    }
+
+    /**
+     * Build ChatOptions with tool definitions.
+     * Tools are passed to the LLM so it knows what's available,
+     * but we don't use Spring AI's automatic tool execution.
+     *
+     * This method preserves provider-specific options (like Anthropic's cache settings)
+     * by using the provider's copy() method when the options already implement ToolCallingChatOptions.
+     */
+    private fun buildChatOptions(
+        structuredOutput: StructuredOutputRequest?,
+        toolCallbacks: List<ToolCallback>,
+    ): ChatOptions {
+        val optionsWithTools = buildChatOptionsWithTools(toolCallbacks)
+        return nativeStructuredOutputConfigurer.configure(
+            options = optionsWithTools,
+            structuredOutput = structuredOutput,
+            nativeSupport = nativeSupport,
+            llm = llmMetadata,
+        )
+    }
+
+    private fun buildChatOptionsWithTools(toolCallbacks: List<ToolCallback>): ChatOptions {
+        if (toolCallbacks.isEmpty()) {
+            return chatOptions
+        }
+
+        // If chatOptions already implements ToolCallingChatOptions (e.g., AnthropicChatOptions,
+        // OpenAiChatOptions, etc.), use its copy() method to preserve all provider-specific settings
+        if (chatOptions is ToolCallingChatOptions) {
+            // Spring AI 2.0 GA: toolCallbacks are read-only on ToolCallingChatOptions, so use
+            // mutate() to derive a new instance, preserving the provider-specific subtype (e.g.
+            // Anthropic cache settings) while attaching our tool callbacks. The per-request
+            // internalToolExecutionEnabled flag was removed in 2.0.0; disabling Spring AI's
+            // automatic tool execution is now configured on the ChatModel (ToolCallingManager /
+            // ToolExecutionEligibilityPredicate) so embabel's DefaultToolLoop stays in control.
+            return chatOptions.mutate()
+                .toolCallbacks(toolCallbacks)
+                .build()
+        }
+
+        // Fallback: create generic ToolCallingChatOptions.
+        // Only copy parameters that are present so we never re-introduce values the
+        // options converter intentionally omitted (e.g. temperature on restricted models).
+        // We handle tools ourselves in DefaultToolLoop. Spring AI 2.0 GA removed the per-request
+        // internalToolExecutionEnabled flag; internal execution is disabled on the ChatModel.
+        val builder = ToolCallingChatOptions.builder()
+        // Spring AI ChatOptions.model is nullable (String?). Only copy when non-null so we
+        // never force "" or invent a model id the converter intentionally left unset.
+        chatOptions.model?.let { builder.model(it) }
+        chatOptions.temperature?.let { builder.temperature(it) }
+        chatOptions.maxTokens?.let { builder.maxTokens(it) }
+        chatOptions.topP?.let { builder.topP(it) }
+        chatOptions.topK?.let { builder.topK(it) }
+        chatOptions.frequencyPenalty?.let { builder.frequencyPenalty(it) }
+        chatOptions.presencePenalty?.let { builder.presencePenalty(it) }
+        chatOptions.stopSequences?.let { builder.stopSequences(it) }
+        return builder.toolCallbacks(toolCallbacks).build()
+    }
+}

@@ -78,6 +78,24 @@ xy_chart {
     with self.assertRaises(ValueError):
       validate_chart.validate_widget(widget=widget)
 
+  def test_validate_widget_dual_query_fails(self):
+    textproto = """
+title: "Invalid Dual Query Chart"
+xy_chart {
+  data_sets {
+    time_series_query {
+      prometheus_query: "query"
+      time_series_filter {
+        filter: "metric.type=\\"foo\\""
+      }
+    }
+  }
+}
+"""
+    widget = validate_chart.parse_and_validate_widget(textproto)
+    with self.assertRaisesRegex(ValueError, "cannot contain BOTH"):
+      validate_chart.validate_widget(widget=widget)
+
   def test_main_validate_from_stdin(self):
     textproto = """
 title: "Disk Read Bytes"

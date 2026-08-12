@@ -1,0 +1,226 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.embabel.agent.core.support
+
+import com.embabel.agent.api.common.PlatformServices
+import com.embabel.agent.api.event.AgentProcessPlanFormulatedEvent
+import com.embabel.agent.api.event.GoalAchievedEvent
+import com.embabel.agent.api.event.ReplanRequestedEvent
+import com.embabel.agent.api.tool.TerminateActionException
+import com.embabel.agent.api.tool.TerminateAgentException
+import com.embabel.agent.api.tool.ToolControlFlowSignal
+import com.embabel.agent.core.Action
+import com.embabel.agent.core.Agent
+import com.embabel.agent.core.AgentProcess
+import com.embabel.agent.core.AgentProcessStatusCode
+import com.embabel.agent.core.Blackboard
+import com.embabel.agent.core.ProcessOptions
+import com.embabel.agent.core.ReplanRequestedException
+import com.embabel.agent.spi.PlannerFactory
+import com.embabel.common.util.indentLines
+import com.embabel.plan.Plan
+import com.embabel.plan.Planner
+import com.embabel.plan.WorldState
+import com.embabel.plan.common.condition.WorldStateDeterminer
+import java.time.Instant
+
+open class SimpleAgentProcess(
+    id: String,
+    parentId: String?,
+    agent: Agent,
+    processOptions: ProcessOptions,
+    blackboard: Blackboard,
+    platformServices: PlatformServices,
+    plannerFactory: PlannerFactory,
+    timestamp: Instant = Instant.now(),
+) : AbstractAgentProcess(
+    id = id,
+    parentId = parentId,
+    agent = agent,
+    processOptions = processOptions,
+    blackboard = blackboard,
+    platformServices = platformServices,
+    timestamp = timestamp,
+) {
+
+    override val worldStateDeterminer: WorldStateDeterminer = BlackboardWorldStateDeterminer(
+        processContext = processContext,
+        logicalExpressionParser = platformServices.logicalExpressionParser,
+    )
+
+    override val planner: Planner<*, *, *> = plannerFactory.createPlanner(processOptions, worldStateDeterminer)
+
+    /**
+     * Actions to exclude from the next planning cycle.
+     * Used to prevent infinite loops when an action requests replan but
+     * would be the only applicable action again.
+     * Cleared after each successful planning cycle.
+     */
+    protected val replanBlacklist = mutableSetOf<String>()
+
+    protected fun handlePlanNotFound(worldState: WorldState): AgentProcess {
+        logger.debug(
+            "🚦 Process $id stuck\n" +
+                    """|No plan from:
+                   |${worldState.infoString(verbose = true, indent = 1)}
+                   |in:
+                   |${agent.planningSystem.infoString(verbose = true, 1)}
+                   |context:
+                   |${blackboard.infoString(true, 1)}
+                   |"""
+                        .trimMargin()
+                        .indentLines(1)
+        )
+        setStatus(AgentProcessStatusCode.STUCK)
+        val earlyTermination = identifyEarlyTermination()
+        if (earlyTermination != null) {
+            return this
+        }
+        return this
+    }
+
+    protected fun handleProcessCompletion(
+        plan: Plan,
+        worldState: WorldState,
+    ) {
+        logger.debug(
+            "✅ Process {} completed, achieving goal {} in {} seconds",
+            this.id,
+            plan.goal.name,
+            this.runningTime.seconds,
+        )
+        platformServices.eventListener.onProcessEvent(
+            GoalAchievedEvent(
+                agentProcess = this,
+                worldState = worldState,
+                goal = plan.goal,
+            )
+        )
+        logger.debug("Final blackboard: {}", blackboard.infoString())
+        setStatus(AgentProcessStatusCode.COMPLETED)
+    }
+
+    protected fun sendProcessRunningEvent(
+        plan: Plan,
+        worldState: WorldState,
+    ) {
+        platformServices.eventListener.onProcessEvent(
+            AgentProcessPlanFormulatedEvent(
+                agentProcess = this,
+                worldState = worldState,
+                plan = plan,
+            )
+        )
+        logger.debug("▶️ Process {} running: {}\n\tPlan: {}", id, worldState, plan.infoString())
+    }
+
+    override fun formulateAndExecutePlan(worldState: WorldState): AgentProcess {
+        // Use blacklist to exclude actions that just triggered replan
+        val plan = planner.bestValuePlanToAnyGoal(
+            system = agent.planningSystem,
+            excludedActionNames = replanBlacklist,
+        )
+        if (plan == null) {
+            // If no plan found with blacklist, try without it as a fallback
+            // This handles the case where the blacklisted action is the only option
+            if (replanBlacklist.isNotEmpty()) {
+                logger.debug(
+                    "No plan found with blacklist {}, clearing and retrying",
+                    replanBlacklist,
+                )
+                replanBlacklist.clear()
+                return formulateAndExecutePlan(worldState)
+            }
+            return handlePlanNotFound(worldState)
+        }
+
+        // Clear blacklist after successful planning
+        replanBlacklist.clear()
+
+        _goal = plan.goal
+
+        if (plan.isComplete()) {
+            handleProcessCompletion(plan, worldState)
+        } else {
+            sendProcessRunningEvent(plan, worldState)
+
+            val action = resolveActionFromPlan(plan)
+            try {
+                val actionStatus = executeAction(action)
+                setStatus(actionStatusToAgentProcessStatus(actionStatus))
+            } catch (rpe: ReplanRequestedException) {
+                handleReplanRequest(action, rpe)
+            } catch (e: TerminateActionException) {
+                // Action requested early termination - continue with next action
+                logger.info(
+                    "Action {} terminated early: {}",
+                    action.name,
+                    e.reason,
+                )
+                // Keep status as RUNNING to continue with next action
+                setStatus(AgentProcessStatusCode.RUNNING)
+            } catch (e: TerminateAgentException) {
+                // Agent termination requested - stop the entire process
+                logger.info(
+                    "Agent process terminated by action {}: {}",
+                    action.name,
+                    e.reason,
+                )
+                setStatus(AgentProcessStatusCode.TERMINATED)
+            } catch (e: Exception) {
+                if (e is ToolControlFlowSignal) {
+                    // Other control flow signals (e.g., UserInputRequiredException) must propagate
+                    throw e
+                }
+                throw e
+            }
+        }
+        return this
+    }
+
+    private fun resolveActionFromPlan(plan: Plan): com.embabel.agent.core.Action =
+        agent.actions.singleOrNull { it.name == plan.actions.first().name }
+            ?: error(
+                "No unique action found for ${plan.actions.first().name} in ${agent.actions.map { it.name }}"
+            )
+
+    /**
+     * Handles a [ReplanRequestedException] thrown by an action.
+     *
+     * Shared by [SimpleAgentProcess] and [ConcurrentAgentProcess] to keep replan semantics
+     * consistent across both execution modes:
+     * 1. Applies the blackboard updates supplied by the throwing action.
+     * 2. Blacklists the action for the next planning cycle to prevent an immediate infinite loop.
+     * 3. Emits a [ReplanRequestedEvent].
+     * 4. Keeps the process status as [AgentProcessStatusCode.RUNNING] so the main loop replans.
+     */
+    protected fun handleReplanRequest(action: Action, rpe: ReplanRequestedException) {
+        rpe.blackboardUpdater.accept(blackboard)
+        replanBlacklist.add(action.name)
+        logger.info(
+            "Action {} requested replan: {}. Blacklisted for next cycle.",
+            action.name,
+            rpe.reason,
+        )
+        platformServices.eventListener.onProcessEvent(
+            ReplanRequestedEvent(
+                agentProcess = this,
+                reason = rpe.reason,
+            )
+        )
+        setStatus(AgentProcessStatusCode.RUNNING)
+    }
+}

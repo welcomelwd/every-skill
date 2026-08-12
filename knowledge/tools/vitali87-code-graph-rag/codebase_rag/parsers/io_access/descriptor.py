@@ -81,6 +81,11 @@ class LanguageDescriptor:
     # std::fs; fs::write` -> `std::fs::write`) not the default `.`, so a bare short
     # path matches std only when its head is genuinely imported. None = `.`.
     scope_separator: str | None = None
+    # Separator between a bound handle's receiver and its method in the callee text
+    # (`recv.method`). Lua spells handle-method calls with `:` (`f:write(x)`), every
+    # other lean grammar with `.`; the handle-write emission splits the callee on
+    # this to recover the receiver (issue #1204).
+    handle_method_separator: str = cs.SEPARATOR_DOT
     # Stream-insertion sink (C++ `std::cout << x`): a binary_expression whose
     # `operator` field equals stream_sink_operator and whose left-spine base
     # (cout/cerr) is a stream sink. None where the language has no such operator I/O.
@@ -153,6 +158,33 @@ class LanguageDescriptor:
     # calls need no entry: their owning nodes are not nested scopes, so the walk
     # already descends into them. Empty = today's whole-node skip (Go/C/Rust/Java/C#).
     nested_header_types: frozenset[str] = frozenset()
+
+    # Method names a tainted value passes through unchanged: Rust Result
+    # unwrapping (`.unwrap()`/`.expect()`) and value-preserving conversions
+    # (`s.as_bytes()`, `.clone()`, ...). The flow walk recurses a method-call
+    # receiver ONLY through these, so a terminal method returning an unrelated
+    # value (`.len()`) never propagates the receiver's taint. Empty for languages
+    # that need no such unwrapping (Go's `[]byte(s)` is syntax, handled
+    # separately). Issue #1204.
+    taint_transparent_methods: frozenset[str] = frozenset()
+
+    # Statement/expression node types that write their operand(s) to STDOUT with no
+    # callee name (PHP `echo $x, $y;` / `print $x`), handled like a keyword sink:
+    # every operand's taint (a `sequence_expression` unwrapped to its elements) flows
+    # to STDOUT. Empty for languages whose output is call- or macro-shaped. Issue #1174.
+    keyword_stdout_write_types: frozenset[str] = frozenset()
+
+    # Field on an `if` node holding the then-branch. Most grammars use `consequence`;
+    # PHP's `if_statement` uses `body` and emits the whole elseif/else chain as
+    # MULTIPLE sibling `alternative` children (issue #1174). The flat if-walker reads
+    # the consequence via this field and gathers every `alternative`.
+    if_consequence_field: str = cs.TS_FIELD_CONSEQUENCE
+
+    # True when the language's FUNCTION names are case-insensitive (PHP: `GETENV`
+    # == `getenv`). The registry keys are lowercase, so the callee is lowercased
+    # before sink/handle matching. Variable names and superglobals stay
+    # case-sensitive -- they are matched elsewhere, not through this path. Issue #1174.
+    case_insensitive_call_names: bool = False
 
 
 _JS_TS_DESCRIPTOR = LanguageDescriptor(
@@ -317,6 +349,7 @@ _RUST_DESCRIPTOR = LanguageDescriptor(
     subscript_type=cs.TS_RS_INDEX_EXPRESSION,
     object_field=cs.FIELD_VALUE,
     property_field=cs.RS_FIELD_FIELD,
+    taint_transparent_methods=cs.RS_TAINT_TRANSPARENT_METHODS,
     subscript_index_field=cs.RS_FIELD_INDEX,
     scope_separator=cs.TS_RS_TOKEN_SCOPE,
     # `let x = env::var(..)` binds via the `pattern` field (a plain identifier for
@@ -451,6 +484,87 @@ _LUA_DESCRIPTOR = LanguageDescriptor(
     # `local x = os.getenv(..)` binds through list containers (issue #1175).
     binding_target_container_type=cs.TS_LUA_VARIABLE_LIST,
     binding_value_container_type=cs.TS_LUA_EXPRESSION_LIST,
+    # Lua handle methods are called with `:` (`f:write(secret)`), not `.` (#1204).
+    handle_method_separator=cs.CHAR_COLON,
+)
+
+_DART_DESCRIPTOR = LanguageDescriptor(
+    # Dart has NO call-expression node: calls/members/bindings are flat sibling
+    # `selector` chains reconstructed by the dart/utils.py helpers, so the flow walk
+    # takes a Dart-specific leaf path (issue #1173). Most call/member/binding FIELDS
+    # here are inert; the ones that matter are the node TYPES the walk dispatches on.
+    call_type=cs.TS_DART_SELECTOR,
+    string_type=cs.TS_DART_STRING_LITERAL,
+    # A Dart string_literal has no content child; its content is read inline from
+    # node.text (quote-stripped) by a Dart branch in string_literal().
+    string_content_type=cs.TS_DART_STRING_LITERAL,
+    keyword_arg_type=None,
+    nested_scope_types=cs.DART_NESTED_SCOPE_NODE_TYPES,
+    identifier_type=cs.TS_DART_IDENTIFIER,
+    declarator_type=cs.TS_DART_INITIALIZED_VARIABLE_DEFINITION,
+    params_field=cs.FIELD_PARAMETERS,
+    block_scope_type=cs.TS_DART_BLOCK,
+    extra_declarator_types=frozenset(),
+    loop_declarator_types=frozenset(),
+    statement_container_type=None,
+    sinks_require_import=False,
+    hoisted_declarations=False,
+    decl_in_own_initializer=False,
+    declaration_statement_type=None,
+    macro_type=None,
+    # Inert: Dart member/subscript reads use the sibling-chain path, not these fields.
+    member_expression_type=cs.TS_DART_SELECTOR,
+    subscript_type=cs.TS_DART_INDEX_SELECTOR,
+    object_field=cs.FIELD_OBJECT,
+    property_field=cs.TS_FIELD_NAME,
+    subscript_index_field=cs.TS_FIELD_INDEX,
+    argument_wrapper_type=cs.TS_DART_ARGUMENT,
+)
+
+_PHP_DESCRIPTOR = LanguageDescriptor(
+    call_type=cs.TS_PHP_FUNCTION_CALL_EXPRESSION,
+    string_type=cs.TS_PHP_ENCAPSED_STRING,
+    string_content_type=cs.TS_PHP_STRING_CONTENT,
+    keyword_arg_type=None,
+    nested_scope_types=frozenset(
+        {
+            cs.TS_PHP_FUNCTION_DEFINITION,
+            cs.TS_PHP_METHOD_DECLARATION,
+            cs.TS_PHP_ANONYMOUS_FUNCTION,
+            cs.TS_PHP_ARROW_FUNCTION,
+        }
+    ),
+    # PHP variables are `$name`; a local can never shadow a builtin sink (which has
+    # no `$`), so the shadow machinery is inert like C++/C#/Rust. The fields below
+    # are wired to real PHP nodes but never suppress a genuine sink.
+    identifier_type=cs.TS_PHP_VARIABLE_NAME,
+    declarator_type=cs.TS_ASSIGNMENT_EXPRESSION,
+    params_field=cs.FIELD_PARAMETERS,
+    block_scope_type=cs.TS_PHP_COMPOUND_STATEMENT,
+    extra_declarator_types=frozenset(),
+    loop_declarator_types=frozenset(),
+    statement_container_type=None,
+    sinks_require_import=False,
+    hoisted_declarations=False,
+    decl_in_own_initializer=False,
+    declaration_statement_type=None,
+    macro_type=None,
+    # Superglobal reads are subscripts (`$_GET["q"]`); member access (`$o->p`) is
+    # wired but unused by any PHP member-read row.
+    member_expression_type=cs.TS_PHP_MEMBER_ACCESS_EXPRESSION,
+    subscript_type=cs.TS_PHP_SUBSCRIPT_EXPRESSION,
+    object_field=cs.FIELD_OBJECT,
+    property_field=cs.TS_FIELD_NAME,
+    subscript_index_field=cs.TS_FIELD_INDEX,
+    # Each call argument wraps in an `argument` node, like C#.
+    argument_wrapper_type=cs.TS_PHP_ARGUMENT,
+    # `echo`/`print` write STDOUT; PHP `if` uses a `body` field + multiple
+    # `alternative` children (issue #1174).
+    keyword_stdout_write_types=frozenset(
+        {cs.TS_PHP_ECHO_STATEMENT, cs.TS_PHP_PRINT_INTRINSIC}
+    ),
+    if_consequence_field=cs.FIELD_BODY,
+    case_insensitive_call_names=True,
 )
 
 # Non-Python languages with a direct-sink descriptor. Python keeps its own
@@ -469,4 +583,6 @@ LANGUAGE_DESCRIPTORS: dict[cs.SupportedLanguage, LanguageDescriptor] = {
     cs.SupportedLanguage.C: _CPP_DESCRIPTOR,
     cs.SupportedLanguage.CSHARP: _CSHARP_DESCRIPTOR,
     cs.SupportedLanguage.LUA: _LUA_DESCRIPTOR,
+    cs.SupportedLanguage.PHP: _PHP_DESCRIPTOR,
+    cs.SupportedLanguage.DART: _DART_DESCRIPTOR,
 }

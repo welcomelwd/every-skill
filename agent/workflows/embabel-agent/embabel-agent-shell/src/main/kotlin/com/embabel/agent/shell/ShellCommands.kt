@@ -1,0 +1,546 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.embabel.agent.shell
+
+import com.embabel.agent.api.common.Asyncer
+import com.embabel.agent.api.common.ToolsStats
+import com.embabel.agent.api.common.autonomy.*
+import com.embabel.agent.api.tool.ToolCallContext
+import com.embabel.agent.core.*
+import com.embabel.agent.domain.io.UserInput
+import com.embabel.agent.shell.config.ShellProperties
+import com.embabel.agent.spi.logging.ColorPalette
+import com.embabel.agent.spi.logging.LoggingPersonality
+import com.embabel.common.util.EmbabelObjectMapperHolder
+import com.embabel.chat.Chatbot
+import com.embabel.chat.agent.AgentProcessChatbot
+import com.embabel.chat.agent.DefaultChatAgentBuilder
+import com.embabel.chat.agent.MARVIN
+import com.embabel.common.ai.model.LlmOptions
+import com.embabel.common.ai.model.ModelProvider
+import com.embabel.common.util.bold
+import com.embabel.common.util.color
+import org.slf4j.Logger
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.SpringApplication
+import org.springframework.context.ConfigurableApplicationContext
+import org.springframework.core.env.ConfigurableEnvironment
+import org.springframework.shell.standard.ShellComponent
+import org.springframework.shell.standard.ShellMethod
+import org.springframework.shell.standard.ShellOption
+import kotlin.system.exitProcess
+
+
+/**
+ * Main shell entry point
+ */
+@ShellComponent
+class ShellCommands(
+    private val autonomy: Autonomy,
+    private val asyncer: Asyncer,
+    private val modelProvider: ModelProvider,
+    private val terminalServices: TerminalServices,
+    private val environment: ConfigurableEnvironment,
+    private val embabelObjectMapperHolder: EmbabelObjectMapperHolder,
+    private val colorPalette: ColorPalette,
+    loggingPersonality: LoggingPersonality,
+    private val toolsStats: ToolsStats,
+    private val context: ConfigurableApplicationContext,
+    private val shellProperties: ShellProperties = ShellProperties(),
+    @param:Autowired(required = false)
+    private val chatbot: Chatbot? = null,
+
+    ) {
+
+    private val logger: Logger = loggingPersonality.logger
+
+    private val agentPlatform = autonomy.agentPlatform
+
+    private val agentProcesses = mutableListOf<AgentProcess>()
+
+    private var blackboard: Blackboard? = null
+
+    /**
+     * Whether to look for any goal
+     */
+    private var openMode: Boolean = false
+
+    /**
+     * Persistent tool call context, set via `set-context` command.
+     * Passed to all subsequent agent executions.
+     */
+    private var persistentToolCallContext: ToolCallContext = ToolCallContext.EMPTY
+
+    private var defaultProcessOptions: ProcessOptions = ProcessOptions(
+        verbosity = Verbosity(
+            debug = false,
+            showPrompts = false,
+            showLlmResponses = false,
+            showPlanning = true,
+        )
+    )
+
+    @ShellMethod(value = "Clear blackboard")
+    fun clear(): String {
+        blackboard = null
+        return "Blackboard cleared"
+    }
+
+    @ShellMethod(
+        value = "Set persistent tool call context as key=value pairs, passed to all tools during execution. " +
+                "Example: set-context tenantId=acme,apiKey=secret123",
+        key = ["set-context", "sc"],
+    )
+    fun setContext(
+        @ShellOption(
+            help = "Comma-separated key=value pairs (e.g. tenantId=acme,apiKey=secret). Use 'clear' to reset.",
+            defaultValue = "",
+        ) context: String,
+    ): String {
+        if (context.isBlank() || context == "clear") {
+            persistentToolCallContext = ToolCallContext.EMPTY
+            return "Tool call context cleared".color(colorPalette.color2)
+        }
+        persistentToolCallContext = parseToolCallContext(context)
+        return "Tool call context set: ${persistentToolCallContext.toMap()}".color(colorPalette.color2)
+    }
+
+    @ShellMethod(
+        value = "Show current tool call context",
+        key = ["show-context"],
+    )
+    fun showContext(): String {
+        val ctx = persistentToolCallContext.toMap()
+        return if (ctx.isEmpty()) {
+            "Tool call context is empty"
+        } else {
+            "Tool call context: $ctx"
+        }.color(colorPalette.color2)
+    }
+
+    @ShellMethod(value = "Show recent agent process runs. This is what actually happened, not just what was planned.")
+    fun runs(): String {
+        val plans = agentProcesses.map {
+            "[${it.id}] Goal: ${it.agent.goals.map { g -> g.name }}; usage - ${it.costInfoString(verbose = false)}\n\t\t" +
+                    it.history.joinToString("\n\t\t") { it.infoString() }
+        }
+        return "Recent runs:\n\t${plans.joinToString("\n\t")}"
+    }
+
+    @ShellMethod(value = "List all active Spring profiles")
+    fun profiles(): String {
+        val profiles = environment.activeProfiles
+        return "Active profiles: ${profiles.joinToString()}"
+    }
+
+    private fun createDefaultChatbot(): Chatbot {
+        val persona = MARVIN
+        logger.info("Creating default chatbot with persona {}", persona.name)
+        val chatAgent = DefaultChatAgentBuilder(
+            autonomy = autonomy,
+            llm = LlmOptions.withAutoLlm(),
+            persona = persona,
+        ).build()
+        return AgentProcessChatbot(
+            agentPlatform = agentPlatform,
+            agentSource = {
+                chatAgent
+            })
+    }
+
+    @ShellMethod("Chat")
+    fun chat(): String {
+
+        fun runChat(): String {
+            val chatbot = chatbot ?: createDefaultChatbot()
+            val chatSession = chatbot.createSession(
+                user = null,
+                outputChannel = terminalServices.outputChannel(agentPlatform)
+            )
+            return terminalServices.chat(chatSession = chatSession, welcome = null, colorPalette = colorPalette)
+        }
+
+        return if (shellProperties.redirectLogToFile) {
+            val logRestorer =
+                terminalServices.redirectLoggingToFile(filename = "chat-session", dir = System.getProperty("user.dir"))
+            try {
+                runChat()
+            } finally {
+                // Restore regular logging when chat exits
+                logRestorer()
+            }
+        } else {
+            runChat()
+        }
+    }
+
+    @ShellMethod("List agents")
+    fun agents(): String {
+        val detail = "${"Agents:".bold()}\n${
+            agentPlatform.agents()
+                .joinToString(separator = "\n${"-".repeat(shellProperties.lineLength)}\n") {
+                    it.infoString(verbose = true, indent = 1)
+                }
+        }"
+        return detail + "\n\nTL;DR\n${agentPlatform.agents().joinToString("\n") { "${it.name}: ${it.description}" }}"
+    }
+
+    @ShellMethod("List actions")
+    fun actions(): String {
+        val detail = "${"Actions:".bold()}\n${
+            agentPlatform.actions
+                .joinToString(separator = "\n") { it.infoString(verbose = true, indent = 1) }
+        }"
+        return detail + "\n\nTL;DR\n${agentPlatform.actions.joinToString("\n") { "${it.name}: ${it.description}" }}"
+    }
+
+    @ShellMethod("List conditions")
+    fun conditions(): String {
+        return "${"Conditions:".bold()}\n${
+            agentPlatform.conditions
+                .joinToString(separator = "\n") { it.infoString(verbose = true, indent = 1) }
+        }"
+    }
+
+    @ShellMethod("List goals")
+    fun goals(): String {
+        return "${"Goals:".bold()}\n${
+            agentPlatform.goals
+                .joinToString(separator = "\n") { it.infoString(verbose = true, indent = 1) }
+        }"
+    }
+
+    @ShellMethod("Try to choose a goal for a given intent. Show all goal rankings")
+    fun chooseGoal(
+        @ShellOption(help = "what the agent system should do") intent: String,
+    ): String {
+        try {
+            val goalSeeker = autonomy.createGoalSeeker(
+                intent = intent,
+                agentScope = agentPlatform,
+                goalChoiceApprover = GoalChoiceApprover approveWithScoreOver .8,
+                goalSelectionOptions = GoalSelectionOptions(),
+            )
+            val fmt = goalSeeker.rankings.rankings().joinToString("\n") {
+                it.infoString(verbose = true)
+            }
+            return fmt.color(colorPalette.color2) + "\n" + goalSeeker.agent.infoString(verbose = true)
+        } catch (gna: GoalNotApproved) {
+            return "Goal not approved. Rankings were:\n${gna.goalRankings.infoString(verbose = true)}"
+        } catch (ngf: NoGoalFound) {
+            return "No goal found. Rankings were:\n${ngf.goalRankings.infoString(verbose = true)}"
+        }
+    }
+
+    @ShellMethod("Information about the AgentPlatform")
+    fun platform(): String = "AgentPlatform: ${agentPlatform.name}"
+
+
+    @ShellMethod(
+        "Show last blackboard: The final state of a previous operation",
+        key = ["blackboard", "bb"],
+    )
+    fun blackboard(): String {
+        return if (blackboard == null) {
+            "No blackboard available. Please run a command first."
+        } else blackboard!!.infoString(verbose = true)
+    }
+
+    @ShellMethod("List available tool groups")
+    fun tools(): String {
+        val tgr = agentPlatform.toolGroupResolver
+        return String.format(
+            "%s: %s: %d available tool groups: %s",
+            tgr.javaClass.name,
+            tgr.name,
+            tgr.availableToolGroups().size,
+            "\n\t" + tgr.availableToolGroups()
+                .map { tgr.resolveToolGroup(ToolGroupRequirement(it.role)) }
+                .mapNotNull { it.resolvedToolGroup }
+                .sortedBy { it.metadata.role }
+                .joinToString("\n\t") { it.infoString(verbose = true) },
+        )
+    }
+
+    @ShellMethod("Show tool stats")
+    fun toolStats(): String {
+        return toolsStats.infoString(verbose = true)
+    }
+
+    @ShellMethod("List available models")
+    fun models(): String =
+        modelProvider.infoString(true)
+
+    @ShellMethod("Show options")
+    fun showOptions(): String {
+        // Don't show the blackboard as it's long
+        return embabelObjectMapperHolder.get().writerWithDefaultPrettyPrinter().writeValueAsString(
+            defaultProcessOptions.copy(blackboard = null)
+        ).replace(
+            """
+            "blackboard" : null
+        """.trimIndent(), """
+            "blackboard" : <${blackboard?.let { "${it.objects.size} entries" } ?: "empty"}>
+        """.trimIndent())
+            .color(colorPalette.color2)
+    }
+
+    @ShellMethod(
+        "Set options",
+    )
+    fun setOptions(
+        @ShellOption(
+            value = ["-o", "--open"],
+            help = "run in open mode, choosing a goal and using all actions that can help achieve it",
+        ) open: Boolean = false,
+        @ShellOption(value = ["-t", "--test"], help = "run in help mode") test: Boolean = false,
+        @ShellOption(value = ["-p", "--showPrompts"], help = "show prompts to LLMs") showPrompts: Boolean,
+        @ShellOption(value = ["-r", "--showResponses"], help = "show LLM responses") showLlmResponses: Boolean = false,
+        @ShellOption(value = ["-d", "--debug"], help = "show debug info") debug: Boolean = false,
+        @ShellOption(value = ["-s", "--state"], help = "Use existing blackboard") state: Boolean = false,
+        @ShellOption(value = ["-td", "--toolDelay"], help = "Tool delay") toolDelay: Boolean = false,
+        @ShellOption(value = ["-od", "--operationDelay"], help = "Operation delay") operationDelay: Boolean = false,
+        @ShellOption(
+            value = ["-s", "--showPlanning"],
+            help = "show detailed planning info",
+            defaultValue = "true",
+        ) showPlanning: Boolean = true,
+    ): String {
+        this.openMode = open
+        val verbosity = Verbosity(
+            debug = debug,
+            showPrompts = showPrompts,
+            showLlmResponses = showLlmResponses,
+            showPlanning = showPlanning,
+        )
+        this.defaultProcessOptions = ProcessOptions(
+            blackboard = if (state) blackboard else null,
+            verbosity = verbosity,
+            processControl = ProcessControl(
+                earlyTerminationPolicy = EarlyTerminationPolicy.maxActions(40),
+                toolDelay = if (toolDelay) Delay.LONG else Delay.NONE,
+                operationDelay = if (operationDelay) Delay.MEDIUM else Delay.NONE,
+            )
+        )
+        return "Options updated:\nOpen mode:$openMode\n${showOptions()}".color(colorPalette.color2)
+    }
+
+    @ShellMethod(
+        "Execute a task. Put the task in double quotes. For example:\n\tx \"Lynda is a scorpio. Find news for her\" -p",
+        key = ["execute", "x"],
+    )
+    fun execute(
+        @ShellOption(help = "what the agent system should do") intent: String,
+        @ShellOption(
+            value = ["-o", "--open"],
+            help = "run in open mode, choosing a goal and using all actions that can help achieve it",
+        ) open: Boolean = false,
+        @ShellOption(value = ["-p", "--showPrompts"], help = "show prompts to LLMs") showPrompts: Boolean,
+        @ShellOption(value = ["-r", "--showResponses"], help = "show LLM responses") showLlmResponses: Boolean = false,
+        @ShellOption(value = ["-d", "--debug"], help = "show debug info") debug: Boolean = false,
+        @ShellOption(value = ["-s", "--state"], help = "Use existing blackboard") state: Boolean = false,
+        @ShellOption(value = ["-td", "--toolDelay"], help = "Tool delay") toolDelay: Boolean = false,
+        @ShellOption(value = ["-od", "--operationDelay"], help = "Operation delay") operationDelay: Boolean = false,
+        @ShellOption(
+            value = ["-P", "--showPlanning"],
+            help = "show detailed planning info",
+            defaultValue = "true",
+        ) showPlanning: Boolean = true,
+        @ShellOption(
+            value = ["-c", "--context"],
+            help = "Tool call context as comma-separated key=value pairs (e.g. tenantId=acme,apiKey=secret). " +
+                    "Merged with persistent context set via set-context; these values win on conflict.",
+            defaultValue = ShellOption.NULL,
+        ) context: String? = null,
+    ): String {
+        // Override any options
+        setOptions(
+            open = open,
+            showPrompts = showPrompts,
+            showLlmResponses = showLlmResponses,
+            debug = debug,
+            state = state,
+            toolDelay = toolDelay,
+            operationDelay = operationDelay,
+            showPlanning = showPlanning,
+        )
+        // Merge persistent context with one-off context (one-off wins on conflict)
+        val effectiveContext = if (context != null) {
+            persistentToolCallContext.merge(parseToolCallContext(context))
+        } else {
+            persistentToolCallContext
+        }
+        val processOptions = if (effectiveContext != ToolCallContext.EMPTY) {
+            logger.info(
+                "ToolCallContext: {}".color(colorPalette.highlight),
+                effectiveContext.toMap(),
+            )
+            defaultProcessOptions.withToolCallContext(effectiveContext)
+        } else {
+            defaultProcessOptions
+        }
+        return executeIntent(
+            intent = intent,
+            processOptions = processOptions,
+        )
+    }
+
+    @ShellMethod(value = "Exit the application", key = ["exit", "quit", "bye"])
+    fun exit(): String {
+        println("Exiting...".color(colorPalette.color2))
+        logger.info("Shutting down application...")
+
+        // Perform any cleanup if needed
+        try {
+            // Clear any active processes
+            agentProcesses.clear()
+            // Graceful shutdown - use asyncer to avoid ForkJoinPool.commonPool
+            asyncer.async {
+                Thread.sleep(100) // Small delay to let response print
+                exitProcess(SpringApplication.exit(context, { 0 }))
+            }
+            return "Goodbye!".color(colorPalette.color2)
+        } catch (e: Exception) {
+            logger.warn("Error during shutdown: ${e.message}")
+            return "Goodbye! (with errors)".color(colorPalette.color2)
+        }
+    }
+
+    private fun executeIntent(
+        processOptions: ProcessOptions,
+        intent: String,
+    ): String {
+        val opt = if (processOptions.verbosity.debug) {
+            embabelObjectMapperHolder.get().writerWithDefaultPrettyPrinter().writeValueAsString(processOptions)
+        } else {
+            embabelObjectMapperHolder.get().writeValueAsString(processOptions)
+        }
+        logger.info(
+            "Created process options: $opt".color(colorPalette.highlight)
+        )
+
+        return runProcess(verbosity = processOptions.verbosity, basis = intent) {
+            if (openMode) {
+                logger.info("Executing in open mode: Trying to find appropriate goal and using all actions known to platform that can help achieve it")
+                autonomy.chooseAndAccomplishGoal(
+                    processOptions = processOptions,
+                    goalChoiceApprover = GoalChoiceApprover.APPROVE_ALL,
+                    agentScope = agentPlatform,
+                    bindings = mapOf("userInput" to UserInput(intent)),
+                    goalSelectionOptions = GoalSelectionOptions(),
+                )
+            } else {
+                logger.info("Executing in closed mode: Trying to find appropriate agent")
+                autonomy.chooseAndRunAgent(
+                    intent = intent,
+                    processOptions = processOptions
+                )
+            }
+        }
+
+    }
+
+    /**
+     * Parse a comma-separated "key=value" string into a [ToolCallContext].
+     * Example input: "tenantId=acme,apiKey=secret123"
+     */
+    private fun parseToolCallContext(input: String): ToolCallContext {
+        if (input.isBlank()) return ToolCallContext.EMPTY
+        val map = input.split(",")
+            .map { it.trim() }
+            .filter { it.contains("=") }
+            .associate { entry ->
+                val (key, value) = entry.split("=", limit = 2)
+                key.trim() to value.trim()
+            }
+        return ToolCallContext.of(map)
+    }
+
+    private fun recordAgentProcess(agentProcess: AgentProcess) {
+        agentProcesses.add(agentProcess)
+        blackboard = agentProcess.processContext.blackboard
+    }
+
+    private fun runProcess(
+        verbosity: Verbosity,
+        basis: Any,
+        run: () -> AgentProcessExecution,
+    ): String {
+        val errorMessageCannotDoIt = "I'm sorry. I don't know how to do that.\n"
+        try {
+            val result = run()
+            logger.debug("Result: {}\n", result)
+            recordAgentProcess(result.agentProcess)
+            return formatProcessOutput(result, colorPalette, embabelObjectMapperHolder.get(), shellProperties.lineLength)
+        } catch (ngf: NoGoalFound) {
+            if (verbosity.debug) {
+                logger.info(
+                    """
+                    Failed to choose goal:
+                        Rankings were: [${ngf.goalRankings.infoString()}]
+                        Cutoff was ${autonomy.properties.goalConfidenceCutOff}
+                    """.trimIndent().color(0xbfb8b8)
+                )
+            }
+            return errorMessageCannotDoIt
+        } catch (gna: GoalNotApproved) {
+            if (verbosity.debug) {
+                logger.info(
+                    """
+                    Goal not approved:
+                        Rankings were: [${gna.goalRankings.infoString()}]
+                    """.trimIndent().color(0xbfb8b8)
+                )
+            }
+            return errorMessageCannotDoIt
+        } catch (naf: NoAgentFound) {
+            if (verbosity.debug) {
+                logger.info(
+                    """
+                    Failed to choose agent:
+                        Rankings were: [${naf.agentRankings.infoString()}]
+                        Cutoff was ${autonomy.properties.agentConfidenceCutOff}
+                    """.trimIndent().color(0xbfb8b8)
+                )
+            }
+            return errorMessageCannotDoIt
+        } catch (pese: ProcessExecutionStuckException) {
+            pese.agentProcess?.let {
+                recordAgentProcess(it)
+            }
+            return "I'm sorry. I don't know how to proceed.\n"
+        } catch (pete: ProcessExecutionTerminatedException) {
+            pete.agentProcess?.let {
+                recordAgentProcess(it)
+            }
+            return "The process was terminated. Not my fault.\n\t${pete.detail.color(colorPalette.color2)}\n"
+        } catch (pwe: ProcessWaitingException) {
+            recordAgentProcess(pwe.agentProcess)
+            val awaitableResponse = terminalServices.handleAwaitable(pwe.awaitable) ?: return "Operation cancelled.\n"
+            pwe.awaitable.onResponse(
+                response = awaitableResponse,
+                agentProcess = pwe.agentProcess,
+            )
+            return runProcess(verbosity, basis) {
+                AgentProcessExecution.fromProcessStatus(
+                    basis = basis,
+                    agentProcess = pwe.agentProcess.run()
+                )
+            }
+        }
+    }
+
+}

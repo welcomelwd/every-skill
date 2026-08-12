@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "repository": "cactus-compute/needle",
+  "source_url": "https://github.com/cactus-compute/needle",
+  "ref": "main",
+  "resolved_commit": "eb57267f713f9bda0638ba92f7602083e85a6b62",
+  "category": "knowledge",
+  "subcategory": "products",
+  "slug": "needle",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-12T23:15:04+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 37,
+  "copied_bytes": 220955,
+  "excluded_files": [
+    "assets/architecture.png: binary content",
+    "assets/banner.png: binary content",
+    "assets/frontier.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

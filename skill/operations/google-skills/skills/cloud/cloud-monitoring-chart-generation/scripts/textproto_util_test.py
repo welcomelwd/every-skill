@@ -157,6 +157,22 @@ class TextprotoUtilTest(absltest.TestCase):
     widget = textproto_util.parse_and_validate_widget(text)
     self.assertEqual(widget.title, "Empty Chart")
     self.assertFalse(widget.HasField("xy_chart"))
+    
+  def test_parse_and_validate_widget_unknown_fields(self):
+    text = """
+    title: "Chart with unknown fields"
+    display_name: "I am a hallucination"
+    xy_chart {
+      data_sets {
+        time_series_query {
+          prometheus_query: "query1"
+        }
+        plot_type: LINE
+      }
+    }
+    """
+    with self.assertRaisesRegex(ValueError, "Unknown properties in Widget"):
+      textproto_util.parse_and_validate_widget(text)
 
   def test_parse_and_validate_widget_multiple_datasets(self):
     text = """

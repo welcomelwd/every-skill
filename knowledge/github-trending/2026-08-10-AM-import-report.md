@@ -6,9 +6,9 @@
 | --- | --- | --- |
 | `trailofbits/skills` | up-to-date | `skill/security/trailofbits-skills @ 304c81a8cefb6e3c029ebd0d12940ccf0713eccb` |
 | `tech-leads-club/agent-skills` | up-to-date | `skill/development/tech-leads-club-agent-skills @ fe318be656b315d5b6f45cf7ea23946b2d0241b0` |
-| `mcpbeat/best-mcp-servers` | updated | `mcp/resources/mcpbeat-best-mcp-servers @ 8d99c3105af50d06e06a075bdf755fb5ddfd05e4 (6 files, 117787 bytes)` |
-| `apify/mcpc` | up-to-date | `mcp/clients/apify-mcpc @ 66c94238f24852b6f8b10b8b0eedcefb4e0ac714` |
+| `mcpbeat/best-mcp-servers` | up-to-date | `mcp/resources/mcpbeat-best-mcp-servers @ 8d99c3105af50d06e06a075bdf755fb5ddfd05e4` |
+| `apify/mcpc` | updated | `mcp/clients/apify-mcpc @ 5679f4409e7ed66b6e9d9c5e4cd13f124ad322ba (221 files, 2354294 bytes); excluded 7 files` |
 | `msitarzewski/agency-agents` | up-to-date | `agent/roles/msitarzewski-agency-agents @ ebe9c99acb5c96f9468de368d8bead775387d1a7` |
-| `harveyai/harvey-labs` | updated | `agent/evaluations/harveyai-harvey-labs @ 7be41d57fd5a6e97b5f246a029e810f83d09cd96 (1506 files, 26214236 bytes); excluded 61568 files` |
-| `NVIDIA/SkillSpector` | updated | `knowledge/tools/nvidia-skillspector @ 64c6299931148ef4a07042da023a893f5075f49c (283 files, 3264940 bytes); excluded 2 files` |
-| `vitali87/code-graph-rag` | updated | `knowledge/tools/vitali87-code-graph-rag @ a189c9a8f8c1081a7ec2a57665390b6ff043d7ea (1168 files, 14774325 bytes); excluded 11 files` |
+| `harveyai/harvey-labs` | up-to-date | `agent/evaluations/harveyai-harvey-labs @ 7be41d57fd5a6e97b5f246a029e810f83d09cd96` |
+| `NVIDIA/SkillSpector` | updated | `knowledge/tools/nvidia-skillspector @ f883df60efbcad78ad3bf132a1a8b993dd96a992 (283 files, 3274064 bytes); excluded 2 files` |
+| `vitali87/code-graph-rag` | updated | `knowledge/tools/vitali87-code-graph-rag @ 01d07f7fd17b480830f15960da286a47dfa6bd67 (1182 files, 14911335 bytes); excluded 11 files` |

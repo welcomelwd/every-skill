@@ -1,0 +1,277 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.embabel.agent.core
+
+import com.embabel.common.core.types.HasInfoString
+import com.embabel.common.core.types.NamedAndDescribed
+import com.fasterxml.jackson.annotation.JsonIgnore
+import com.fasterxml.jackson.annotation.JsonSubTypes
+import com.fasterxml.jackson.annotation.JsonTypeInfo
+
+/**
+ * Type known to the Embabel agent platform.
+ * May be backed by a domain object or ba dynamic type.
+ * Supports inheritance.
+ */
+@JsonTypeInfo(
+    use = JsonTypeInfo.Id.DEDUCTION,
+)
+@JsonSubTypes(
+    JsonSubTypes.Type(value = DynamicType::class, name = "dynamic"),
+    JsonSubTypes.Type(value = JvmType::class, name = "jvm"),
+)
+sealed interface DomainType : HasInfoString, NamedAndDescribed {
+
+    /**
+     * Get all properties, including inherited ones.
+     * Exposed even for JvmTypes, for consistency.
+     * Properties are deduplicated by name, with own properties taking precedence over inherited ones.
+     */
+    @get:JsonIgnore
+    val properties: List<PropertyDefinition>
+        get() {
+            val propertiesByName = mutableMapOf<String, PropertyDefinition>()
+            // First add inherited properties (so they can be overridden)
+            parents.forEach { parent ->
+                parent.properties.forEach { property ->
+                    propertiesByName.putIfAbsent(property.name, property)
+                }
+            }
+            // Then add own properties (these take precedence)
+            ownProperties.forEach { property ->
+                propertiesByName[property.name] = property
+            }
+            return propertiesByName.values.toList()
+        }
+
+    /**
+     * Value properties defined on this type and inherited ones
+     */
+    @get:JsonIgnore
+    val values: List<ValuePropertyDefinition>
+        get() =
+            properties.filterIsInstance<ValuePropertyDefinition>()
+
+    /**
+     * All relationship properties defined on this type and inherited ones
+     */
+    @get:JsonIgnore
+    val relationships: List<DomainTypePropertyDefinition>
+        get() =
+            properties.filterIsInstance<DomainTypePropertyDefinition>()
+
+    /**
+     * Properties defined on this type only (not inherited)
+     */
+    val ownProperties: List<PropertyDefinition>
+
+    /**
+     * Supports inheritance
+     */
+    val parents: List<DomainType>
+
+    /**
+     * Get all descendant types from the classpath.
+     * For JvmType: scans the classpath for classes that extend or implement this type.
+     * For DynamicType: returns empty list as dynamic types don't have classpath descendants.
+     * @param additionalBasePackages additional base packages to scan for descendants
+     * We always include the package of this type as a base package.
+     * Don't add packages near the top of the classpath, such as "com", as this can increase scan time.
+     */
+    fun children(additionalBasePackages: Collection<String> = listOf()): Collection<DomainType>
+
+    /**
+     * Is instance creation permitted?
+     * Or is this reference data?
+     */
+    val creationPermitted: Boolean
+
+    /**
+     * Get all labels for this type, including from parent types.
+     * For JvmType: simple class names of this type and all parent types.
+     * For DynamicType: capitalized value after last '.' in name, plus parent labels.
+     */
+    @get:JsonIgnore
+    val labels: Set<String>
+        get() {
+            val allLabels = mutableSetOf<String>()
+            allLabels.add(ownLabel)
+            parents.forEach { parent ->
+                allLabels.addAll(parent.labels)
+            }
+            return allLabels
+        }
+
+    /**
+     * Get the label for this type only (not including parent labels)
+     * This will avoid long FQNs which are not useful for labeling.
+     */
+    @get:JsonIgnore
+    val ownLabel: String
+        get() {
+            val simpleName = name.substringAfterLast('.')
+            return simpleName.replaceFirstChar { it.uppercase() }
+        }
+
+    fun isAssignableFrom(other: Class<*>): Boolean
+
+    fun isAssignableFrom(other: DomainType): Boolean
+
+    fun isAssignableTo(other: Class<*>): Boolean
+
+    fun isAssignableTo(other: DomainType): Boolean
+
+}
+
+/**
+ * Semantics of holding the value for the property
+ */
+enum class Cardinality {
+    OPTIONAL,
+    ONE,
+    LIST,
+    SET,
+}
+
+@JsonTypeInfo(
+    use = JsonTypeInfo.Id.SIMPLE_NAME,
+)
+@JsonSubTypes(
+    JsonSubTypes.Type(value = ValuePropertyDefinition::class, name = "simple"),
+    JsonSubTypes.Type(value = DomainTypePropertyDefinition::class, name = "domain"),
+    JsonSubTypes.Type(value = ValidatedPropertyDefinition::class, name = "validated"),
+)
+sealed interface PropertyDefinition {
+    val name: String
+    val description: String
+    val cardinality: Cardinality
+
+    /**
+     * Semantic metadata for this property.
+     * Populated from [@Semantics] annotation on the field.
+     * Keys and values are strings; common keys include:
+     * - `predicate`: Natural language predicate (e.g., "works at")
+     * - `inverse`: Inverse predicate (e.g., "employs")
+     * - `aliases`: Comma-separated alternative phrasings
+     */
+    val metadata: Map<String, String>
+}
+
+/**
+ * Property that holds a nested DomainType
+ * Represents a relationship to another domain object
+ */
+data class DomainTypePropertyDefinition @JvmOverloads constructor(
+    override val name: String,
+    val type: DomainType,
+    override val cardinality: Cardinality = Cardinality.ONE,
+    override val description: String = name,
+    override val metadata: Map<String, String> = emptyMap(),
+) : PropertyDefinition
+
+
+/**
+ * Property definition that refers to a named type, usually a simple type.
+ */
+interface NamedPropertyDefinition : PropertyDefinition {
+
+    val type: String
+}
+
+/**
+ * Simple value property, such as string, int, boolean, etc.
+ * Not necessarily a scalar, as cardinality may be LIST or SET.
+ */
+data class ValuePropertyDefinition @JvmOverloads constructor(
+    override val name: String,
+    override val type: String = "string",
+    override val cardinality: Cardinality = Cardinality.ONE,
+    override val description: String = name,
+    override val metadata: Map<String, String> = emptyMap(),
+) : NamedPropertyDefinition
+
+/**
+ * Value property with type-safe validation rules.
+ * Extends ValuePropertyDefinition with compile-time checked validation.
+ *
+ * Example usage:
+ * ```kotlin
+ * ValidatedPropertyDefinition(
+ *     name = "name",
+ *     validationRules = listOf(
+ *         NoVagueReferences(),
+ *         LengthConstraint(maxLength = 150)
+ *     )
+ * )
+ * ```
+ *
+ * @property validationRules List of validation rules to apply to mentions of this property
+ */
+data class ValidatedPropertyDefinition @JvmOverloads constructor(
+    override val name: String,
+    override val type: String = "string",
+    override val cardinality: Cardinality = Cardinality.ONE,
+    override val description: String = name,
+    override val metadata: Map<String, String> = emptyMap(),
+    val validationRules: List<PropertyValidationRule> = emptyList(),
+) : NamedPropertyDefinition {
+
+    /**
+     * Validate a mention against all rules defined for this property.
+     * @param mention The mention text to validate
+     * @return true if all rules pass, false otherwise
+     */
+    fun isValid(mention: String): Boolean {
+        return validationRules.all { rule -> rule.isValid(mention) }
+    }
+
+    /**
+     * Get the first validation failure reason, if any.
+     * @param mention The mention text to validate
+     * @return The failure reason, or null if all rules pass
+     */
+    fun failureReason(mention: String): String? {
+        return validationRules.firstNotNullOfOrNull { rule ->
+            if (!rule.isValid(mention)) rule.failureReason(mention) else null
+        }
+    }
+}
+
+/**
+ * Type-safe validation rule interface for property validation.
+ * Implement this interface to create custom validation rules.
+ */
+interface PropertyValidationRule {
+    /**
+     * Human-readable description of this rule.
+     */
+    val description: String
+
+    /**
+     * Check if the mention is valid according to this rule.
+     * @param mention The mention text to validate
+     * @return true if valid, false otherwise
+     */
+    fun isValid(mention: String): Boolean
+
+    /**
+     * Get the failure reason for an invalid mention.
+     * @param mention The mention text that failed validation
+     * @return Human-readable description of why validation failed
+     */
+    fun failureReason(mention: String): String? =
+        if (!isValid(mention)) "Failed validation: $description" else null
+}

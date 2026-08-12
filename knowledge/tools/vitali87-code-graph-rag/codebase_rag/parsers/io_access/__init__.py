@@ -21,12 +21,14 @@ from .extract import (
     literal_target,
     match_normalised,
     normalise,
+    positional_arg_node,
     registry_match,
+    rust_unwrap_result,
     scope_seed_nodes,
     string_literal,
     unwrap_argument,
 )
-from .models import HandleBinding, HandleConstructor, IOSink
+from .models import ArgHandleSink, HandleBinding, HandleConstructor, IOSink
 from .processor import IOAccessProcessor
 from .registry import (
     FLOW_REGISTERED_LANGUAGES,
@@ -50,6 +52,7 @@ __all__ = [
     "LANGUAGE_DESCRIPTORS",
     "PY_SCOPE_BOUNDARIES",
     "RESOURCE_QN_FORMAT",
+    "ArgHandleSink",
     "HandleBinding",
     "HandleConstructor",
     "IOAccessProcessor",
@@ -69,7 +72,9 @@ __all__ = [
     "literal_target",
     "match_normalised",
     "normalise",
+    "positional_arg_node",
     "registry_match",
+    "rust_unwrap_result",
     "scope_seed_nodes",
     "string_literal",
     "unwrap_argument",

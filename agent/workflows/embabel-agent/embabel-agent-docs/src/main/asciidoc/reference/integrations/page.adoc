@@ -1,0 +1,1244 @@
+[[reference.integrations]]
+=== Integrations
+
+[[reference.integrations__mcp]]
+==== Model Context Protocol (MCP)
+
+===== Publishing
+
+====== Overview
+
+Embabel Agent can expose your agents as MCP servers, making them available to external MCP clients such as Claude Desktop, VS Code extensions, or other MCP-compatible applications.
+The framework provides automatic publishing of agent goals as tools and prompts without requiring manual configuration.
+
+====== Server Configuration
+
+Configure MCP server functionality in your `application.yml`.
+The server type determines the execution mode:
+
+[source,yaml]
+----
+spring:
+  ai:
+    mcp:
+      server:
+        type: SYNC  # or ASYNC
+----
+
+====== Server Types
+
+Embabel Agent supports two MCP server execution modes controlled by the `spring.ai.mcp.server.type` property:
+
+**SYNC Mode** (Default)::
+- Blocking operations wrapped in reactive streams
+- Simpler to develop and debug
+- Suitable for most use cases
+- Better error handling and logging
+
+[source,yaml]
+----
+spring:
+  ai:
+    mcp:
+      server:
+        type: SYNC
+----
+
+**ASYNC Mode**::
+- True non-blocking reactive operations
+- Higher throughput for concurrent requests
+- More complex error handling
+- Suitable for high-performance scenarios
+
+[source,yaml]
+----
+spring:
+  ai:
+    mcp:
+      server:
+        type: ASYNC
+----
+
+====== Transport Protocol
+
+Embabel Agent uses **SSE (Server-Sent Events) transport**, exposing your MCP server at `http://localhost:8080/sse`.
+This is compatible with Claude Desktop, MCP Inspector, Cursor, and most desktop MCP clients.
+
+**Clients requiring Streamable HTTP**::
+Some clients (e.g., OpenWebUI) require Streamable HTTP transport instead of SSE.
+Use the `mcpo` proxy to bridge your SSE server:
+
+[source,bash]
+----
+uvx mcpo --port 8000 --server-type sse -- http://localhost:8080/sse
+----
+
+Then connect your client to `http://localhost:8000`.
+
+====== Automatic Publishing
+
+**Tools**::
+Agent goals are automatically published as MCP tools when annotated with `@Export(remote = true)`.
+The `PerGoalMcpToolExportCallbackPublisher` automatically discovers and exposes these goals without any additional configuration.
+
+**Prompts**::
+Prompts are automatically generated for each goal's starting input types through the `PerGoalStartingInputTypesPromptPublisher`.
+This provides ready-to-use prompt templates based on your agent definitions.
+
+====== Exposing Agent Goals as Tools
+
+Agent goals become MCP tools automatically when annotated with `@Export`:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+@Agent(
+    goal = "Provide weather information",
+    backstory = "Weather service agent"
+)
+public class WeatherAgent {
+
+    @Goal
+    @Export(remote = true)  // Automatically becomes MCP tool
+    public String getWeather(
+        @Param("location") String location,
+        @Param("units") String units
+    ) {
+        return "Weather for " + location + " in " + units;
+    }
+
+    @Goal
+    public String internalMethod() {
+        // Not exposed to MCP (no @Export annotation)
+        return "Internal use only";
+    }
+}
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+@Agent(
+    goal = "Provide weather information",
+    backstory = "Weather service agent"
+)
+class WeatherAgent {
+
+    @Goal
+    @Export(remote = true)  // Automatically becomes MCP tool
+    fun getWeather(
+        @Param("location") location: String,
+        @Param("units") units: String
+    ): String {
+        return "Weather for $location in $units"
+    }
+
+    @Goal
+    fun internalMethod(): String {
+        // Not exposed to MCP (no @Export annotation)
+        return "Internal use only"
+    }
+}
+----
+====
+
+====== Exposing Embabel `ToolObject` and `LlmReference` types as tools
+
+A common requirement is to expose existing Embabel functionality via MCP.
+For example, an `LlmReference` might be added to a `PromptRunner` but might also be used as an external tool via MCP.
+
+To do this, use `McpToolExport` to create a bean of type `McpToolExportCallbackPublisher`.
+
+For example, to expose a `ToolishRag` LLM reference as an MCP tool, define a Spring configuration class as follows:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+@Configuration
+public class RagMcpTools {
+
+    @Bean
+    McpToolExport ragTools( // <1>
+            SearchOperations searchOperations) {
+        var toolishRag = new ToolishRag(
+                "docs",
+                "Embabel docs",
+                searchOperations
+        );
+        return McpToolExport.fromLlmReference(toolishRag); // <2>
+    }
+}
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+@Configuration
+class RagMcpTools {
+
+    @Bean
+    fun ragTools( // <1>
+        searchOperations: SearchOperations
+    ): McpToolExport {
+        val toolishRag = ToolishRag(
+            "docs",
+            "Embabel docs",
+            searchOperations
+        )
+        return McpToolExport.fromLlmReference(toolishRag) // <2>
+    }
+}
+----
+====
+
+<1> Your bean should be of type `McpToolExport`
+<2> Use `McpToolExport.fromLlmReference` to return the instance
+
+====== Naming Strategies
+
+When exporting tools, you can control how tool names are transformed using a naming strategy.
+This is useful for namespacing tools when exporting from multiple sources to avoid naming conflicts.
+
+**Using ToolObject with a naming strategy:**
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+@Bean
+public McpToolExport prefixedTools() {
+    return McpToolExport.fromToolObject(
+        new ToolObject(
+            List.of(myToolInstance),
+            name -> "myservice_" + name  // <1>
+        )
+    );
+}
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+@Bean
+fun prefixedTools(): McpToolExport {
+    return McpToolExport.fromToolObject(
+        ToolObject(
+            objects = listOf(myToolInstance),
+            namingStrategy = { "myservice_$it" }  // <1>
+        )
+    )
+}
+----
+====
+
+<1> All tool names will be prefixed with `myservice_`
+
+Common naming strategies include:
+
+* **Prefix**: `{ "namespace_$it" }` - adds a prefix to avoid conflicts
+* **Uppercase**: `{ it.uppercase() }` - converts to uppercase
+* **Identity**: `StringTransformer.IDENTITY` - preserves original names (default)
+
+**LlmReference naming:**
+
+When using `fromLlmReference`, the reference's built-in naming strategy is applied automatically.
+This prefixes tool names with the lowercased, normalized reference name.
+For example, an `LlmReference` named "MyAPI" will prefix all tools with `myapi_`.
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+// Reference named "WeatherService" will prefix tools with "weatherservice_"
+var reference = new MyWeatherReference();  // name = "WeatherService"
+McpToolExport.fromLlmReference(reference);
+// Tool "getWeather" becomes "weatherservice_getWeather"
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+// Reference named "WeatherService" will prefix tools with "weatherservice_"
+val reference = MyWeatherReference()  // name = "WeatherService"
+McpToolExport.fromLlmReference(reference)
+// Tool "getWeather" becomes "weatherservice_getWeather"
+----
+====
+
+**Exporting multiple sources with different prefixes:**
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+@Bean
+public McpToolExport multiSourceTools() {
+    return McpToolExport.fromToolObjects(
+        List.of(
+            new ToolObject(
+                List.of(weatherTools),
+                name -> "weather_" + name
+            ),
+            new ToolObject(
+                List.of(stockTools),
+                name -> "stocks_" + name
+            )
+        )
+    );
+}
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+@Bean
+fun multiSourceTools(): McpToolExport {
+    return McpToolExport.fromToolObjects(
+        listOf(
+            ToolObject(
+                objects = listOf(weatherTools),
+                namingStrategy = { "weather_$it" }
+            ),
+            ToolObject(
+                objects = listOf(stockTools),
+                namingStrategy = { "stocks_$it" }
+            )
+        )
+    )
+}
+----
+====
+
+====== Filtering Tools
+
+You can filter which tools are exported using the `filter` property on `ToolObject`:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+@Bean
+public McpToolExport filteredTools() {
+    return McpToolExport.fromToolObject(
+        new ToolObject(
+            List.of(myToolInstance),
+            StringTransformer.IDENTITY,
+            name -> name.startsWith("public_")  // <1>
+        )
+    );
+}
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+@Bean
+fun filteredTools(): McpToolExport {
+    return McpToolExport.fromToolObject(
+        ToolObject(
+            objects = listOf(myToolInstance),
+            filter = { it.startsWith("public_") }  // <1>
+        )
+    )
+}
+----
+====
+
+<1> Only tools whose names start with `public_` will be exported
+
+You can combine naming strategies and filters:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+@Bean
+public McpToolExport combinedTools() {
+    return McpToolExport.fromToolObject(
+        new ToolObject(
+            List.of(myToolInstance),
+            name -> "api_" + name,
+            name -> !name.startsWith("internal")  // <1>
+        )
+    );
+}
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+@Bean
+fun combinedTools(): McpToolExport {
+    return McpToolExport.fromToolObject(
+        ToolObject(
+            objects = listOf(myToolInstance),
+            namingStrategy = { "api_$it" },
+            filter = { !it.startsWith("internal") }  // <1>
+        )
+    )
+}
+----
+====
+
+<1> The filter is applied to the original tool name before the naming strategy transforms it
+
+====== Exposing Tools on Spring Components in Spring AI style
+
+It is also possible to expose tools on Spring components as with regular Spring AI.
+
+For example:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+@Component
+public class CalculatorTools {
+
+    @McpTool(name = "add", description = "Add two numbers together")
+    public int add(
+            @McpToolParam(description = "First number", required = true) int a,
+            @McpToolParam(description = "Second number", required = true) int b) {
+        return a + b;
+    }
+
+    @McpTool(name = "multiply", description = "Multiply two numbers")
+    public double multiply(
+            @McpToolParam(description = "First number", required = true) double x,
+            @McpToolParam(description = "Second number", required = true) double y) {
+        return x * y;
+    }
+}
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+@Component
+class CalculatorTools {
+
+    @McpTool(name = "add", description = "Add two numbers together")
+    fun add(
+        @McpToolParam(description = "First number", required = true) a: Int,
+        @McpToolParam(description = "Second number", required = true) b: Int
+    ): Int {
+        return a + b
+    }
+
+    @McpTool(name = "multiply", description = "Multiply two numbers")
+    fun multiply(
+        @McpToolParam(description = "First number", required = true) x: Double,
+        @McpToolParam(description = "Second number", required = true) y: Double
+    ): Double {
+        return x * y
+    }
+}
+----
+====
+
+Of course, you can inject the Embabel `Ai` interface to help do the work of the tools if you wish, or invoke other agents from within the tool methods.
+
+For further information, see the https://docs.spring.io/spring-ai/reference/api/mcp/mcp-annotations-overview.html[Spring AI MCP Annotations Reference].
+
+====== Server Architecture
+
+The MCP server implementation uses several design patterns:
+
+**Template Method Pattern**::
+- `AbstractMcpServerConfiguration` provides common initialization logic
+- Concrete implementations (`McpSyncServerConfiguration`, `McpAsyncServerConfiguration`) handle mode-specific details
+
+**Strategy Pattern**::
+- Server strategies abstract sync vs async operations
+- Mode-specific implementations handle tool, resource, and prompt management
+
+**Publisher Pattern**::
+- Tools, resources, and prompts are discovered through publisher interfaces
+- Automatic registration and lifecycle management
+- Event-driven initialization ensures proper timing
+
+====== Built-in Tools
+
+Every MCP server includes a built-in `helloBanner` tool that displays server information:
+
+[source,json]
+----
+{
+  "type": "banner",
+  "mode": "SYNC",
+  "lines": [
+    "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+    "Embabel Agent MCP SYNC Server",
+    "Version: 0.3.0-SNAPSHOT",
+    "Java: 21.0.2+13-LTS-58",
+    "Started: 2025-01-17T14:23:47.785Z",
+    "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+  ]
+}
+----
+
+====== Health (Spring Boot Actuator)
+
+When `spring-boot-starter-actuator` is on the classpath, Embabel registers an `mcpServer`
+health component. It reports execution mode, registered tool count, initialization state,
+and any issues collected during MCP server startup.
+
+[source,yaml]
+----
+management:
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+embabel:
+  agent:
+    mcpserver:
+      health:
+        enabled: true
+        min-tools: 1
+----
+
+`min-tools` marks the component `DOWN` after initialization when fewer tools are registered
+than the threshold. Use that for readiness probes that should wait until agent tools are
+exported (the built-in `helloBanner` tool alone may not be enough for your deployment).
+
+Kubernetes example:
+
+[source,yaml]
+----
+livenessProbe:
+  httpGet:
+    path: /actuator/health/liveness
+    port: 8080
+readinessProbe:
+  httpGet:
+    path: /actuator/health/readiness
+    port: 8080
+----
+
+While the MCP exposure pipeline is still running, the `mcpServer` component reports
+`OUT_OF_SERVICE`. After a failed initialization it reports `DOWN`.
+
+[[reference.integrations__mcp_security]]
+===== Security
+
+Embabel MCP servers support two complementary layers of security that work together.
+Think of them like a building with a reception desk and locked office doors: the HTTP filter
+chain is the reception desk that turns away anyone without a badge, and `@SecureAgentTool`
+is the locked door on each individual office that checks what the badge actually permits.
+
+====== Layer 1 — HTTP transport (filter chain)
+
+All requests to MCP endpoints (`/sse/**`, `/mcp/**`, `/message/**`) must carry a valid JWT
+Bearer token or they are rejected with `401 Unauthorized` before the GOAP planner is invoked.
+
+Configure a `SecurityFilterChain` and a JWT resource server in your Spring Security setup:
+
+[tabs]
+====
+Kotlin::
++
+[source,kotlin]
+----
+@Configuration
+@EnableWebSecurity
+class McpSecurityConfiguration {
+
+    @Bean
+    fun mcpFilterChain(http: HttpSecurity): SecurityFilterChain {
+        http
+            .securityMatcher("/sse/**", "/mcp/**", "/message/**")
+            .authorizeHttpRequests { it.anyRequest().authenticated() }
+            .sessionManagement {
+                it.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+            }
+            .oauth2ResourceServer { oauth2 ->
+                oauth2.jwt { jwt ->
+                    jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())
+                }
+            }
+            .csrf { it.disable() }
+        return http.build()
+    }
+
+    @Bean
+    fun jwtAuthenticationConverter(): JwtAuthenticationConverter {
+        val authoritiesConverter = JwtGrantedAuthoritiesConverter().apply {
+            setAuthoritiesClaimName("authorities")
+            setAuthorityPrefix("")  // <1>
+        }
+        return JwtAuthenticationConverter().apply {
+            setJwtGrantedAuthoritiesConverter(authoritiesConverter)
+        }
+    }
+}
+----
+====
+<1> Empty prefix means JWT claim values like `news:read` map directly to Spring Security
+authorities, so `hasAuthority('news:read')` in a `@SecureAgentTool` expression works without
+any `SCOPE_` prefix.
+
+Configure JWT validation in `application.yml`:
+
+[source,yaml]
+----
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          public-key-location: classpath:keys/public.pem  # local dev
+          jws-algorithms: RS256
+          # For production, use issuer-uri or jwk-set-uri instead
+----
+
+====== Layer 2 — Method-level (`@SecureAgentTool`)
+
+Enforces per-action authorization inside the GOAP execution pipeline, after the HTTP layer
+has validated the token.
+Place `@SecureAgentTool` on the `@Agent` class to protect every `@Action` in that agent:
+
+[tabs]
+====
+Kotlin::
++
+[source,kotlin]
+----
+@Agent(description = "Curated news digest agent")
+@SecureAgentTool("hasAuthority('news:read')")  // <1>
+class NewsDigestAgent {
+
+    @Action
+    fun extractTopic(userInput: UserInput, context: OperationContext): NewsTopic { ... } // <2>
+
+    @AchievesGoal(description = "Produce news digest",
+                  export = Export(remote = true, name = "newsDigest",
+                                  startingInputTypes = [UserInput::class]))
+    @Action
+    fun produceDigest(topic: NewsTopic, context: OperationContext): NewsDigest { ... }  // <2>
+}
+----
+
+Java::
++
+[source,java]
+----
+@Agent(description = "Curated news digest agent")
+@SecureAgentTool("hasAuthority('news:read')")  // <1>
+public class NewsDigestAgent {
+
+    @Action
+    public NewsTopic extractTopic(UserInput userInput, OperationContext context) { ... } // <2>
+
+    @AchievesGoal(description = "Produce news digest",
+                  export = @Export(remote = true, name = "newsDigest",
+                                   startingInputTypes = {UserInput.class}))
+    @Action
+    public NewsDigest produceDigest(NewsTopic topic, OperationContext context) { ... }  // <2>
+}
+----
+====
+<1> Class-level annotation applies to every `@Action` in this agent.
+<2> Both `extractTopic` (the intermediate step) and `produceDigest` (the goal action) require
+`news:read` — without class-level security, intermediate actions run freely before the goal
+action's check fires, potentially burning LLM tokens on an unauthorised request.
+
+See xref:reference.annotations_secure_agent_tool[`@SecureAgentTool`] for the full annotation
+reference including supported SpEL expressions and method-level override behaviour.
+
+====== Dependency
+
+[source,xml]
+----
+<dependency>
+    <groupId>com.embabel.agent</groupId>
+    <artifactId>embabel-agent-starter-mcpserver-security</artifactId>
+    <version>${embabel-agent.version}</version>
+</dependency>
+----
+
+The starter auto-configures `SecureAgentToolAspect` and wires the Spring Security
+`MethodSecurityExpressionHandler`. No additional `@EnableMethodSecurity` is required.
+
+[[reference.integrations__mcp_consuming]]
+===== Consuming
+
+Embabel Agent can consume external MCP servers as tool sources, automatically organizing them into Tool Groups that agents can use.
+
+[[reference.integrations__mcp_docker]]
+====== Docker Tools Integration
+
+====== Configuration Approaches
+
+**Docker MCP Gateway** (Recommended)::
+Uses Docker Desktop's MCP Toolkit extension as a single gateway to multiple tools:
+
+[source,yaml]
+----
+spring:
+  ai:
+    mcp:
+      client:
+        type: SYNC
+        stdio:
+          connections:
+            docker-mcp:
+              command: docker
+              args: [mcp, gateway, run]
+----
+
+**Individual Containers**::
+Run each MCP server as a separate Docker container:
+
+[source,yaml]
+----
+spring:
+  ai:
+    mcp:
+      client:
+        type: SYNC
+        stdio:
+          connections:
+            brave-search-mcp:
+              command: docker
+              args: [run, -i, --rm, -e, BRAVE_API_KEY, mcp/brave-search]
+              env:
+                BRAVE_API_KEY: ${BRAVE_API_KEY}
+----
+
+====== Available Tool Groups
+
+Tool Groups are conditionally created based on configured MCP connections using `@ConditionalOnMcpConnection`:
+
+[cols="1,2,3"]
+|===
+|Tool Group |Required Connections |Capabilities
+
+|Web Tools
+|`brave-search-mcp`, `fetch-mcp`, `wikipedia-mcp`, or `docker-mcp`
+|Web search, URL fetching, Wikipedia queries
+
+|Maps
+|`google-maps-mcp` or `docker-mcp`
+|Geocoding, directions, place search
+
+|Browser Automation
+|`puppeteer-mcp` or `docker-mcp`
+|Page navigation, screenshots, form interaction
+
+|GitHub
+|`github-mcp` or `docker-mcp`
+|Issues, pull requests, comments
+|===
+
+====== How It Works
+
+The `@ConditionalOnMcpConnection` annotation checks for configured connections at startup:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+@Bean
+@ConditionalOnMcpConnection({"github-mcp", "docker-mcp"})  // <1>
+public ToolGroup githubToolsGroup() {
+    return new McpToolGroup(
+        CoreToolGroups.GITHUB_DESCRIPTION,
+        "docker-github",
+        mcpSyncClients,
+        tool -> tool.toolDefinition().name().contains("create_issue")  // <2>
+    );
+}
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+@Bean
+@ConditionalOnMcpConnection("github-mcp", "docker-mcp")  // <1>
+fun githubToolsGroup(): ToolGroup {
+    return McpToolGroup(
+        description = CoreToolGroups.GITHUB_DESCRIPTION,
+        name = "docker-github",
+        clients = mcpSyncClients,
+        filter = { it.toolDefinition.name().contains("create_issue") }  // <2>
+    )
+}
+----
+====
+<1> Bean created if *any* listed connection is configured
+<2> Filter selects which MCP tools belong to this group
+
+====== Custom Tool Groups
+
+Define custom groups via configuration properties:
+
+[source,yaml]
+----
+embabel:
+  agent:
+    platform:
+      tools:
+        includes:
+          my-tools:
+            description: "Custom tool collection"
+            provider: "MyOrg"
+            tools:
+              - tool_name_suffix
+----
+
+[[reference.integrations__a2a]]
+==== A2A
+
+[[reference.integrations__observability]]
+==== Observability
+
+Embabel Agent provides a unified observability module that automatically traces agent lifecycle, actions, LLM calls, tool invocations, and more — with zero code changes.
+It integrates with any OpenTelemetry-compatible backend (Zipkin, Langfuse, LangSmith, Jaeger, Prometheus, etc.).
+
+===== Setup
+
+Add the observability starter to your `pom.xml`:
+
+[source,xml]
+----
+<dependency>
+    <groupId>com.embabel.agent</groupId>
+    <artifactId>embabel-agent-starter-observability</artifactId>
+    <version>${embabel-agent.version}</version>
+</dependency>
+----
+
+Then add an exporter dependency. For example, Zipkin:
+
+[source,xml]
+----
+<dependency>
+    <groupId>io.opentelemetry</groupId>
+    <artifactId>opentelemetry-exporter-zipkin</artifactId>
+</dependency>
+----
+
+Or the Embabel OpenTelemetry exporter for LLM-focused observability — a single exporter that sends
+spans to *Langfuse* and/or *LangSmith*:
+
+[source,xml]
+----
+<dependency>
+    <groupId>com.quantpulsar</groupId>
+    <artifactId>opentelemetry-exporter-embabel</artifactId>
+    <version>0.6.0</version>
+</dependency>
+----
+
+TIP: You can use multiple exporters simultaneously (e.g., Langfuse for traces + Prometheus for metrics).
+
+===== Configuration
+
+[WARNING]
+====
+*Migrating from an earlier version — breaking changes:*
+
+* *Config prefix renamed:* `embabel.observability.*` -> `embabel.agent.platform.observability.*`. The old prefix is *silently ignored* (no startup error), so existing configuration stops taking effect until you rename it.
+* *`trace-http-details` now defaults to `false`* (was `true`). HTTP request/response bodies, headers and params are no longer captured unless you opt in with `trace-http-details: true`, avoiding capture of potentially sensitive HTTP payloads by default.
+* *Removed properties:* `tracer-name` and `tracer-version` no longer exist.
+* *Langfuse exporter replaced:* `com.quantpulsar:opentelemetry-exporter-langfuse:0.4.0` -> the unified `com.quantpulsar:opentelemetry-exporter-embabel:0.6.0`, which exports to *both* Langfuse (`management.langfuse.*`) and LangSmith (`management.langsmith.*`). Update the dependency.
+====
+
+Enable observability and configure your exporter in `application.yml`:
+
+[source,yaml]
+----
+embabel:
+  agent:
+    platform:
+      observability:
+        enabled: true
+        service-name: my-agent-app
+
+management:
+  tracing:
+    export:
+      enabled: true
+    sampling:
+      probability: 1.0
+
+  # Zipkin
+  zipkin:
+    tracing:
+      endpoint: http://localhost:9411/api/v2/spans
+----
+
+For Langfuse (`management.langfuse.*`):
+
+[source,yaml]
+----
+management:
+  langfuse:
+    enabled: true
+    endpoint: https://cloud.langfuse.com/api/public/otel  # or self-hosted URL
+    public-key: pk-lf-...
+    secret-key: sk-lf-...
+----
+
+For LangSmith (`management.langsmith.*`) — can run alongside Langfuse:
+
+[source,yaml]
+----
+management:
+  langsmith:
+    enabled: true
+    endpoint: https://eu.api.smith.langchain.com/otel  # US: https://api.smith.langchain.com/otel — /v1/traces is appended automatically
+    api-key: lsv2_...
+    project: my-project
+    # embabel-only: true   # optional — export only Embabel/GenAI spans
+----
+
+The LangSmith exporter derives each span's `langsmith.span.kind` from its Embabel type (`embabel.llm` -> `LLM`, `embabel.tool` -> `TOOL`, embeddings -> `RETRIEVER`/`EMBEDDING`, etc.) so LangSmith renders it in the right category instead of as a generic span.
+
+===== What Gets Traced
+
+All tracing is automatic once the module is on the classpath.
+Operations are captured as OpenTelemetry spans organized in a parent-child hierarchy.
+Each span has a human-friendly **contextual** label (shown below) and a stable low-cardinality
+**meter** name in parentheses (`embabel.*`, used for metrics):
+
+[source]
+----
+customer-service-agent              (embabel.agent — one run() turn)
+├── planning                        (embabel.planning) [goal=RequestProcessed, action_count=3]
+├── analyze-request                 (embabel.action)
+│   └── gpt-4o                      (embabel.llm — one LLM interaction)
+│       └── tool-loop               (embabel.tool_loop)
+│           ├── gpt-4o              (embabel.llm.invocation) [input/output tokens, cost]
+│           ├── search-knowledge-base (embabel.tool) [status=success]
+│           └── tool-loop-completed (embabel.tool_loop.completed) [iterations, replan flag]
+├── generate-response               (embabel.action)
+│   └── gpt-4o                      (embabel.llm)
+├── request-processed               (embabel.goal)
+└── completed                       (embabel.lifecycle)
+----
+
+The `embabel.agent`, `embabel.action` and `embabel.tool_loop` spans also carry the step's input and
+output under the vendor-neutral **OpenInference** keys `input.value` / `output.value`, which
+LLM-observability backends (Langfuse, etc.) render in their input/output panels:
+
+* *agent* — input: the bound `UserInput`(s); output: the run's last result.
+* *action* — input: the action's declared inputs from the blackboard; output: the action's result.
+* *tool_loop* — input: the prompt messages; output: the loop result.
+
+Both are truncated to `embabel.agent.platform.observability.max-attribute-length`.
+
+Spring AI *ChatModel* spans additionally carry the structured OTel GenAI message attributes
+`gen_ai.input.messages` / `gen_ai.output.messages` (JSON arrays of `{role, parts:[{type, content}]}`,
+with `finish_reason` on output), alongside the OpenInference `input.value` / `output.value` bridge.
+
+All of this payload content — the `input.value` / `output.value` and `*.result` bodies on the
+`embabel.agent` / `embabel.action` / `embabel.tool_loop` spans, the GenAI message attributes on
+ChatModel spans, and the point-span bodies (tool-call arguments and result, RAG query, planning and
+goal world state, replan reason, and `@Tracked` method args/return) — is governed by
+`embabel.agent.platform.observability.capture-message-content` (default `true`). Set it to `false`
+to keep model/token/identity metadata while omitting every message body, as the GenAI convention
+recommends content capture be opt-in (potential PII).
+
+===== Tracing Configuration Properties
+
+All tracing options are enabled by default and can be toggled individually:
+
+[cols="2,1,3"]
+|===
+|Property |Default |Description
+
+|`embabel.agent.platform.observability.enabled`
+|`true`
+|Master switch for the whole module (traces and metrics)
+
+|`embabel.agent.platform.observability.tracing-enabled`
+|`true`
+|Umbrella switch for tracing (spans). When `false`, disables all `trace-*` tiers at once; independent of `metrics-enabled`
+
+|`embabel.agent.platform.observability.service-name`
+|`embabel-agent`
+|Service name in traces
+
+|`embabel.agent.platform.observability.trace-agent-events`
+|`true`
+|Umbrella for the core scoped span tier (`embabel.agent`/`embabel.action`/`embabel.tool_loop`/`embabel.llm`). When `false`, all four are suppressed; keep `true` and use the per-span switches below for granular control
+
+|`embabel.agent.platform.observability.trace-agent`
+|`true`
+|`embabel.agent` scoped span (one run turn). Effective when `trace-agent-events=true`
+
+|`embabel.agent.platform.observability.trace-action`
+|`true`
+|`embabel.action` scoped span. Effective when `trace-agent-events=true`
+
+|`embabel.agent.platform.observability.trace-tool-calls`
+|`true`
+|Tool invocations (`embabel.tool` span: name, group, status, duration, arguments/result, error)
+
+|`embabel.agent.platform.observability.trace-tool-loop`
+|`true`
+|Tool loop execution (`embabel.tool_loop` scoped span + `embabel.tool_loop.completed` point span)
+
+|`embabel.agent.platform.observability.trace-tool-loop-completed`
+|`true`
+|Emit the `embabel.tool_loop.completed` point span (loop outcome: iterations, replan flag, duration). Set `false` to keep the scoped `embabel.tool_loop` span but drop the extra completion node. No effect when `trace-tool-loop` is `false`
+
+|`embabel.agent.platform.observability.trace-llm-calls`
+|`true`
+|LLM calls: the `embabel.llm` scoped span and the `embabel.llm.invocation` point span (token usage, cost), plus the Spring AI ChatModel filter
+
+|`embabel.agent.platform.observability.trace-embedding`
+|`true`
+|Embedding invocations with token usage (`embabel.embedding`), in-agent and standalone (RAG/pgvector outside an agent process)
+
+|`embabel.agent.platform.observability.trace-planning`
+|`true`
+|Plan formulation (`embabel.planning`) and replan requests (`embabel.replan`)
+
+|`embabel.agent.platform.observability.trace-state-transitions`
+|`true`
+|Workflow state changes
+
+|`embabel.agent.platform.observability.trace-lifecycle-states`
+|`true`
+|Lifecycle states — COMPLETED/FAILED/KILLED/TERMINATED/WAITING/PAUSED/STUCK (`embabel.lifecycle`) and goal achievement (`embabel.goal`)
+
+|`embabel.agent.platform.observability.trace-rag`
+|`true`
+|RAG responses (query, top-k, similarity threshold, result count, top score, RAGAS quality metrics)
+
+|`embabel.agent.platform.observability.trace-ranking`
+|`true`
+|Ranking/selection events (agent routing)
+
+|`embabel.agent.platform.observability.trace-dynamic-agent-creation`
+|`true`
+|Dynamic agent creation events
+
+|`embabel.agent.platform.observability.trace-http-details`
+|`false`
+|HTTP request/response details (bodies, headers)
+
+|`embabel.agent.platform.observability.trace-tracked-operations`
+|`true`
+|`@Tracked` annotation aspect
+
+|`embabel.agent.platform.observability.mdc-propagation`
+|`true`
+|Propagate agent context into SLF4J MDC
+
+|`embabel.agent.platform.observability.metrics-enabled`
+|`true`
+|Micrometer business metrics (counters, gauges)
+
+|`embabel.agent.platform.observability.max-attribute-length`
+|`4000`
+|Max span attribute length before truncation
+
+|`embabel.agent.platform.observability.capture-message-content`
+|`true`
+|Capture message/payload content across all spans: ChatModel `gen_ai.input.messages`/`gen_ai.output.messages` plus the `input.value`/`output.value`/`*.result` bodies on agent/action/tool_loop spans, tool-call args/result, RAG query, planning/goal world state, replan reason, and `@Tracked` args/return. The OTel GenAI convention recommends this be opt-in as content may contain PII; set `false` to keep model/token/identity metadata while omitting every message body
+
+|`embabel.agent.platform.observability.disabled-traces`
+|`[]` (empty)
+|List of observation names to suppress, matched by *exact* name. Lets you drop non-Embabel infrastructure spans you don't want exported (e.g. `tasks.scheduled.execution`, `http.server.requests`, `http.client.requests`) without code. Works for any span that carries its real name (incl. Embabel point spans like `embabel.embedding`), but *not* the four core scoped spans (`embabel.agent`/`embabel.action`/`embabel.llm`/`embabel.tool_loop`), which are placeholder-named until `start()` — use their `trace-*` flags for those. A suppressed observation becomes a no-op, so its children re-parent to the next live ancestor
+|===
+
+For example, to keep Embabel's agent traces but stop exporting Spring's scheduled-task and
+incoming-HTTP spans:
+
+[source,yaml]
+----
+embabel:
+  agent:
+    platform:
+      observability:
+        disabled-traces:
+          - tasks.scheduled.execution
+          - http.server.requests
+----
+
+NOTE: Re-parenting onto the next live ancestor also holds across async thread hops, not just within a
+single thread.
+
+===== Custom Operation Tracking with `@Tracked`
+
+The `@Tracked` annotation lets you add observability spans to your own methods.
+Inputs, outputs, duration, and errors are captured automatically.
+
+[source,java]
+----
+@Tracked("enrichCustomer")
+public Customer enrich(Customer input) {
+    // Automatically creates a span with method arguments and return value
+}
+----
+
+You can specify a type and description for richer traces:
+
+[source,java]
+----
+@Tracked(
+    value = "callPaymentApi",
+    type = TrackType.EXTERNAL_CALL,
+    description = "Payment gateway call"
+)
+public PaymentResult processPayment(Order order) {
+    // ...
+}
+----
+
+Available track types:
+
+[cols="1,3"]
+|===
+|Type |Description
+
+|`CUSTOM`
+|General-purpose (default)
+
+|`PROCESSING`
+|Data processing operation
+
+|`VALIDATION`
+|Validation or verification step
+
+|`TRANSFORMATION`
+|Data transformation
+
+|`EXTERNAL_CALL`
+|External service/API call
+
+|`COMPUTATION`
+|Computation or calculation
+|===
+
+When called within an agent execution, `@Tracked` spans are automatically nested under the current action:
+
+[source]
+----
+customer-service-agent              (embabel.agent)
+├── process-order                   (embabel.action)
+│   ├── enrich-customer             (@Tracked, PROCESSING)
+│   ├── gpt-4o                      (embabel.llm)
+│   └── call-payment-api            (@Tracked, EXTERNAL_CALL)
+└── completed                       (embabel.lifecycle)
+----
+
+IMPORTANT: `@Tracked` uses Spring AOP proxies.
+Internal method calls within the same class are *not* intercepted.
+Extract tracked methods into a separate `@Component` bean for the annotation to work.
+
+===== MDC Log Correlation
+
+Agent context is automatically propagated into SLF4J MDC, enabling log filtering by agent run or action.
+
+MDC keys set automatically:
+
+[cols="2,3,2,2"]
+|===
+|MDC Key |Description |Set on |Removed on
+
+|`embabel.agent.run_id`
+|Agent process ID
+|Agent creation
+|Agent completed/failed/killed
+
+|`embabel.agent.name`
+|Agent name
+|Agent creation
+|Agent completed/failed/killed
+
+|`embabel.action.name`
+|Current action name
+|Action start
+|Action result
+|===
+
+Example Logback pattern:
+
+[source,xml]
+----
+<pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} [runId=%X{embabel.agent.run_id} agent=%X{embabel.agent.name} action=%X{embabel.action.name}] - %msg%n</pattern>
+----
+
+This produces logs like:
+
+[source]
+----
+14:23:45.123 [main] INFO  c.e.MyService [runId=abc-123 agent=CustomerServiceAgent action=AnalyzeRequest] - Processing request
+----
+
+The keys are propagated across the agent's internal thread hops (planning loop, tool loop, async fan-out): work dispatched through Embabel's `Asyncer` carries the MDC keys to the worker thread, so log lines emitted off the calling thread keep the same `runId`/`agent`/`action` correlation. This works whether or not tracing is enabled.
+
+To disable MDC propagation:
+
+[source,yaml]
+----
+embabel:
+  agent:
+    platform:
+      observability:
+        mdc-propagation: false
+----
+
+===== Supported Backends
+
+[cols="1,1,2"]
+|===
+|Backend |Type |Module
+
+|Langfuse
+|Traces
+|`opentelemetry-exporter-embabel`
+
+|LangSmith
+|Traces
+|`opentelemetry-exporter-embabel`
+
+|Zipkin
+|Traces
+|`opentelemetry-exporter-zipkin`
+
+|OTLP (Jaeger, Tempo)
+|Traces
+|`opentelemetry-exporter-otlp`
+
+|Prometheus
+|Metrics
+|`micrometer-registry-prometheus`
+|===
+
+For full details, see the https://github.com/embabel/embabel-agent/tree/main/embabel-agent-observability[Observability Module Documentation].

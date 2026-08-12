@@ -1,0 +1,965 @@
+[[reference.configuration]]
+=== Configuration
+
+==== Enabling Embabel
+
+Annotate your Spring Boot application class to get agentic behavior.
+
+Example:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+@SpringBootApplication
+public class MyAgentApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(MyAgentApplication.class, args);
+    }
+}
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+@SpringBootApplication
+class MyAgentApplication
+
+fun main(args: Array<String>) {
+    runApplication<MyAgentApplication>(*args)
+}
+----
+====
+
+This is a normal Spring Boot application class.
+You can add other Spring Boot annotations as needed.
+
+You also need to add the <<reference.environment_setup,dependency and configuration for your LLM provider(s) of choice>>.
+
+==== Configuration Properties
+
+The following table lists all available configuration properties in Embabel Agent Platform.
+Properties are organized by their configuration prefix and include default values where applicable.
+They can be set via `application.properties`, `application.yml`, profile-specific configuration files or environment variables, as per standard Spring configuration practices.
+
+===== Setting default LLM and roles
+
+From `ConfigurableModelProviderProperties` - configuration for default LLMs and role-based model selection.
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.models.default-llm`
+|String
+|`gpt-4.1-mini`
+|Default LLM name. It's good practice to override this in configuration.
+
+|`embabel.models.default-embedding-model`
+|String
+|`null`
+|Default embedding model name. Need not be set, in which case it defaults to null.
+
+|`embabel.models.llms`
+|Map<String, String>
+|`{}`
+|Map of role to LLM name. Each entry will require an LLM to be registered with the same name. May not include the default LLM.
+
+|`embabel.models.embedding-services`
+|Map<String, String>
+|`{}`
+|Map of role to embedding service name. Does not need to include the default embedding service. You can create as many roles as you wish.
+
+|===
+
+Role-based model selection allows you to assign specific LLMs or embedding services to different roles within your application.
+For example:
+
+[source,yaml]
+----
+embabel:
+  models:
+    default-llm: gpt-4o-mini
+    default-embedding-model: text-embedding-3-small
+    llms:
+      cheapest: gpt-4o-mini
+      best: gpt-4o
+      reasoning: o1-preview
+    embedding-services:
+      fast: text-embedding-3-small
+      accurate: text-embedding-3-large
+----
+
+It's good practice to decouple your code from specific models in this way.
+
+===== Platform Configuration
+
+From `AgentPlatformProperties` - unified configuration for all agent platform properties.
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.agent.platform.name`
+|String
+|`embabel-default`
+|Core platform identity name
+
+|`embabel.agent.platform.description`
+|String
+|`Embabel Default Agent Platform`
+|Platform description
+
+|===
+
+===== Logging Personality
+
+Configuration for agent logging output style and theming.
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.agent.logging.personality`
+|String
+|_(none)_
+|Themed logging messages to add personality to agent output
+
+|===
+
+.Available Personality Values
+[cols="2,5",options="header"]
+|===
+|Value |Description
+
+|`starwars`
+|Star Wars themed logging messages
+
+|`severance`
+|Severance themed logging messages. Praise Kier
+
+|`colossus`
+|Colossus: The Forbin Project themed messages
+
+|`hitchhiker`
+|Hitchhiker's Guide to the Galaxy themed messages
+
+|`montypython`
+|Monty Python themed logging messages
+
+|===
+
+.Example Configuration
+[source,yaml]
+----
+embabel:
+  agent:
+    logging:
+      personality: hitchhiker
+----
+
+===== Agent Scanning
+
+From `AgentPlatformProperties.ScanningConfig` - configures scanning of the classpath for agents.
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.agent.platform.scanning.annotation`
+|Boolean
+|`true`
+|Whether to auto register beans with @Agent and @Agentic annotation
+
+|`embabel.agent.platform.scanning.bean`
+|Boolean
+|`false`
+|Whether to auto register as agents Spring beans of type `Agent`
+
+|===
+
+===== Planner Configuration
+
+Controls how the GOAP planner processes annotated agents during startup.
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.agent.platform.planner.restricted-goals`
+|Boolean
+|`false`
+|When `false` (default), allows `@Agent` to declare multiple `@AchievesGoal` actions with different distinct return types, enabling the planner to gate actions by mutually exclusive `@Condition` annotations. When `true`, restricts to a single unique return type across all `@AchievesGoal` actions; any `@Agent` violating this is rejected at startup.
+
+|===
+
+.Example - opt-in restriction for strict single-goal enforcement
+[source,yaml]
+----
+embabel:
+  agent:
+    platform:
+      planner:
+        restricted-goals: true
+----
+
+===== Ranking Configuration
+
+From `AgentPlatformProperties.RankingConfig` - configures ranking of agents and goals based on user input when the platform should choose the agent or goal.
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.agent.platform.ranking.llm`
+|String
+|`null`
+|Name of the LLM to use for ranking, or null to use auto selection
+
+|`embabel.agent.platform.ranking.max-attempts`
+|Int
+|`5`
+|Maximum number of attempts to retry ranking
+
+|`embabel.agent.platform.ranking.backoff-millis`
+|Long
+|`100`
+|Initial backoff time in milliseconds
+
+|`embabel.agent.platform.ranking.backoff-multiplier`
+|Double
+|`5.0`
+|Multiplier for backoff time
+
+|`embabel.agent.platform.ranking.backoff-max-interval`
+|Long
+|`180000`
+|Maximum backoff time in milliseconds
+
+|===
+
+===== LLM Operations
+
+From `AgentPlatformProperties.LlmOperationsConfig` - configuration for LLM operations including prompts and data binding.
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.agent.platform.llm-operations.prompts.maybe-prompt-template`
+|String
+|`maybe_prompt_contribution`
+|Template for "maybe" prompt, enabling failure result when LLM lacks information
+
+|`embabel.agent.platform.llm-operations.prompts.generate-examples-by-default`
+|Boolean
+|`true`
+|Whether to generate examples by default
+
+|`embabel.agent.platform.llm-operations.data-binding.max-attempts`
+|Int
+|`10`
+|Maximum retry attempts for data binding
+
+|`embabel.agent.platform.llm-operations.data-binding.fixed-backoff-millis`
+|Long
+|`30`
+|Fixed backoff time in milliseconds between retries
+
+|===
+
+===== Tool Loop
+
+From `ToolLoopConfiguration` - configuration for tool loop execution.
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.agent.platform.toolloop.type`
+|String
+|`default`
+|Tool loop type: `default` (sequential) or `parallel` (experimental)
+
+|`embabel.agent.platform.toolloop.max-iterations`
+|Int
+|`20`
+|Maximum number of tool loop iterations
+
+|`embabel.agent.platform.toolloop.parallel.per-tool-timeout`
+|Duration
+|`30s`
+|Timeout for individual tool execution in parallel mode
+
+|`embabel.agent.platform.toolloop.parallel.batch-timeout`
+|Duration
+|`60s`
+|Timeout for entire batch of parallel tools
+
+|`embabel.agent.platform.toolloop.empty-response.max-retries`
+|Int
+|`0`
+|Maximum consecutive empty-response retries before throwing `EmptyLlmResponseException`. `0` (default) preserves existing behaviour — the loop exits with blank content. Any value `> 0` activates `RetryWithFeedbackPolicy`.
+
+|`embabel.agent.platform.toolloop.empty-response.nudge-message`
+|String
+|_(see below)_
+|Message appended to the conversation as a synthetic `UserMessage` when the LLM goes silent. Only used when `max-retries > 0`. Default nudges the model to take one concrete action.
+
+|===
+
+[[reference.configuration.empty-response]]
+====== Empty-Response Handling
+
+Weak open-weights chat models (such as `gpt-oss-20b` or some Qwen variants) occasionally return blank text with no further tool calls after a tool result, when the model has run out of ideas about what to do next.
+Without intervention the tool loop exits with empty content, which the rendering layer surfaces as `EmptyLlmResponseException`.
+
+The `empty-response` configuration controls whether the loop gives the model a second chance.
+Setting `max-retries: 1` activates `RetryWithFeedbackPolicy`: when an empty response is detected the loop appends the configured nudge message as a synthetic `UserMessage` and re-invokes the LLM in the same loop iteration.
+The retry counter is reset on any non-empty response, so retries are bounded per consecutive failure rather than cumulative across the whole loop.
+
+Example for a deployment running a smaller chat model:
+
+[source,yaml]
+----
+embabel:
+  agent:
+    platform:
+      toolloop:
+        max-iterations: 30        # raise to give retries headroom
+        empty-response:
+          max-retries: 1          # one nudge before throwing
+----
+
+For most deployments using strong frontier models the default (`max-retries: 0`) is correct — empty responses are rare, and the typed exception lets callers handle the case explicitly.
+This setting is provided to make small / local model deployments more robust without forcing every caller to wrap LLM invocations in their own retry logic.
+
+For programmatic configuration (custom retry counts or messages), inject your own `EmptyResponsePolicy` bean — the auto-configuration honours `@ConditionalOnMissingBean`.
+
+===== Process ID Generation
+
+From `AgentPlatformProperties.ProcessIdGenerationConfig` - configuration for process ID generation.
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.agent.platform.process-id-generation.include-version`
+|Boolean
+|`false`
+|Whether to include version in process ID generation
+
+|`embabel.agent.platform.process-id-generation.include-agent-name`
+|Boolean
+|`false`
+|Whether to include agent name in process ID generation
+
+|===
+
+===== Autonomy Configuration
+
+From `AgentPlatformProperties.AutonomyConfig` - configures thresholds for agent and goal selection.
+Certainty below thresholds will result in failure to choose an agent or goal.
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.agent.platform.autonomy.agent-confidence-cut-off`
+|Double
+|`0.6`
+|Confidence threshold for agent operations
+
+|`embabel.agent.platform.autonomy.goal-confidence-cut-off`
+|Double
+|`0.6`
+|Confidence threshold for goal achievement
+
+|===
+
+===== Model Provider Configuration
+
+From `AgentPlatformProperties.ModelsConfig` - model provider integration configurations.
+
+====== Anthropic
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.agent.platform.models.anthropic.max-attempts`
+|Int
+|`10`
+|Maximum retry attempts
+
+|`embabel.agent.platform.models.anthropic.backoff-millis`
+|Long
+|`5000`
+|Initial backoff time in milliseconds
+
+|`embabel.agent.platform.models.anthropic.backoff-multiplier`
+|Double
+|`5.0`
+|Backoff multiplier
+
+|`embabel.agent.platform.models.anthropic.backoff-max-interval`
+|Long
+|`180000`
+|Maximum backoff interval in milliseconds
+
+|===
+
+====== OpenAI
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.agent.platform.models.openai.max-attempts`
+|Int
+|`10`
+|Maximum retry attempts
+
+|`embabel.agent.platform.models.openai.backoff-millis`
+|Long
+|`5000`
+|Initial backoff time in milliseconds
+
+|`embabel.agent.platform.models.openai.backoff-multiplier`
+|Double
+|`5.0`
+|Backoff multiplier
+
+|`embabel.agent.platform.models.openai.backoff-max-interval`
+|Long
+|`180000`
+|Maximum backoff interval in milliseconds
+
+|===
+
+====== Google GenAI (Native)
+
+Uses the native Google GenAI SDK (`spring-ai-google-genai`) for direct access to Gemini models with full feature support.
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.agent.platform.models.googlegenai.max-attempts`
+|Int
+|`10`
+|Maximum retry attempts
+
+|`embabel.agent.platform.models.googlegenai.backoff-millis`
+|Long
+|`5000`
+|Initial backoff time in milliseconds
+
+|`embabel.agent.platform.models.googlegenai.backoff-multiplier`
+|Double
+|`5.0`
+|Backoff multiplier
+
+|`embabel.agent.platform.models.googlegenai.backoff-max-interval`
+|Long
+|`180000`
+|Maximum backoff interval in milliseconds
+
+|===
+
+Google GenAI models (both LLM and embedding) are configured via the `embabel-agent-starter-google-genai` starter dependency.
+
+The following embedding models are available:
+
+[cols="2,3,1,1",options="header"]
+|===
+|Model Name |Model ID |Dimensions |Price (per 1M tokens)
+
+|`gemini_embedding_001`
+|`gemini-embedding-001`
+|3072
+|$0.15
+
+|===
+
+The following environment variables control authentication:
+
+[cols="2,4",options="header"]
+|===
+|Environment Variable |Description
+
+|`GOOGLE_API_KEY`
+|API key for Google AI Studio authentication
+
+|`GOOGLE_PROJECT_ID`
+|Google Cloud project ID (for Vertex AI authentication)
+
+|`GOOGLE_LOCATION`
+|Google Cloud region, e.g., `us-central1` (for Vertex AI authentication)
+
+|===
+
+NOTE: Either `GOOGLE_API_KEY` or both `GOOGLE_PROJECT_ID` and `GOOGLE_LOCATION` must be set.
+
+IMPORTANT: Gemini 3 models are only available in the `global` location on Vertex AI.
+To use Gemini 3 with Vertex AI, you must set `GOOGLE_LOCATION=global`.
+
+To add new Google GenAI embedding models, edit the configuration file:
+
+----
+embabel-agent-autoconfigure/models/embabel-agent-google-genai-autoconfigure/
+  src/main/resources/models/google-genai-models.yml
+----
+
+[source,yaml]
+----
+embedding_models:
+  - name: "gemini_embedding_001"
+    model_id: "gemini-embedding-001"
+    display_name: "Gemini Embedding 001"
+    dimensions: 3072
+    pricing_model:
+      usd_per1m_tokens: 0.15
+----
+
+====== OCI Generative AI
+
+OCI Generative AI models are configured through the `embabel-agent-starter-oci-genai` starter dependency.
+The starter registers OCI chat and embedding models from bundled metadata and uses the OCI Java SDK authentication providers.
+
+When the standard OpenAI provider is not on the classpath, the OCI starter supplies OCI defaults for Embabel's default
+LLM and embedding model:
+
+[source,properties]
+----
+embabel.models.default-llm=cohere.command-a-03-2025
+embabel.models.default-embedding-model=cohere.embed-v4.0
+----
+
+Override those values in application configuration if you want another OCI model.
+Use OCI model ids for Embabel model selection.
+The starter's Spring bean names are Java-friendly aliases, for example `cohere_command_a` for `cohere.command-a-03-2025`
+and `llama_33_70b` for `meta.llama-3.3-70b-instruct`.
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.agent.platform.models.ocigenai.authentication-type`
+|Enum
+|`FILE`
+|Authentication provider to use. Supported values are `FILE`, `INSTANCE_PRINCIPAL`, `RESOURCE_PRINCIPAL`, `WORKLOAD_IDENTITY`, `SESSION_TOKEN` and `SIMPLE`.
+
+|`embabel.agent.platform.models.ocigenai.config-file`
+|String
+|`~/.oci/config`
+|OCI config file path for `FILE` authentication, or optional config file path for `SESSION_TOKEN` authentication.
+
+|`embabel.agent.platform.models.ocigenai.profile`
+|String
+|`DEFAULT`
+|OCI config profile name.
+
+|`embabel.agent.platform.models.ocigenai.region`
+|String
+|_(none)_
+|OCI region id, such as `us-chicago-1`. Used when an explicit endpoint is not set.
+
+|`embabel.agent.platform.models.ocigenai.endpoint`
+|String
+|_(none)_
+|Explicit OCI Generative AI inference endpoint URL. Overrides region-based endpoint selection.
+
+|`embabel.agent.platform.models.ocigenai.compartment-id`
+|String
+|_(none)_
+|OCI compartment OCID used for chat and embedding requests. Required.
+
+|`embabel.agent.platform.models.ocigenai.serving-mode`
+|Enum
+|`ON_DEMAND`
+|OCI serving mode. Supported values are `ON_DEMAND` and `DEDICATED`.
+
+|`embabel.agent.platform.models.ocigenai.endpoint-id`
+|String
+|_(none)_
+|Dedicated serving endpoint OCID. Required when `serving-mode` is `DEDICATED`.
+
+|`embabel.agent.platform.models.ocigenai.tenant-id`
+|String
+|_(none)_
+|Tenancy OCID for `SIMPLE`, `SESSION_TOKEN`, or workload identity configuration as required by the selected OCI authentication provider.
+
+|`embabel.agent.platform.models.ocigenai.user-id`
+|String
+|_(none)_
+|User OCID for `SIMPLE` or builder-based `SESSION_TOKEN` authentication.
+
+|`embabel.agent.platform.models.ocigenai.fingerprint`
+|String
+|_(none)_
+|API key fingerprint for `SIMPLE` or builder-based `SESSION_TOKEN` authentication.
+
+|`embabel.agent.platform.models.ocigenai.private-key`
+|String
+|_(none)_
+|PEM private key content for `SIMPLE` authentication. Prefer `private-key-file` where possible.
+
+|`embabel.agent.platform.models.ocigenai.private-key-file`
+|String
+|_(none)_
+|Path to a PEM private key file for `SIMPLE` or builder-based `SESSION_TOKEN` authentication.
+
+|`embabel.agent.platform.models.ocigenai.pass-phrase`
+|String
+|_(none)_
+|Private key pass phrase, if the configured private key is encrypted.
+
+|`embabel.agent.platform.models.ocigenai.session-token`
+|String
+|_(none)_
+|Session token value for builder-based `SESSION_TOKEN` authentication.
+
+|`embabel.agent.platform.models.ocigenai.session-token-file`
+|String
+|_(none)_
+|Path to a session token file for builder-based `SESSION_TOKEN` authentication.
+
+|`embabel.agent.platform.models.ocigenai.workload-identity-token-path`
+|String
+|_(none)_
+|Workload identity token path for `WORKLOAD_IDENTITY` authentication.
+
+|`embabel.agent.platform.models.ocigenai.federation-endpoint`
+|String
+|_(none)_
+|Optional federation endpoint for principal-based authentication.
+
+|`embabel.agent.platform.models.ocigenai.max-attempts`
+|Int
+|`10`
+|Maximum retry attempts for OCI GenAI requests.
+
+|`embabel.agent.platform.models.ocigenai.backoff-millis`
+|Long
+|`5000`
+|Initial retry backoff in milliseconds.
+
+|`embabel.agent.platform.models.ocigenai.backoff-multiplier`
+|Double
+|`5.0`
+|Retry backoff multiplier.
+
+|`embabel.agent.platform.models.ocigenai.backoff-max-interval`
+|Long
+|`180000`
+|Maximum retry backoff interval in milliseconds.
+
+|===
+
+If your application exposes Spring Boot Actuator `env` or `configprops` values, secure those endpoints and sanitize OCI
+credential property names such as `pass-phrase`, `session-token` and `private-key`.
+
+===== HTTP Client Configuration
+
+From `NettyClientFactoryProperties` - configuration for the HTTP client used by model providers (OpenAI, Anthropic, etc.) when making API calls.
+
+Embabel uses Reactor Netty as the HTTP client for improved performance and non-blocking I/O.
+This is particularly important for LLM API calls which can have long response times.
+
+====== Dependency Requirement
+
+To use the Netty client, you must manually add the following autoconfiguration dependency to your project:
+
+[source,xml]
+----
+<dependency>
+    <groupId>com.embabel.agent</groupId>
+    <artifactId>embabel-agent-netty-client-autoconfigure</artifactId>
+</dependency>
+----
+
+For Gradle:
+
+[source,gradle]
+----
+implementation 'com.embabel.agent:embabel-agent-netty-client-autoconfigure'
+----
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.agent.platform.http-client.connect-timeout`
+|Duration
+|`25s`
+|Connection timeout for establishing HTTP connections to model providers
+
+|`embabel.agent.platform.http-client.read-timeout`
+|Duration
+|`1m`
+|Read timeout (response timeout) for receiving responses from model providers. Increase this value for models that generate long responses or when using extended thinking features.
+
+|===
+
+.Example Configuration
+[source,yaml]
+----
+embabel:
+  agent:
+    platform:
+      http-client:
+        connect-timeout: 10s
+        read-timeout: 10m
+----
+
+TIP: For models with extended thinking enabled (like Claude with thinking mode), consider increasing `read-timeout` to `10m` or higher to accommodate longer processing times.
+
+====== When to Adjust Timeouts
+
+* *Long-running LLM calls*: If you experience timeout errors during complex reasoning tasks, increase `read-timeout`
+* *Slow network environments*: Increase `connect-timeout` if connection establishment is failing
+* *Streaming responses*: The `read-timeout` applies to the initial response; streaming content has its own handling
+
+NOTE: The HTTP client configuration applies to all model providers that use Spring's `RestClient` and `WebClient`, including OpenAI, Anthropic, and OpenAI-compatible endpoints.
+
+===== Server-Sent Events
+
+From `AgentPlatformProperties.SseConfig` - server-sent events configuration.
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.agent.platform.sse.max-buffer-size`
+|Int
+|`100`
+|Maximum buffer size for SSE
+
+|`embabel.agent.platform.sse.max-process-buffers`
+|Int
+|`1000`
+|Maximum number of process buffers
+
+|===
+
+===== REST Endpoints
+
+From `AgentPlatformProperties.RestConfig` - toggles for the platform's built-in REST endpoints.
+Each flag controls whether the corresponding endpoint is exposed.
+When disabled, the corresponding controller bean is not registered, so the endpoint is absent from
+Swagger/OpenAPI documentation and routing rejects calls (HTTP 404, or HTTP 405 if another method
+remains mapped at the same path).
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.agent.platform.rest.process-status-enabled`
+|Boolean
+|`true`
+|Whether `GET /api/v1/process/{id}` (process status) is exposed
+
+|`embabel.agent.platform.rest.process-kill-enabled`
+|Boolean
+|`true`
+|Whether `DELETE /api/v1/process/{id}` (terminate process) is exposed
+
+|`embabel.agent.platform.rest.process-events-enabled`
+|Boolean
+|`true`
+|Whether `GET /events/process/{id}` (SSE event stream) is exposed. When disabled, the SSE controller is not registered.
+
+|===
+
+===== Test Configuration
+
+From `AgentPlatformProperties.TestConfig` - test configuration.
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.agent.platform.test.mock-mode`
+|Boolean
+|`true`
+|Whether to enable mock mode for testing
+
+|===
+
+===== Process Repository Configuration
+
+From `ProcessRepositoryProperties` - configuration for the agent process repository.
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.agent.platform.process-repository.window-size`
+|Int
+|`1000`
+|Maximum number of agent processes to keep in memory when using default `InMemoryAgentProcessRepository`. When exceeded, oldest processes are evicted.
+
+|===
+
+===== Standalone LLM Configuration
+
+====== LLM Operations Prompts
+
+From `LlmOperationsPromptsProperties` - properties for ChatClientLlmOperations operations.
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.agent.platform.llm-operations.prompts.maybe-prompt-template`
+|String
+|`maybe_prompt_contribution`
+|Template to use for the "maybe" prompt, which can enable a failure result if the LLM does not have enough information to create the desired output structure
+
+|`embabel.agent.platform.llm-operations.prompts.generate-examples-by-default`
+|Boolean
+|`true`
+|Whether to generate examples by default
+
+|`embabel.agent.platform.llm-operations.prompts.default-timeout`
+|Duration
+|`60s`
+|Default timeout for operations
+
+|===
+
+====== LLM Data Binding
+
+From `LlmDataBindingProperties` - data binding properties with retry configuration for LLM operations.
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.llm-operations.data-binding.max-attempts`
+|Int
+|`10`
+|Maximum retry attempts for data binding
+
+|`embabel.llm-operations.data-binding.fixed-backoff-millis`
+|Long
+|`30`
+|Fixed backoff time in milliseconds between retries
+
+|===
+
+===== Additional Model Providers
+
+====== AWS Bedrock
+
+From `BedrockProperties` - AWS Bedrock model configuration properties.
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.models.bedrock.models`
+|List
+|`[]`
+|List of Bedrock models to configure
+
+|`embabel.models.bedrock.models[].name`
+|String
+|`""`
+|Model name
+
+|`embabel.models.bedrock.models[].knowledge-cutoff`
+|String
+|`""`
+|Knowledge cutoff date
+
+|`embabel.models.bedrock.models[].input-price`
+|Double
+|`0.0`
+|Input token price
+
+|`embabel.models.bedrock.models[].output-price`
+|Double
+|`0.0`
+|Output token price
+
+|===
+
+====== ONNX Embeddings
+
+From `OnnxEmbeddingProperties` - configuration for local ONNX embedding models.
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.agent.platform.models.onnx.embeddings.enabled`
+|Boolean
+|`true`
+|Whether to enable ONNX embedding service
+
+|`embabel.agent.platform.models.onnx.embeddings.model-uri`
+|String
+|_(HuggingFace all-MiniLM-L6-v2)_
+|URI to the ONNX model file (HuggingFace URL or `file://` path)
+
+|`embabel.agent.platform.models.onnx.embeddings.tokenizer-uri`
+|String
+|_(HuggingFace all-MiniLM-L6-v2)_
+|URI to the tokenizer JSON file
+
+|`embabel.agent.platform.models.onnx.embeddings.dimensions`
+|Int
+|`384`
+|Embedding dimensions
+
+|`embabel.agent.platform.models.onnx.embeddings.model-name`
+|String
+|`all-MiniLM-L6-v2`
+|Name for the embedding model
+
+|`embabel.agent.platform.models.onnx.embeddings.cache-dir`
+|String
+|`~/.embabel/models`
+|Local cache directory for downloaded model files
+
+|===
+
+====== Docker Local Models
+
+From `DockerProperties` - configuration for Docker local models (OpenAI-compatible).
+
+[cols="3,2,1,4",options="header"]
+|===
+|Property |Type |Default |Description
+
+|`embabel.docker.models.base-url`
+|String
+|`http://localhost:12434/engines`
+|Base URL for Docker model endpoint
+
+|`embabel.docker.models.max-attempts`
+|Int
+|`10`
+|Maximum retry attempts
+
+|`embabel.docker.models.backoff-millis`
+|Long
+|`2000`
+|Initial backoff time in milliseconds
+
+|`embabel.docker.models.backoff-multiplier`
+|Double
+|`5.0`
+|Backoff multiplier
+
+|`embabel.docker.models.backoff-max-interval`
+|Long
+|`180000`
+|Maximum backoff interval in milliseconds
+
+|===

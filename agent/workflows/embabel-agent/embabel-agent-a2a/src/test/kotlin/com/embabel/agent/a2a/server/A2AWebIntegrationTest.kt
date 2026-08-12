@@ -1,0 +1,335 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.embabel.agent.a2a.server
+
+import com.embabel.agent.a2a.example.simple.horoscope.TestHoroscopeService
+import com.embabel.agent.a2a.example.simple.horoscope.kotlin.TestStarNewsFinder
+import com.embabel.agent.a2a.server.config.FakeAiConfiguration
+import com.embabel.agent.a2a.server.config.FakeRankerConfiguration
+import com.embabel.common.util.EmbabelObjectMapperHolder
+import com.embabel.agent.api.annotation.support.AgentMetadataReader
+import com.embabel.agent.core.AgentPlatform
+import com.embabel.common.core.types.Semver.Companion.DEFAULT_VERSION
+import io.a2a.spec.*
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Disabled
+import org.junit.jupiter.api.Nested
+import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.autoconfigure.EnableAutoConfiguration
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
+import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.annotation.ComponentScan
+import org.springframework.context.annotation.Import
+import org.springframework.http.MediaType
+import org.springframework.test.context.ActiveProfiles
+import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.get
+import org.springframework.test.web.servlet.post
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+
+@SpringBootTest
+@ActiveProfiles(value = ["test"])
+@AutoConfigureMockMvc(addFilters = false)
+@EnableAutoConfiguration
+@ComponentScan(basePackages = ["com.embabel.agent.a2a"])
+@Import(
+    value = [
+        FakeAiConfiguration::class,
+        FakeRankerConfiguration::class,
+    ]
+)
+class A2AWebIntegrationTest(
+    @Autowired
+    private val mockMvc: MockMvc,
+    @Autowired
+    private val agentPlatform: AgentPlatform,
+    @Autowired
+    private val embabelObjectMapperHolder: EmbabelObjectMapperHolder,
+    @Autowired
+    private val horoscopeService: TestHoroscopeService,
+) {
+
+    @BeforeEach
+    fun setup() {
+        AgentMetadataReader().createAgentScopes(
+            TestStarNewsFinder(
+                horoscopeService = horoscopeService,
+                wordCount = 100,
+                storyCount = 5,
+            ),
+        ).forEach { agentPlatform.deploy(it) }
+    }
+
+    @Nested
+    inner class AgentCardTests {
+        @Test
+        fun `should return agent card`() {
+            val result = mockMvc.get("/a2a/.well-known/agent.json")
+                .andExpect {
+                    status().isOk()
+                    content { contentType(MediaType.APPLICATION_JSON) }
+                }.andReturn()
+
+            val content = result.response.contentAsString
+            val agentCard = embabelObjectMapperHolder.get().readValue(content, AgentCard::class.java)
+
+            assertNotNull(agentCard)
+            assertNotNull(agentCard.name)
+            assertNotNull(agentCard.description)
+            assertTrue(
+                agentCard.url.contains("localhost"),
+                "Agent card url should expose localhost: '${agentCard.url}'"
+            )
+            assertTrue(agentCard.url.contains(":"), "Agent card url should expose port: '${agentCard.url}'")
+            assertEquals("Embabel", agentCard.provider?.organization)
+            assertEquals("https://embabel.com", agentCard.provider?.url)
+            assertEquals(DEFAULT_VERSION, agentCard.version)
+            assertEquals("https://embabel.com/docs", agentCard.documentationUrl)
+            assertEquals(true, agentCard.capabilities.streaming)
+            assertEquals(false, agentCard.capabilities.pushNotifications)
+            assertEquals(false, agentCard.capabilities.stateTransitionHistory)
+            assertEquals(listOf("application/json", "text/plain"), agentCard.defaultInputModes)
+            assertEquals(listOf("application/json", "text/plain"), agentCard.defaultOutputModes)
+//            assertTrue(agentCard.skills.isNotEmpty(), "Must have some skills")
+//            assertEquals("echo", agentCard.skills[0].id)
+//            assertEquals("Echo", agentCard.skills[0].name)
+//            assertEquals("Echoes messages.", agentCard.skills[0].description)
+//            assertEquals(listOf("test"), agentCard.skills[0].tags)
+//            assertEquals(listOf("Say hello!"), agentCard.skills[0].examples)
+            assertEquals(false, agentCard.supportsAuthenticatedExtendedCard)
+        }
+    }
+
+    @Nested
+    inner class MessageTests {
+        @Test
+        fun `should handle message send`() {
+            val message = Message.Builder()
+                .role(Message.Role.USER)
+                .parts(listOf(TextPart("Hello, agent!")))
+                .messageId("msg-123")
+                .taskId("task-123")
+                .contextId("ctx-123")
+                .build()
+            val params = MessageSendParams.Builder().message(message).build()
+            val request = SendMessageRequest.Builder()
+                .jsonrpc(JSONRPCRequest.JSONRPC_VERSION)
+                .method(SendMessageRequest.METHOD)
+                .id("msg-123")
+                .params(params)
+                .build()
+
+            val result = mockMvc.post("/a2a") {
+                contentType = MediaType.APPLICATION_JSON
+                content = embabelObjectMapperHolder.get().writeValueAsString(request)
+            }
+                .andExpect {
+                    status().isOk()
+                    content { contentType(MediaType.APPLICATION_JSON) }
+                }.andReturn()
+
+            val content = result.response.contentAsString
+            val response = embabelObjectMapperHolder.get().readValue(content, SendMessageResponse::class.java)
+
+            assertNotNull(response)
+            assertEquals("msg-123", response.id)
+
+            val task = embabelObjectMapperHolder.get().convertValue(response.result, Task::class.java)
+            assertEquals("task-123", task.id)
+            assertEquals("ctx-123", task.contextId)
+            assertEquals(TaskState.COMPLETED, task.status.state)
+            assertTrue(task.history?.isNotEmpty() ?: false)
+            assertEquals("Hello, agent!", (task.history.get(0)?.parts?.get(0) as? TextPart)?.text)
+        }
+
+        @Test
+        fun `should handle message stream`() {
+            val message = Message.Builder()
+                .role(Message.Role.USER)
+                .parts(listOf(TextPart("Hello, agent!")))
+                .messageId("msg-123")
+                .taskId("task-123")
+                .contextId("ctx-123")
+                .build()
+            val params = MessageSendParams.Builder().message(message).build()
+            val request = SendStreamingMessageRequest.Builder()
+                .jsonrpc(JSONRPCRequest.JSONRPC_VERSION)
+                .method(SendStreamingMessageRequest.METHOD)
+                .id("stream-123")
+                .params(params)
+                .build()
+
+            // Note: We can't fully test SSE with MockMvc in a standard way
+            // This test just verifies the endpoint accepts the streaming request without error
+            mockMvc.post("/a2a") {
+                contentType = MediaType.APPLICATION_JSON
+                content = embabelObjectMapperHolder.get().writeValueAsString(request)
+            }
+                .andExpect {
+                    status().isOk()
+                }
+        }
+
+        @Test
+        fun `should handle tasks resubscribe request`() {
+            val resubscribeRequest = mapOf(
+                "jsonrpc" to "2.0",
+                "id" to "req-456",
+                "method" to "tasks/resubscribe",
+                "params" to mapOf("id" to "task-123")
+            )
+
+            // Note: This will fail if task doesn't exist, which is expected
+            // We're just testing that the endpoint is routed correctly
+            mockMvc.post("/a2a") {
+                contentType = MediaType.APPLICATION_JSON
+                content = embabelObjectMapperHolder.get().writeValueAsString(resubscribeRequest)
+            }
+                .andExpect {
+                    // Should return 200 even if task not found (SSE stream will error)
+                    status().isOk()
+                }
+        }
+    }
+
+    @Nested
+    @Disabled
+    inner class TaskTests {
+        @Test
+        fun `should get task`() {
+            val params = TaskQueryParams("task-123")
+
+            val result = mockMvc.post("/a2a/tasks/get") {
+                contentType = MediaType.APPLICATION_JSON
+                content = embabelObjectMapperHolder.get().writeValueAsString(params)
+            }
+                .andExpect {
+                    status().isOk()
+                    content { contentType(MediaType.APPLICATION_JSON) }
+                }.andReturn()
+
+            val content = result.response.contentAsString
+            val response = embabelObjectMapperHolder.get().readValue(content, GetTaskResponse::class.java)
+
+            assertNotNull(response)
+            assertEquals("task-123", response.id)
+
+            val task = embabelObjectMapperHolder.get().convertValue(response.result, Task::class.java)
+            assertEquals("task-123", task.id)
+            assertEquals("ctx-1", task.contextId)
+            assertEquals(TaskState.COMPLETED, task.status.state)
+        }
+
+        @Test
+        fun `should cancel task`() {
+            val params = TaskIdParams("task-123")
+
+            val result = mockMvc.post("/a2a/tasks/cancel") {
+                contentType = MediaType.APPLICATION_JSON
+                content = embabelObjectMapperHolder.get().writeValueAsString(params)
+            }
+                .andExpect {
+                    status().isOk()
+                    content { contentType(MediaType.APPLICATION_JSON) }
+                }.andReturn()
+
+            val content = result.response.contentAsString
+            val response = embabelObjectMapperHolder.get().readValue(content, CancelTaskResponse::class.java)
+
+            assertNotNull(response)
+            assertEquals("task-123", response.id)
+
+            val task = embabelObjectMapperHolder.get().convertValue(response.result, Task::class.java)
+            assertEquals("task-123", task.id)
+            assertEquals("ctx-1", task.contextId)
+            assertEquals(TaskState.CANCELED, task.status.state)
+        }
+    }
+
+    @Nested
+    @Disabled
+    inner class PushNotificationTests {
+        @Test
+        fun `should set push notification config`() {
+            val config = PushNotificationConfig(
+                "https://client/notify",
+                "test-token",
+                PushNotificationAuthenticationInfo(
+                    listOf("Bearer"),
+                    "test-secret"
+                ),
+                null
+            )
+            val params = TaskPushNotificationConfig(
+                "task-123",
+                config
+            )
+
+            val result = mockMvc.post("/a2a/tasks/pushNotificationConfig/set") {
+                contentType = MediaType.APPLICATION_JSON
+                content = embabelObjectMapperHolder.get().writeValueAsString(params)
+            }
+                .andExpect {
+                    status().isOk()
+                    content { contentType(MediaType.APPLICATION_JSON) }
+                }.andReturn()
+
+            val content = result.response.contentAsString
+            val response = embabelObjectMapperHolder.get().readValue(content, SetTaskPushNotificationConfigResponse::class.java)
+
+            assertNotNull(response)
+            assertEquals("task-123", response.id)
+
+            val resultConfig = embabelObjectMapperHolder.get().convertValue(response.result, TaskPushNotificationConfig::class.java)
+            assertEquals("task-123", resultConfig.taskId)
+            assertEquals("https://client/notify", resultConfig.pushNotificationConfig.url)
+            assertEquals("test-token", resultConfig.pushNotificationConfig.token)
+            assertEquals(listOf("Bearer"), resultConfig.pushNotificationConfig.authentication?.schemes)
+            assertEquals("test-secret", resultConfig.pushNotificationConfig.authentication?.credentials)
+        }
+
+        @Test
+        fun `should get push notification config`() {
+            val params = TaskIdParams("task-123")
+
+            val result = mockMvc.post("/a2a/tasks/pushNotificationConfig/get") {
+                contentType = MediaType.APPLICATION_JSON
+                content = embabelObjectMapperHolder.get().writeValueAsString(params)
+            }
+                .andExpect {
+                    status().isOk()
+                    content { contentType(MediaType.APPLICATION_JSON) }
+                }.andReturn()
+
+            val content = result.response.contentAsString
+            val response = embabelObjectMapperHolder.get().readValue(content, GetTaskPushNotificationConfigResponse::class.java)
+
+            assertNotNull(response)
+            assertEquals("task-123", response.id)
+
+            val config = embabelObjectMapperHolder.get().convertValue(response.result, TaskPushNotificationConfig::class.java)
+            assertEquals("task-123", config.taskId)
+            assertEquals("https://client/notify", config.pushNotificationConfig.url)
+            assertEquals("demo-token", config.pushNotificationConfig.token)
+            assertEquals(listOf("Bearer"), config.pushNotificationConfig.authentication?.schemes)
+            assertEquals("secret", config.pushNotificationConfig.authentication?.credentials)
+        }
+    }
+}

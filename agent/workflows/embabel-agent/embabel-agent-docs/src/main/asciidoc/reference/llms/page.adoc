@@ -1,0 +1,1300 @@
+[[reference.llms]]
+=== Working with LLMs
+
+Embabel supports any LLM supported by Spring AI.
+In practice, this is just about any LLM.
+
+==== Choosing an LLM
+
+Embabel encourages you to think about LLM choice for every LLM invocation.
+The `PromptRunner` interface makes this easy.
+Because Embabel enables you to break agentic flows up into multiple action steps, each step can use a smaller, focused prompt with fewer tools.
+This means it may be able to use a smaller LLM.
+
+Considerations:
+
+- **Consider the complexity of the return type you expect** from the LLM.
+This is typically a good proxy for determining required LLM quality.
+A small LLM is likely to struggle with a deeply nested return structure.
+- **Consider the nature of the task.** LLMs have different strengths; review any available documentation.
+You don't necessarily need a huge, expensive model that is good at nearly everything, at the cost of your wallet and the environment.
+- **Consider the sophistication of tool calling required**.
+Simple tool calls are fine, but complex orchestration is another indicator you'll need a strong LLM.
+(It may also be an indication that you should create a more sophisticated flow using Embabel GOAP.)
+- **Consider trying a local LLM** running under Ollama or Docker.
+
+TIP: Trial and error is your friend.
+Embabel makes it easy to switch LLMs; try the cheapest thing that could work and switch if it doesn't.
+
+[[reference.llms.smaller-models]]
+==== Tuning for Smaller and Local Models
+
+A core goal of Embabel is to make agentic flows work well across the full range of LLMs, so you can choose the cheapest, smallest, or most private model that does the job — rather than always reaching for a frontier model.
+Smaller chat models behave differently from frontier models in ways that the framework can compensate for:
+
+- **Silent failures after tool calls.** Weaker open-weights models (e.g. `gpt-oss-20b`, some Qwen variants) sometimes return blank text with no further tool calls when they don't know how to proceed. Without intervention the tool loop exits with empty content. Activate `embabel.agent.platform.toolloop.empty-response.max-retries: 1` to feed a synthetic nudge back to the model and give it one more chance — see <<reference.configuration.empty-response>>.
+- **Tool-name confusion.** Smaller models more frequently call tools by approximate names. The default `AutoCorrectionPolicy` handles this by feeding back a "did you mean X?" suggestion; tune `embabel.agent.platform.toolloop.tool-not-found.max-retries` if your model needs more attempts.
+- **Iteration headroom.** Recovery costs LLM calls. If you enable retry policies, raise `embabel.agent.platform.toolloop.max-iterations` so a turn that needs an extra round trip doesn't run out of budget.
+
+These settings are off-by-default so existing deployments using strong models behave exactly as before.
+Turn them on per-deployment when the model you've picked benefits from them.
+
+
+[[reference.llms.custom-integration]]
+==== Advanced: Custom LLM Integration
+
+NOTE: If you want to use a standard provider (Anthropic, OpenAI, DeepSeek, Mistral) with a
+user-supplied key at runtime, see <<reference.customizing.byok>>.
+That is the recommended path for BYOK scenarios.
+This section covers implementing `LlmMessageSender` from scratch for providers not otherwise
+supported by Embabel.
+
+Embabel's tool loop is framework-agnostic, allowing you to integrate any LLM provider by implementing the `LlmMessageSender` interface.
+This is useful when:
+
+- You want to use an LLM provider not supported by Spring AI
+- You need custom request/response handling
+- You're integrating with a proprietary or internal LLM service
+
+===== The LlmMessageSender Interface
+
+The core abstraction is the `LlmMessageSender` functional interface:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+@FunctionalInterface
+public interface LlmMessageSender {
+    LlmMessageResponse call(
+        List<Message> messages,
+        List<Tool> tools
+    );
+}
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+fun interface LlmMessageSender {
+    fun call(
+        messages: List<Message>,
+        tools: List<Tool>,
+    ): LlmMessageResponse
+}
+----
+====
+
+The implementation makes a single LLM inference call and returns the response.
+Importantly, it does **not** execute tools--it only returns any tool call requests from the LLM.
+Tool execution is handled by Embabel's `DefaultToolLoop`.
+
+NOTE: Even more advanced control over tools execution is available - tools can be executed in parallel, controlled by  `ParallelToolLoop`. In order to activate `ParallelToolLoop`, please set the following parameter:
+```
+embabel.agent.platform.toolloop.type=parallel
+```
+
+For full list of tool loop configuration parameters please refer to `ToolLoopConfiguration`.
+
+===== Tool-Not-Found Recovery Policy
+
+When the LLM calls a tool by a name that doesn't exist in the available set, the behavior is controlled by `ToolNotFoundPolicy`.
+
+Two built-in policies are provided:
+
+- **`AutoCorrectionPolicy`** (default) — feeds the error back to the LLM so it can self-correct. Uses case-insensitive fuzzy matching to suggest corrections for hallucinated tool names (e.g., `ragbot_vectorSearch` → suggests `vectorSearch`). When multiple candidates match, all are listed. Throws `ToolNotFoundException` after 3 consecutive failures.
+- **`ImmediateThrowPolicy`** — throws `ToolNotFoundException` immediately.
+
+The system-wide default is `AutoCorrectionPolicy`, provided as a Spring bean with `@ConditionalOnMissingBean`.
+To override it globally, define your own `ToolNotFoundPolicy` bean.
+
+For per-interaction control, use `withToolNotFoundPolicy()` on `PromptRunner`:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+promptRunner
+    .withToolNotFoundPolicy(new AutoCorrectionPolicy(5))
+    .creating(MyOutput.class)
+    .create(messages);
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+promptRunner
+    .withToolNotFoundPolicy(AutoCorrectionPolicy(maxRetries = 5))
+    .creating(MyOutput::class.java)
+    .create(messages)
+----
+====
+
+Custom policies can be implemented by implementing the `ToolNotFoundPolicy` interface:
+
+[source,kotlin]
+----
+class MyEditDistancePolicy : ToolNotFoundPolicy {
+    override fun handle(requestedName: String, availableTools: List<Tool>): ToolNotFoundAction {
+        // Custom recovery logic, e.g. edit-distance matching
+        ...
+    }
+}
+----
+
+===== Response Types
+
+The `LlmMessageResponse` contains:
+
+- `message`: The LLM's response as an Embabel `Message`
+- `textContent`: Text content from the response
+- `usage`: Optional token usage information
+
+For responses that include tool calls, return an `AssistantMessageWithToolCalls`:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+public record ToolCall(
+    String id,         // Unique identifier for the tool call
+    String name,       // Name of the tool to invoke
+    String arguments   // JSON arguments for the tool
+) {}
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+data class ToolCall(
+    val id: String,      // Unique identifier for the tool call
+    val name: String,    // Name of the tool to invoke
+    val arguments: String, // JSON arguments for the tool
+)
+----
+====
+
+===== Example: Custom LLM Provider
+
+Here's an example of implementing `LlmMessageSender` for a hypothetical HTTP-based LLM API:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+public class MyCustomLlmMessageSender implements LlmMessageSender {
+
+    private final HttpClient httpClient;
+    private final String apiKey;
+    private final String model;
+
+    public MyCustomLlmMessageSender(HttpClient httpClient, String apiKey, String model) {
+        this.httpClient = httpClient;
+        this.apiKey = apiKey;
+        this.model = model;
+    }
+
+    @Override
+    public LlmMessageResponse call(List<Message> messages, List<Tool> tools) {
+        // Convert Embabel messages to your API's format
+        List<Map<String, Object>> apiMessages = messages.stream()
+            .map(message -> Map.<String, Object>of(
+                "role", message.getRole().name().toLowerCase(),
+                "content", message.getTextContent()
+            ))
+            .toList();
+
+        // Convert tool definitions to your API's format
+        List<Map<String, Object>> apiTools = tools.stream()
+            .map(tool -> Map.<String, Object>of(
+                "name", tool.getDefinition().getName(),
+                "description", tool.getDefinition().getDescription(),
+                "parameters", tool.getDefinition().getInputSchema().jsonSchema()
+            ))
+            .toList();
+
+        // Make API request (using your preferred HTTP client)
+        MyApiResponse responseBody = httpClient.post("https://api.my-llm.com/chat")
+            .header("Authorization", "Bearer " + apiKey)
+            .body(Map.of(
+                "model", model,
+                "messages", apiMessages,
+                "tools", apiTools.isEmpty() ? null : apiTools
+            ))
+            .execute(MyApiResponse.class);
+
+        // Check if LLM requested tool calls
+        List<ToolCall> toolCalls = null;
+        if (responseBody.getToolCalls() != null) {
+            toolCalls = responseBody.getToolCalls().stream()
+                .map(call -> new ToolCall(
+                    call.getId(),
+                    call.getFunction().getName(),
+                    call.getFunction().getArguments()
+                ))
+                .toList();
+        }
+
+        Message embabelMessage;
+        if (toolCalls == null || toolCalls.isEmpty()) {
+            embabelMessage = new AssistantMessage(
+                responseBody.getContent() != null ? responseBody.getContent() : ""
+            );
+        } else {
+            embabelMessage = new AssistantMessageWithToolCalls(
+                responseBody.getContent() != null ? responseBody.getContent() : "",
+                toolCalls
+            );
+        }
+
+        Usage usage = null;
+        if (responseBody.getUsage() != null) {
+            usage = new Usage(
+                responseBody.getUsage().getPromptTokens(),
+                responseBody.getUsage().getCompletionTokens()
+            );
+        }
+
+        return new LlmMessageResponse(embabelMessage, responseBody.getContent(), usage);
+    }
+}
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+class MyCustomLlmMessageSender(
+    private val httpClient: HttpClient,
+    private val apiKey: String,
+    private val model: String,
+) : LlmMessageSender {
+
+    override fun call(
+        messages: List<Message>,
+        tools: List<Tool>,
+    ): LlmMessageResponse {
+        // Convert Embabel messages to your API's format
+        val apiMessages = messages.map { message ->
+            mapOf(
+                "role" to message.role.name.lowercase(),
+                "content" to message.textContent
+            )
+        }
+
+        // Convert tool definitions to your API's format
+        val apiTools = tools.map { tool ->
+            mapOf(
+                "name" to tool.definition.name,
+                "description" to tool.definition.description,
+                "parameters" to tool.definition.inputSchema.jsonSchema()
+            )
+        }
+
+        // Make API request
+        val response = httpClient.post("https://api.my-llm.com/chat") {
+            header("Authorization", "Bearer $apiKey")
+            body = mapOf(
+                "model" to model,
+                "messages" to apiMessages,
+                "tools" to apiTools.ifEmpty { null }
+            )
+        }
+
+        // Parse response and convert to Embabel types
+        val responseBody = response.body<MyApiResponse>()
+
+        // Check if LLM requested tool calls
+        val toolCalls = responseBody.toolCalls?.map { call ->
+            ToolCall(
+                id = call.id,
+                name = call.function.name,
+                arguments = call.function.arguments
+            )
+        }
+
+        val embabelMessage = if (toolCalls.isNullOrEmpty()) {
+            AssistantMessage(responseBody.content ?: "")
+        } else {
+            AssistantMessageWithToolCalls(
+                content = responseBody.content ?: "",
+                toolCalls = toolCalls
+            )
+        }
+
+        return LlmMessageResponse(
+            message = embabelMessage,
+            textContent = responseBody.content ?: "",
+            usage = responseBody.usage?.let { u ->
+                Usage(
+                    inputTokens = u.promptTokens,
+                    outputTokens = u.completionTokens,
+                )
+            }
+        )
+    }
+}
+----
+====
+
+===== Creating an LlmService
+
+To make your custom LLM available through Embabel's `ModelProvider`, implement the `LlmService` interface:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+public class MyCustomLlmService implements LlmService<MyCustomLlmService> {
+
+    private final String name;
+    private final String provider;
+    private final HttpClient httpClient;
+    private final String apiKey;
+    private final LocalDate knowledgeCutoffDate;
+    private final List<PromptContributor> promptContributors;
+    private final PricingModel pricingModel;
+
+    public MyCustomLlmService(
+            String name,
+            String provider,
+            HttpClient httpClient,
+            String apiKey,
+            LocalDate knowledgeCutoffDate,
+            PricingModel pricingModel) {
+        this.name = name;
+        this.provider = provider;
+        this.httpClient = httpClient;
+        this.apiKey = apiKey;
+        this.knowledgeCutoffDate = knowledgeCutoffDate;
+        this.promptContributors = knowledgeCutoffDate != null
+            ? List.of(new KnowledgeCutoffDate(knowledgeCutoffDate))
+            : List.of();
+        this.pricingModel = pricingModel;
+    }
+
+    @Override
+    public String getName() { return name; }
+
+    @Override
+    public String getProvider() { return provider; }
+
+    @Override
+    public LocalDate getKnowledgeCutoffDate() { return knowledgeCutoffDate; }
+
+    @Override
+    public List<PromptContributor> getPromptContributors() { return promptContributors; }
+
+    @Override
+    public PricingModel getPricingModel() { return pricingModel; }
+
+    @Override
+    public LlmMessageSender createMessageSender(LlmOptions options) {
+        return new MyCustomLlmMessageSender(
+            httpClient,
+            apiKey,
+            options.getModel() != null ? options.getModel() : name
+        );
+    }
+
+    @Override
+    public MyCustomLlmService withKnowledgeCutoffDate(LocalDate date) {
+        return new MyCustomLlmService(name, provider, httpClient, apiKey, date, pricingModel);
+    }
+
+    @Override
+    public MyCustomLlmService withPromptContributor(PromptContributor promptContributor) {
+        var newContributors = new ArrayList<>(promptContributors);
+        newContributors.add(promptContributor);
+        return new MyCustomLlmService(
+            name, provider, httpClient, apiKey, knowledgeCutoffDate,
+            newContributors, pricingModel
+        );
+    }
+}
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+data class MyCustomLlmService(
+    override val name: String,
+    override val provider: String,
+    private val httpClient: HttpClient,
+    private val apiKey: String,
+    override val knowledgeCutoffDate: LocalDate? = null,
+    override val promptContributors: List<PromptContributor> =
+        buildList { knowledgeCutoffDate?.let { add(KnowledgeCutoffDate(it)) } },
+    override val pricingModel: PricingModel? = null,
+) : LlmService<MyCustomLlmService> {
+
+    override fun createMessageSender(options: LlmOptions): LlmMessageSender {
+        return MyCustomLlmMessageSender(
+            httpClient = httpClient,
+            apiKey = apiKey,
+            model = options.model ?: name,
+        )
+    }
+
+    override fun withKnowledgeCutoffDate(date: LocalDate): MyCustomLlmService =
+        copy(
+            knowledgeCutoffDate = date,
+            promptContributors = promptContributors + KnowledgeCutoffDate(date)
+        )
+
+    override fun withPromptContributor(promptContributor: PromptContributor): MyCustomLlmService =
+        copy(promptContributors = promptContributors + promptContributor)
+}
+----
+====
+
+Then register it as a Spring bean:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+@Configuration
+public class MyLlmConfiguration {
+
+    @Bean
+    public LlmService<?> myCustomLlm(
+            HttpClient httpClient,
+            @Value("${my-llm.api-key}") String apiKey) {
+        return new MyCustomLlmService(
+            "my-custom-model",
+            "MyProvider",
+            httpClient,
+            apiKey,
+            LocalDate.of(2024, 12, 1),
+            null
+        );
+    }
+}
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+@Configuration
+class MyLlmConfiguration {
+
+    @Bean
+    fun myCustomLlm(
+        httpClient: HttpClient,
+        @Value("\${my-llm.api-key}") apiKey: String,
+    ): LlmService<*> = MyCustomLlmService(
+        name = "my-custom-model",
+        provider = "MyProvider",
+        httpClient = httpClient,
+        apiKey = apiKey,
+        knowledgeCutoffDate = LocalDate.of(2024, 12, 1),
+    )
+}
+----
+====
+
+The bean will be automatically discovered and made available through the `ModelProvider`.
+
+===== How Model Discovery and Selection Works
+
+When your application starts, `ConfigurableModelProvider` collects all `LlmService` beans from the Spring application context.
+Your custom LLM is matched by the `name` property you set on your `LlmService` implementation.
+
+**By name**: Use the `name` from your `LlmService` directly.
+This works with `@LlmCall`, `ai.withLlm()`, and `AgenticTool.withLlm()`:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+// In a declarative action
+@LlmCall(llm = "my-custom-model")
+String myAction();
+
+// In an imperative action
+ai.withLlm("my-custom-model")
+    .create("Tell me a joke", String.class);
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+// In a declarative action
+@LlmCall(llm = "my-custom-model")
+fun myAction(): String
+
+// In an imperative action
+ai.withLlm("my-custom-model")
+    .create<String>("Tell me a joke")
+----
+====
+
+**By role**: Map a role name to your model name in configuration, then reference it with the `#` prefix:
+
+[source,yaml]
+----
+embabel:
+  models:
+    default-llm: my-custom-model  # <1>
+    llms:
+      best: my-custom-model       # <2>
+      cheapest: my-small-model    # <3>
+----
+<1> Sets the default LLM used when no explicit model is specified
+<2> Maps the `best` role to your custom model
+<3> Maps the `cheapest` role to a different model
+
+Then reference roles with `#`:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+// By role
+@LlmCall(llm = "#best")
+String myAction();
+
+// Or programmatically
+ai.withLlmByRole("best")
+    .create("Tell me a joke", String.class);
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+// By role
+@LlmCall(llm = "#best")
+fun myAction(): String
+
+// Or programmatically
+ai.withLlmByRole("best")
+    .create<String>("Tell me a joke")
+----
+====
+
+NOTE: If no LLM is specified in `@LlmCall` or `withLlm()`, the `default-llm` from configuration is used.
+
+===== Using Your Custom Implementation (Alternative)
+
+If you need more control over the LLM operations layer itself, you can extend `ToolLoopLlmOperations`:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+public class MyCustomLlmOperations extends ToolLoopLlmOperations {
+
+    private final HttpClient httpClient;
+    private final String apiKey;
+
+    public MyCustomLlmOperations(
+            HttpClient httpClient,
+            String apiKey,
+            ModelProvider modelProvider,
+            ToolDecorator toolDecorator,
+            Validator validator) {
+        super(modelProvider, toolDecorator, validator);
+        this.httpClient = httpClient;
+        this.apiKey = apiKey;
+    }
+
+    @Override
+    protected LlmMessageSender createMessageSender(LlmService<?> llm, LlmOptions options) {
+        return new MyCustomLlmMessageSender(
+            httpClient,
+            apiKey,
+            options.getModel() != null ? options.getModel() : "default-model"
+        );
+    }
+}
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+class MyCustomLlmOperations(
+    private val httpClient: HttpClient,
+    private val apiKey: String,
+    modelProvider: ModelProvider,
+    toolDecorator: ToolDecorator,
+    validator: Validator,
+) : ToolLoopLlmOperations(
+    modelProvider = modelProvider,
+    toolDecorator = toolDecorator,
+    validator = validator,
+) {
+    override fun createMessageSender(
+        llm: LlmService<*>,
+        options: LlmOptions,
+    ): LlmMessageSender {
+        return MyCustomLlmMessageSender(
+            httpClient = httpClient,
+            apiKey = apiKey,
+            model = options.model ?: "default-model",
+        )
+    }
+}
+----
+====
+
+The `ToolLoopLlmOperations` base class provides several extension points:
+
+- `createMessageSender()`: Create the LLM communication layer
+- `createOutputConverter()`: Parse LLM responses into typed objects
+- `sanitizeStringOutput()`: Clean up raw text responses
+- `emitCallEvent()`: Emit observability events
+
+===== Key Implementation Notes
+
+1. **Tool calls are not executed by your sender.** Just return the tool call requests--Embabel's tool loop handles execution and continuation.
+
+2. **Handle both tool and non-tool responses.** Return `AssistantMessage` for plain text, `AssistantMessageWithToolCalls` when the LLM wants to invoke tools.
+
+3. **Include usage information when available.** This enables cost tracking and observability.
+
+4. **Message types matter.** The tool loop expects specific message types:
+   - `UserMessage`: User input
+   - `SystemMessage`: System prompts
+   - `AssistantMessage`: LLM text response
+   - `AssistantMessageWithToolCalls`: LLM response with tool requests
+   - `ToolResultMessage`: Result returned to LLM after tool execution
+
+
+==== Advanced: Custom Embedding Service
+
+Just as you can integrate a custom LLM, you can implement a custom embedding service that doesn't depend on Spring AI.
+This is useful when:
+
+- You want to use an embedding provider not supported by Spring AI
+- You need custom pre/post-processing of embeddings
+- You're integrating with a proprietary or internal embedding API
+
+===== The EmbeddingService Interface
+
+The `EmbeddingService` interface is framework-agnostic.
+Unlike `SpringAiEmbeddingService`, a custom implementation does not need to wrap a Spring AI `EmbeddingModel`:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+public interface EmbeddingService {
+    float[] embed(String text);
+    List<float[]> embed(List<String> texts);
+    int getDimensions();
+    String getName();
+    String getProvider();
+}
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+interface EmbeddingService : EmbeddingServiceMetadata, HasInfoString {
+    fun embed(text: String): FloatArray
+    fun embed(texts: List<String>): List<FloatArray>
+    val dimensions: Int
+}
+----
+====
+
+===== Example: Custom Embedding Provider
+
+Here's an example of implementing `EmbeddingService` for an HTTP-based embedding API:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+public class MyCustomEmbeddingService implements EmbeddingService {
+
+    private final String name;
+    private final String provider;
+    private final int dimensions;
+    private final HttpClient httpClient;
+    private final String apiKey;
+
+    public MyCustomEmbeddingService(
+            String name,
+            String provider,
+            int dimensions,
+            HttpClient httpClient,
+            String apiKey) {
+        this.name = name;
+        this.provider = provider;
+        this.dimensions = dimensions;
+        this.httpClient = httpClient;
+        this.apiKey = apiKey;
+    }
+
+    @Override
+    public String getName() { return name; }
+
+    @Override
+    public String getProvider() { return provider; }
+
+    @Override
+    public int getDimensions() { return dimensions; }
+
+    @Override
+    public float[] embed(String text) {
+        return embed(List.of(text)).get(0);
+    }
+
+    @Override
+    public List<float[]> embed(List<String> texts) {
+        MyEmbeddingResponse response = httpClient
+            .post("https://api.my-embeddings.com/embed")
+            .header("Authorization", "Bearer " + apiKey)
+            .body(Map.of("texts", texts, "model", name))
+            .execute(MyEmbeddingResponse.class);
+        return response.getEmbeddings();
+    }
+}
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+class MyCustomEmbeddingService(
+    override val name: String,
+    override val provider: String,
+    override val dimensions: Int,
+    private val httpClient: HttpClient,
+    private val apiKey: String,
+) : EmbeddingService {
+
+    override fun embed(text: String): FloatArray =
+        embed(listOf(text)).first()
+
+    override fun embed(texts: List<String>): List<FloatArray> {
+        val response = httpClient.post("https://api.my-embeddings.com/embed") {
+            header("Authorization", "Bearer $apiKey")
+            body = mapOf("texts" to texts, "model" to name)
+        }
+        return response.body<MyEmbeddingResponse>().embeddings
+    }
+}
+----
+====
+
+===== Registering as a Spring Bean
+
+Register your custom embedding service as a Spring bean and it will be automatically discovered:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+@Configuration
+public class MyEmbeddingConfiguration {
+
+    @Bean
+    public EmbeddingService myCustomEmbeddings(
+            HttpClient httpClient,
+            @Value("${my-embeddings.api-key}") String apiKey) {
+        return new MyCustomEmbeddingService(
+            "my-custom-embeddings",
+            "MyProvider",
+            384,
+            httpClient,
+            apiKey
+        );
+    }
+}
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+@Configuration
+class MyEmbeddingConfiguration {
+
+    @Bean
+    fun myCustomEmbeddings(
+        httpClient: HttpClient,
+        @Value("\${my-embeddings.api-key}") apiKey: String,
+    ): EmbeddingService = MyCustomEmbeddingService(
+        name = "my-custom-embeddings",
+        provider = "MyProvider",
+        dimensions = 384,
+        httpClient = httpClient,
+        apiKey = apiKey,
+    )
+}
+----
+====
+
+===== Discovery and Selection
+
+Custom embedding services follow the same discovery and selection pattern as LLMs (see <<How Model Discovery and Selection Works>>).
+
+**By name**: Use `ai.withEmbeddingService()` with the `name` from your implementation:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+ai.withEmbeddingService("my-custom-embeddings")
+    .embed("Hello world");
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+ai.withEmbeddingService("my-custom-embeddings")
+    .embed("Hello world")
+----
+====
+
+**By role**: Map a role name to your embedding service in configuration:
+
+[source,yaml]
+----
+embabel:
+  models:
+    default-embedding-model: my-custom-embeddings  # <1>
+    embedding-services:
+      cheapest: my-custom-embeddings               # <2>
+----
+<1> Sets the default embedding service
+<2> Maps the `cheapest` role to your custom embedding service
+
+
+[[reference.llms.anthropic-caching]]
+==== Advanced Caching with Anthropic
+
+While many providers have implicit caching managed internally, Anthropic exposes public APIs for explicit prompt caching control.
+This allows you to optimize costs and latency for applications with long prompts, many tools, or extended conversations.
+
+===== Motivation
+
+Anthropic's prompt caching feature provides significant benefits:
+
+- **Cost savings**: Cache reads cost 90% less than regular input tokens
+- **Latency improvements**: Cached content is processed faster
+- **Ideal for**: Long system prompts, extensive tool definitions, multi-turn conversations
+
+Without caching, every API call processes the entire prompt from scratch.
+With caching, repeated content (system prompts, tools, conversation history) can be cached and reused across requests.
+
+===== How It Works
+
+Anthropic caches the trailing portion of your prompt context.
+The cache is identified by an exact match of the content hashcode.
+Any change to the cached portion invalidates the cache.
+
+**Key concepts:**
+
+- **Cache creation**: First time content is seen, it's written to cache with a 25% premium over regular input tokens (for 5-minute TTL)
+- **Cache reads**: Subsequent requests with matching content read from cache at 10% of regular input token cost
+- **Cache TTL**: 5 minutes (default) or 1 hour (premium, higher creation cost)
+- **Minimum size**: 1024 tokens for older models, 4096 tokens for Claude Sonnet 4.5 and newer.
+
+===== Cache Strategies
+
+Embabel provides several caching strategies through `AnthropicCachingConfig`:
+
+**System Prompt Caching**
+
+Cache the system prompt for reuse across multiple requests:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+AnthropicCachingConfig cachingConfig = new AnthropicCachingConfig();
+cachingConfig.setSystemPrompt(true);
+
+LlmOptions options = LlmOptions.withDefaultLlm();
+options = withAnthropicCaching(options, cachingConfig);
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+val options = LlmOptions.withDefaultLlm()
+    .withAnthropicCaching(systemPrompt = true)
+----
+====
+
+**Tools Caching**
+
+Cache tool definitions when using many tools or tools with large schemas:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+AnthropicCachingConfig cachingConfig = new AnthropicCachingConfig();
+cachingConfig.setTools(true);
+
+LlmOptions options = LlmOptions.withDefaultLlm();
+options = withAnthropicCaching(options, cachingConfig);
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+val options = LlmOptions.withDefaultLlm()
+    .withAnthropicCaching(tools = true)
+----
+====
+
+**System + Tools Caching**
+
+Combine both strategies:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+AnthropicCachingConfig cachingConfig = new AnthropicCachingConfig();
+cachingConfig.setSystemPrompt(true);
+cachingConfig.setTools(true);
+
+LlmOptions options = LlmOptions.withDefaultLlm();
+options = withAnthropicCaching(options, cachingConfig);
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+val options = LlmOptions.withDefaultLlm()
+    .withAnthropicCaching(
+        systemPrompt = true,
+        tools = true
+    )
+----
+====
+
+**Conversation History Caching**
+
+Cache conversation history for long multi-turn conversations:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+AnthropicCachingConfig cachingConfig = new AnthropicCachingConfig();
+cachingConfig.setConversationHistory(true);
+
+LlmOptions options = LlmOptions.withDefaultLlm();
+options = withAnthropicCaching(options, cachingConfig);
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+val options = LlmOptions.withDefaultLlm()
+    .withAnthropicCaching(conversationHistory = true)
+----
+====
+
+===== Advanced Configuration
+
+**Message Type Minimum Content Length**
+
+Control which messages are eligible for caching based on their content length:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+AnthropicCachingConfig cachingConfig = new AnthropicCachingConfig();
+cachingConfig.setSystemPrompt(true);
+cachingConfig.messageTypeMinContentLength(MessageRole.SYSTEM, 1024);
+cachingConfig.messageTypeMinContentLength(MessageRole.USER, 512);
+
+LlmOptions options = LlmOptions.withDefaultLlm();
+options = withAnthropicCaching(options, cachingConfig);
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+val options = LlmOptions.withDefaultLlm()
+    .withAnthropicCaching(
+        AnthropicCachingConfig(systemPrompt = true)
+            .messageTypeMinContentLength(MessageRole.SYSTEM, 1024)
+            .messageTypeMinContentLength(MessageRole.USER, 512)
+    )
+----
+====
+
+**Message Type TTL**
+
+Set cache TTL per message type (default is 5 minutes):
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+AnthropicCachingConfig cachingConfig = new AnthropicCachingConfig();
+cachingConfig.setSystemPrompt(true);
+cachingConfig.messageTypeTtl(MessageRole.SYSTEM, AnthropicCacheTtl.ONE_HOUR);
+
+LlmOptions options = LlmOptions.withDefaultLlm();
+options = withAnthropicCaching(options, cachingConfig);
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+val options = LlmOptions.withDefaultLlm()
+    .withAnthropicCaching(
+        AnthropicCachingConfig(systemPrompt = true)
+            .messageTypeTtl(MessageRole.SYSTEM, AnthropicCacheTtl.ONE_HOUR)
+    )
+----
+====
+
+===== Accessing Cache Metrics
+
+Embabel provides extension methods to access Anthropic-specific cache metrics from the `Usage` object:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+import static com.embabel.agent.config.models.anthropic.AnthropicUsage.*;
+
+AssistantMessage response = promptRunner.respond(messages);
+Usage usage = response.getUsage();
+
+// Check if cache was created or read
+boolean cacheCreated = hasAnthropicCacheCreation(usage);
+boolean cacheRead = hasAnthropicCacheRead(usage);
+
+// Get token counts
+Integer creationTokens = anthropicCacheCreationTokens(usage);
+Integer readTokens = anthropicCacheReadTokens(usage);
+
+// Get summary string for logging
+String summary = anthropicCacheSummary(usage);
+// Example output: "cache[creation=1061, read=0]"
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+val response = promptRunner.respond(messages)
+val usage = response.usage
+
+// Check if cache was created or read
+val cacheCreated = usage.hasAnthropicCacheCreation()
+val cacheRead = usage.hasAnthropicCacheRead()
+
+// Get token counts
+val creationTokens = usage.anthropicCacheCreationTokens()
+val readTokens = usage.anthropicCacheReadTokens()
+
+// Get summary string for logging
+val summary = usage.anthropicCacheSummary()
+// Example output: "cache[creation=1061, read=0]"
+----
+====
+
+===== Best Practices
+
+1. **Cache long, stable content**: System prompts and tool definitions that don't change frequently are ideal candidates
+2. **Mind the minimum size**: Content must meet the minimum token requirement (1024 or 4096 depending on model)
+3. **Monitor cache metrics**: Use the cache extension methods to track cache hit rates and validate savings
+4. **Consider TTL vs cost**: 1-hour TTL has higher creation cost but better for longer sessions
+5. **Test before deploying**: Cache behavior can vary based on prompt structure and usage patterns
+
+===== Reference
+
+For complete details on Anthropic's prompt caching, see:
+https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
+
+
+[[reference.llms.native-structured-output]]
+==== Advanced Feature: Native Structured Output
+
+Native structured output enables the model provider to enforce a JSON Schema directly, rather than relying only on prompt instructions and Embabel's object construction.
+E**mbabel still owns schema generation and object binding**; the native provider path is an optimization and compatibility feature used only when it is explicitly supported and safe for the call.
+
+===== Payload Format
+
+For OpenAI-compatible providers, Spring AI wraps Embabel's schema in a `response_format` JSON schema payload.
+For example, a `MonthItem` object can produce a request fragment like:
+
+[source,json]
+----
+{
+  "response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "MonthItem",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "temperature": { "type": "integer" }
+        },
+        "required": [ "name", "temperature" ],
+        "additionalProperties": false
+      }
+    }
+  },
+}
+----
+
+OpenAI validates this schema before generation.
+If the schema is not valid for the provider-native path, the request fails before the model produces output.
+
+===== Participants Roles
+
+- **Embabel** generates the JSON Schema, decides whether the native path is enabled for a call, and parses the final response into the requested object.
+- **Spring AI** wraps Embabel's schema into provider-specific format options, such as OpenAI's `response_format`, and serializes the HTTP request.
+- **The provider** such as OpenAI validates the native structured-output payload and returns output that matches the accepted schema.
+
+===== Configuration and API
+
+Native structured output is advertised in model metadata:
+
+[source,yaml]
+----
+native_support_defaults:
+  structured_output:
+    supported: true
+    strategy: response_format
+    strict: false
+    prompt_instructions: include
+----
+
+For a specific call, enable it through `LlmOptions`:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+PromptRunner runner = ai.withLlm(
+        withNativeStructuredOutput(
+                LlmOptions.fromCriteria(DefaultModelSelectionCriteria.INSTANCE),
+                NativeStructuredOutputMode.ENABLED
+        )
+);
+
+MonthItem result = runner.createObject(prompt, MonthItem.class);
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+val runner = ai.withLlm(
+    LlmOptions.fromCriteria(DefaultModelSelectionCriteria)
+        .withNativeStructuredOutput(NativeStructuredOutputMode.ENABLED)
+)
+
+val result = runner.createObject<MonthItem>(prompt)
+----
+====
+
+- `NativeStructuredOutputMode.ENABLED`: Try the native path when model capability and schema compatibility allow it.
+- `NativeStructuredOutputMode.DISABLED`: Force Embabel's normal object construction path.
+- `NativeStructuredOutputMode.DEFAULT`: Let Embabel decide from model capability, API shape, and schema compatibility.
+
+For Java objects, mark required reference fields explicitly:
+
+[source,java]
+----
+static class MonthItem {
+    @JsonProperty(required = true)
+    private String name;
+
+    @JsonProperty(required = true)
+    private Integer temperature;
+
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public Integer getTemperature() {
+        return temperature;
+    }
+
+    public void setTemperature(Integer temperature) {
+        this.temperature = temperature;
+    }
+}
+----
+
+===== Limitations
+
+- **Required fields**: OpenAI native structured output requires `required` to include every property. Optional Java reference fields are not treated as required unless annotated, for example with `@JsonProperty(required = true)` or `@NotNull`.
+- **Optional values**: Provider-native optionality usually needs nullable required properties, for example `type: ["string", "null"]`, rather than omitting the property from `required`.
+- **Arrays of objects**: Some providers, including OpenAI according to Spring AI documentation, do not support arrays of objects natively. Embabel falls back to normal object construction for unsupported shapes.
+- **Streaming**: Native structured output is not supported for streaming by Spring AI currently
+- **`ifPossible` APIs**: `createObjectIfPossible` and related paths use `MaybeReturn` semantics and stay on Embabel's fallback object construction path.
+- **Provider coverage**: OpenAI-compatible `response_format` is the primary supported path. Anthropic native structured output is currently disabled by default until its semantics are verified.
+

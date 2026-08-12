@@ -1,0 +1,69 @@
+[[getting-started.running]]
+=== Getting Embabel Running
+
+==== Running the Examples
+
+The quickest way to get started with Embabel is to run the examples:
+
+[source,bash]
+----
+# Clone and run examples
+git clone https://github.com/embabel/embabel-agent-examples
+cd embabel-agent-examples/scripts/java
+./shell.sh
+----
+
+NOTE: Choose the `java` or `kotlin` scripts directory depending on your preference.
+
+==== Prerequisites
+
+- Java 21+
+- API Key from OpenAI, Anthropic, or Google
+- Maven 3.9+ (optional)
+
+Set your API keys:
+
+[source,bash]
+----
+export OPENAI_API_KEY="your_openai_key"
+export ANTHROPIC_API_KEY="your_anthropic_key"
+export GOOGLE_API_KEY="your_google_api_key"
+----
+
+NOTE: For Google GenAI, you can use either `GOOGLE_API_KEY` (Google AI Studio) or Vertex AI authentication with `GOOGLE_PROJECT_ID` and `GOOGLE_LOCATION`.
+
+==== Using the Shell
+
+Spring Shell is an easy way to interact with the Embabel agent framework, especially during development.
+
+Type `help` to see available commands, or use `execute` / `x` to run an agent:
+
+----
+execute "Lynda is a Scorpio, find news for her" -p -r
+----
+
+The `-p` and `-r` flags log prompts and LLM responses respectively; omit them for quiet output.
+Use `chat` for an interactive conversation, and `choose-goal` to inspect how Embabel ranks goals without running anything.
+
+For a full description of every command, flags, tab completion, and history shortcuts, see <<shell.guide>>.
+
+==== Example Commands
+
+Try these commands in the shell:
+
+----
+# Simple horoscope agent
+execute "My name is Sarah and I'm a Leo"
+
+# Research with web tools (requires Docker Desktop with MCP extension)
+execute "research the recent australian federal election. what is the position of the Greens party?"
+
+# Fact checking
+x "fact check the following: holden cars are still made in australia"
+----
+
+==== Implementing Your Own Shell Commands
+
+You can add custom shell commands to invoke specific agents directly during development.
+See <<shell.commands.custom>> for a full example and explanation.
+

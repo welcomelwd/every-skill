@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-09T06:51:55.000Z",
+  "generatedAt": "2026-08-12T14:15:39.000Z",
   "bundles": {
     "core-dev": {
       "description": "Core development skills across languages, frameworks, and backend/frontend fundamentals.",
@@ -43,6 +43,7 @@
         "architecture-patterns",
         "astropy",
         "async-python-patterns",
+        "atlas-cloud-media",
         "atlas-contract",
         "audit-skills",
         "aws-cdk-development",
@@ -442,6 +443,7 @@
         "unship",
         "unslop-file",
         "update-swiftui-apis",
+        "us-property-data",
         "usage-based-pricing",
         "uv-package-manager",
         "ux-audit",
@@ -892,6 +894,7 @@
         "tune-monitor",
         "uniprot-database",
         "unity-ecs-patterns",
+        "us-property-data",
         "using-neon",
         "vector-database-engineer",
         "vibecode-production-qa-validator",
@@ -1609,6 +1612,7 @@
         "antigravity-skill-orchestrator",
         "apify-actor-development",
         "apple-notes-search",
+        "atlas-cloud-media",
         "codebase-to-wordpress-converter",
         "content-creator",
         "content-marketer",

@@ -1,0 +1,9 @@
+[[shell.guide]]
+== Embabel Shell
+:sectids:
+:sectanchors:
+
+The easiest way to get started with Embabel is via Spring Shell.
+
+include::how-to.adoc[]
+include::commands.adoc[]

@@ -1,0 +1,70 @@
+# Claude Code
+.claude/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.env
+.venv/
+venv/
+env/
+*.egg-info/
+*.egg
+pip-log.txt
+
+# Node
+node_modules/
+package-lock.json
+yarn.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+Icon?
+
+# Build & Distribution
+dist/
+build/
+*.skill
+
+# Logs
+*.log
+npm-debug.log*
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Temp files
+*.tmp
+*.bak
+*.orig
+
+# Generated scripts (root-level only, not inside skills/)
+/*.bat
+/*.ps1
+/*.cmd
+/*.sh
+/_*.py
+
+# Non-essential
+mappings/launch/
+lobehub-agents/
+docs/launch/
+docs/audit/

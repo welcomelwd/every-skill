@@ -1,0 +1,688 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.embabel.agent.spi.support.springai
+
+import com.embabel.agent.spi.loop.LlmMessageRequest
+import com.embabel.agent.spi.loop.NativeStructuredOutputRequest
+import com.embabel.agent.spi.loop.StructuredOutputRequest
+import com.embabel.chat.AssistantMessageWithToolCalls
+import com.embabel.chat.UserMessage
+import com.embabel.common.ai.autoconfig.NativeStructuredOutputCapability
+import com.embabel.common.ai.autoconfig.NativeSupport
+import com.embabel.common.ai.model.NativeStructuredOutputMode
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.slot
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Nested
+import org.junit.jupiter.api.Test
+import org.springframework.ai.chat.messages.AssistantMessage as SpringAiAssistantMessage
+import org.springframework.ai.chat.metadata.ChatResponseMetadata
+import org.springframework.ai.chat.model.ChatModel
+import org.springframework.ai.chat.model.ChatResponse
+import org.springframework.ai.chat.model.Generation
+import org.springframework.ai.chat.prompt.ChatOptions
+import org.springframework.ai.chat.prompt.Prompt
+
+/**
+ * Tests for [SpringAiLlmMessageSender].
+ */
+class SpringAiLlmMessageSenderTest {
+
+    @Nested
+    inner class SpringAiNativeStructuredOutputConfigurerTests {
+
+        @Test
+        fun `applies configured chat options from structured output configurer`() {
+            val originalOptions = testChatOptions()
+            val configuredOptions = testChatOptions()
+            val capturedPrompt = slot<Prompt>()
+            val generation = Generation(SpringAiAssistantMessage("done"))
+            val mockMetadata = mockk<ChatResponseMetadata> {
+                every { usage } returns null
+            }
+            val chatResponse = mockk<ChatResponse> {
+                every { result } returns generation
+                every { results } returns listOf(generation)
+                every { metadata } returns mockMetadata
+            }
+            val chatModel = mockk<ChatModel> {
+                every { call(capture(capturedPrompt)) } returns chatResponse
+            }
+            val structuredOutputRequest = StructuredOutputRequest(
+                name = "Answer",
+                schema = """{"type":"object"}""",
+            )
+            var configurerSawStructuredOutput: StructuredOutputRequest? = null
+            var configurerSawNativeSupport: NativeSupport? = null
+            val nativeSupport = NativeSupport(
+                structuredOutput = NativeStructuredOutputCapability(
+                    supported = true,
+                    strategy = "response_format",
+                )
+            )
+            val sender = SpringAiLlmMessageSender(
+                chatModel = chatModel,
+                chatOptions = originalOptions,
+                nativeStructuredOutputConfigurer = SpringAiNativeStructuredOutputConfigurer { _, request, support, _ ->
+                    configurerSawStructuredOutput = request
+                    configurerSawNativeSupport = support
+                    configuredOptions
+                },
+                nativeSupport = nativeSupport,
+            )
+
+            sender.call(
+                LlmMessageRequest(
+                    messages = listOf(UserMessage("Create answer")),
+                    tools = emptyList(),
+                    nativeStructuredOutputRequest = NativeStructuredOutputRequest(
+                        structuredOutputRequest = structuredOutputRequest,
+                    ),
+                )
+            )
+
+            assertThat(configurerSawStructuredOutput).isEqualTo(structuredOutputRequest)
+            assertThat(configurerSawNativeSupport).isEqualTo(nativeSupport)
+            assertThat(capturedPrompt.captured.options).isSameAs(configuredOptions)
+        }
+
+        @Test
+        fun `disables native structured output when mode is disabled`() {
+            val originalOptions = testChatOptions()
+            val configuredOptions = testChatOptions()
+            val capturedPrompt = slot<Prompt>()
+            val generation = Generation(SpringAiAssistantMessage("done"))
+            val mockMetadata = mockk<ChatResponseMetadata> {
+                every { usage } returns null
+            }
+            val chatResponse = mockk<ChatResponse> {
+                every { result } returns generation
+                every { results } returns listOf(generation)
+                every { metadata } returns mockMetadata
+            }
+            val chatModel = mockk<ChatModel> {
+                every { call(capture(capturedPrompt)) } returns chatResponse
+            }
+            var configurerSawStructuredOutput: StructuredOutputRequest? = null
+            val nativeSupport = NativeSupport(
+                structuredOutput = NativeStructuredOutputCapability(
+                    supported = true,
+                    strategy = "response_format",
+                )
+            )
+            val sender = SpringAiLlmMessageSender(
+                chatModel = chatModel,
+                chatOptions = originalOptions,
+                nativeStructuredOutputConfigurer = SpringAiNativeStructuredOutputConfigurer { _, request, _, _ ->
+                    configurerSawStructuredOutput = request
+                    configuredOptions
+                },
+                nativeSupport = nativeSupport,
+            )
+
+            sender.call(
+                LlmMessageRequest(
+                    messages = listOf(UserMessage("Create answer")),
+                    tools = emptyList(),
+                    nativeStructuredOutputRequest = NativeStructuredOutputRequest(
+                        structuredOutputRequest = StructuredOutputRequest(
+                            name = "Answer",
+                            schema = """{"type":"object"}""",
+                        ),
+                        nativeStructuredOutputMode = NativeStructuredOutputMode.DISABLED,
+                    ),
+                )
+            )
+
+            assertThat(configurerSawStructuredOutput).isNull()
+            assertThat(capturedPrompt.captured.options).isSameAs(configuredOptions)
+        }
+
+        @Test
+        fun `disables native structured output when schema is incompatible`() {
+            val originalOptions = testChatOptions()
+            val capturedPrompt = slot<Prompt>()
+            val generation = Generation(SpringAiAssistantMessage("done"))
+            val mockMetadata = mockk<ChatResponseMetadata> {
+                every { usage } returns null
+            }
+            val chatResponse = mockk<ChatResponse> {
+                every { result } returns generation
+                every { results } returns listOf(generation)
+                every { metadata } returns mockMetadata
+            }
+            val chatModel = mockk<ChatModel> {
+                every { call(capture(capturedPrompt)) } returns chatResponse
+            }
+            var configurerSawStructuredOutput: StructuredOutputRequest? = null
+            val nativeSupport = NativeSupport(
+                structuredOutput = NativeStructuredOutputCapability(
+                    supported = true,
+                    strategy = "response_format",
+                )
+            )
+            val sender = SpringAiLlmMessageSender(
+                chatModel = chatModel,
+                chatOptions = originalOptions,
+                nativeStructuredOutputConfigurer = SpringAiNativeStructuredOutputConfigurer { options, request, _, _ ->
+                    configurerSawStructuredOutput = request
+                    if (request == null) options else testChatOptions()
+                },
+                nativeSupport = nativeSupport,
+            )
+
+            sender.call(
+                LlmMessageRequest(
+                    messages = listOf(UserMessage("Create answer")),
+                    tools = emptyList(),
+                    nativeStructuredOutputRequest = NativeStructuredOutputRequest(
+                        structuredOutputRequest = StructuredOutputRequest(
+                            name = "MonthItem",
+                            schema = """{"type":"object","properties":{"name":{"type":"string"},"temperature":{"type":"integer"}},"additionalProperties":false}""",
+                        ),
+                        nativeStructuredOutputMode = NativeStructuredOutputMode.ENABLED,
+                    ),
+                )
+            )
+
+            assertThat(configurerSawStructuredOutput).isNull()
+            assertThat(capturedPrompt.captured.options).isSameAs(originalOptions)
+        }
+    }
+
+    /**
+     * Tests for Bedrock-specific behavior where multiple generations may be returned.
+     *
+     * See: https://github.com/embabel/embabel-agent/issues/1350
+     *
+     * Bedrock can return multiple generations in a single response:
+     * - First generation: Empty content, no tool calls
+     * - Second generation: Has tool calls
+     *
+     * The message sender must find the generation with tool calls, not just use the first one.
+     */
+    @Nested
+    inner class BedrockMultipleGenerationsTests {
+
+        @Test
+        fun `extracts tool calls from second generation when first is empty`() {
+            // Arrange: Bedrock returns 2 generations - first empty, second with tool calls
+            val emptyGeneration = Generation(
+                SpringAiAssistantMessage("")
+            )
+
+            val toolCalls = listOf(
+                SpringAiAssistantMessage.ToolCall(
+                    "tooluse_ZoD1qN0iQP6ph6t2DzbhdQ",
+                    "function",
+                    "getThirdPartyKeyData",
+                    """{"thirdPartyId": "1"}"""
+                )
+            )
+            val generationWithToolCalls = Generation(
+                SpringAiAssistantMessage.builder()
+                    .content("")
+                    .toolCalls(toolCalls)
+                    .build()
+            )
+
+            val mockMetadata = mockk<ChatResponseMetadata> {
+                every { usage } returns mockk(relaxed = true)
+            }
+            val chatResponse = mockk<ChatResponse> {
+                every { result } returns emptyGeneration // First generation is empty
+                every { results } returns listOf(emptyGeneration, generationWithToolCalls)
+                every { metadata } returns mockMetadata
+            }
+
+            val chatModel = mockk<ChatModel> {
+                every { call(any<Prompt>()) } returns chatResponse
+            }
+
+            val chatOptions = mockk<ChatOptions> {
+                every { model } returns "test-model"
+                every { temperature } returns null
+                every { maxTokens } returns null
+                every { topP } returns null
+                every { topK } returns null
+                every { frequencyPenalty } returns null
+                every { presencePenalty } returns null
+                every { stopSequences } returns null
+            }
+
+            val sender = SpringAiLlmMessageSender(chatModel, chatOptions)
+
+            // Act
+            val response = sender.call(
+                messages = listOf(UserMessage("Test")),
+                tools = emptyList()
+            )
+
+            // Assert: Should find the tool calls from the second generation
+            assertThat(response.message).isInstanceOf(AssistantMessageWithToolCalls::class.java)
+            val messageWithCalls = response.message as AssistantMessageWithToolCalls
+            assertThat(messageWithCalls.toolCalls).hasSize(1)
+            assertThat(messageWithCalls.toolCalls[0].name).isEqualTo("getThirdPartyKeyData")
+        }
+
+        @Test
+        fun `extracts multiple tool calls from second generation`() {
+            // Arrange: Bedrock returns multiple tool calls in second generation
+            val emptyGeneration = Generation(
+                SpringAiAssistantMessage("")
+            )
+
+            val toolCalls = listOf(
+                SpringAiAssistantMessage.ToolCall(
+                    "tooluse_1",
+                    "function",
+                    "getThirdPartyKeyData",
+                    """{"thirdPartyId": "1"}"""
+                ),
+                SpringAiAssistantMessage.ToolCall(
+                    "tooluse_2",
+                    "function",
+                    "getThirdPartyScopeInformation",
+                    """{"thirdPartyId": "1"}"""
+                ),
+                SpringAiAssistantMessage.ToolCall(
+                    "tooluse_3",
+                    "function",
+                    "getThirdPartyStatusInformation",
+                    """{"thirdPartyId": "1"}"""
+                )
+            )
+            val generationWithToolCalls = Generation(
+                SpringAiAssistantMessage.builder()
+                    .content("")
+                    .toolCalls(toolCalls)
+                    .build()
+            )
+
+            val mockMetadata = mockk<ChatResponseMetadata> {
+                every { usage } returns mockk(relaxed = true)
+            }
+            val chatResponse = mockk<ChatResponse> {
+                every { result } returns emptyGeneration
+                every { results } returns listOf(emptyGeneration, generationWithToolCalls)
+                every { metadata } returns mockMetadata
+            }
+
+            val chatModel = mockk<ChatModel> {
+                every { call(any<Prompt>()) } returns chatResponse
+            }
+
+            val chatOptions = mockk<ChatOptions> {
+                every { model } returns "test-model"
+                every { temperature } returns null
+                every { maxTokens } returns null
+                every { topP } returns null
+                every { topK } returns null
+                every { frequencyPenalty } returns null
+                every { presencePenalty } returns null
+                every { stopSequences } returns null
+            }
+
+            val sender = SpringAiLlmMessageSender(chatModel, chatOptions)
+
+            // Act
+            val response = sender.call(
+                messages = listOf(UserMessage("Test")),
+                tools = emptyList()
+            )
+
+            // Assert: Should find all 3 tool calls
+            assertThat(response.message).isInstanceOf(AssistantMessageWithToolCalls::class.java)
+            val messageWithCalls = response.message as AssistantMessageWithToolCalls
+            assertThat(messageWithCalls.toolCalls).hasSize(3)
+            assertThat(messageWithCalls.toolCalls.map { it.name }).containsExactly(
+                "getThirdPartyKeyData",
+                "getThirdPartyScopeInformation",
+                "getThirdPartyStatusInformation"
+            )
+        }
+
+        @Test
+        fun `works correctly with single generation containing tool calls`() {
+            // Normal case: single generation with tool calls (OpenAI, Anthropic behavior)
+            val toolCalls = listOf(
+                SpringAiAssistantMessage.ToolCall(
+                    "call-1",
+                    "function",
+                    "get_weather",
+                    """{"location": "NYC"}"""
+                )
+            )
+            val generation = Generation(
+                SpringAiAssistantMessage.builder()
+                    .content("Let me check that for you")
+                    .toolCalls(toolCalls)
+                    .build()
+            )
+
+            val mockMetadata = mockk<ChatResponseMetadata> {
+                every { usage } returns mockk(relaxed = true)
+            }
+            val chatResponse = mockk<ChatResponse> {
+                every { result } returns generation
+                every { results } returns listOf(generation)
+                every { metadata } returns mockMetadata
+            }
+
+            val chatModel = mockk<ChatModel> {
+                every { call(any<Prompt>()) } returns chatResponse
+            }
+
+            val chatOptions = mockk<ChatOptions> {
+                every { model } returns "test-model"
+                every { temperature } returns null
+                every { maxTokens } returns null
+                every { topP } returns null
+                every { topK } returns null
+                every { frequencyPenalty } returns null
+                every { presencePenalty } returns null
+                every { stopSequences } returns null
+            }
+
+            val sender = SpringAiLlmMessageSender(chatModel, chatOptions)
+
+            // Act
+            val response = sender.call(
+                messages = listOf(UserMessage("What's the weather?")),
+                tools = emptyList()
+            )
+
+            // Assert
+            assertThat(response.message).isInstanceOf(AssistantMessageWithToolCalls::class.java)
+            val messageWithCalls = response.message as AssistantMessageWithToolCalls
+            assertThat(messageWithCalls.textContent).isEqualTo("Let me check that for you")
+            assertThat(messageWithCalls.toolCalls).hasSize(1)
+            assertThat(messageWithCalls.toolCalls[0].name).isEqualTo("get_weather")
+        }
+
+        @Test
+        fun `merges text from first generation with tool calls from second`() {
+            // Edge case: text in first generation, tool calls in second
+            // Should not lose the text content
+            val textOnlyGeneration = Generation(
+                SpringAiAssistantMessage.builder()
+                    .content("I'll help you with that request.")
+                    .build()
+            )
+
+            val toolCalls = listOf(
+                SpringAiAssistantMessage.ToolCall(
+                    "call-1",
+                    "function",
+                    "search_database",
+                    """{"query": "test"}"""
+                )
+            )
+            val toolCallsGeneration = Generation(
+                SpringAiAssistantMessage.builder()
+                    .content("")
+                    .toolCalls(toolCalls)
+                    .build()
+            )
+
+            val mockMetadata = mockk<ChatResponseMetadata> {
+                every { usage } returns mockk(relaxed = true)
+            }
+            val chatResponse = mockk<ChatResponse> {
+                every { result } returns textOnlyGeneration
+                every { results } returns listOf(textOnlyGeneration, toolCallsGeneration)
+                every { metadata } returns mockMetadata
+            }
+
+            val chatModel = mockk<ChatModel> {
+                every { call(any<Prompt>()) } returns chatResponse
+            }
+
+            val chatOptions = mockk<ChatOptions> {
+                every { model } returns "test-model"
+                every { temperature } returns null
+                every { maxTokens } returns null
+                every { topP } returns null
+                every { topK } returns null
+                every { frequencyPenalty } returns null
+                every { presencePenalty } returns null
+                every { stopSequences } returns null
+            }
+
+            val sender = SpringAiLlmMessageSender(chatModel, chatOptions)
+
+            // Act
+            val response = sender.call(
+                messages = listOf(UserMessage("Search for something")),
+                tools = emptyList()
+            )
+
+            // Assert: Should have both text from gen1 AND tool calls from gen2
+            assertThat(response.message).isInstanceOf(AssistantMessageWithToolCalls::class.java)
+            val messageWithCalls = response.message as AssistantMessageWithToolCalls
+            assertThat(messageWithCalls.textContent).isEqualTo("I'll help you with that request.")
+            assertThat(messageWithCalls.toolCalls).hasSize(1)
+            assertThat(messageWithCalls.toolCalls[0].name).isEqualTo("search_database")
+        }
+
+        @Test
+        fun `merges tool calls from multiple generations`() {
+            // Edge case: tool calls split across multiple generations
+            // Should collect all tool calls
+            val toolCalls1 = listOf(
+                SpringAiAssistantMessage.ToolCall("call-1", "function", "get_weather", """{"location": "NYC"}""")
+            )
+            val generation1 = Generation(
+                SpringAiAssistantMessage.builder()
+                    .content("Checking weather...")
+                    .toolCalls(toolCalls1)
+                    .build()
+            )
+
+            val toolCalls2 = listOf(
+                SpringAiAssistantMessage.ToolCall("call-2", "function", "get_time", """{"timezone": "EST"}""")
+            )
+            val generation2 = Generation(
+                SpringAiAssistantMessage.builder()
+                    .content("And time...")
+                    .toolCalls(toolCalls2)
+                    .build()
+            )
+
+            val mockMetadata = mockk<ChatResponseMetadata> {
+                every { usage } returns mockk(relaxed = true)
+            }
+            val chatResponse = mockk<ChatResponse> {
+                every { result } returns generation1
+                every { results } returns listOf(generation1, generation2)
+                every { metadata } returns mockMetadata
+            }
+
+            val chatModel = mockk<ChatModel> {
+                every { call(any<Prompt>()) } returns chatResponse
+            }
+
+            val chatOptions = mockk<ChatOptions> {
+                every { model } returns "test-model"
+                every { temperature } returns null
+                every { maxTokens } returns null
+                every { topP } returns null
+                every { topK } returns null
+                every { frequencyPenalty } returns null
+                every { presencePenalty } returns null
+                every { stopSequences } returns null
+            }
+
+            val sender = SpringAiLlmMessageSender(chatModel, chatOptions)
+
+            // Act
+            val response = sender.call(
+                messages = listOf(UserMessage("What's the weather and time?")),
+                tools = emptyList()
+            )
+
+            // Assert: Should have all tool calls from both generations and merged text
+            assertThat(response.message).isInstanceOf(AssistantMessageWithToolCalls::class.java)
+            val messageWithCalls = response.message as AssistantMessageWithToolCalls
+            assertThat(messageWithCalls.toolCalls).hasSize(2)
+            assertThat(messageWithCalls.toolCalls.map { it.name }).containsExactly("get_weather", "get_time")
+            assertThat(messageWithCalls.textContent).contains("Checking weather...")
+            assertThat(messageWithCalls.textContent).contains("And time...")
+        }
+
+        @Test
+        fun `merges metadata from multiple generations and preserves thoughtSignatures`() {
+            val thoughtSignaturesA = listOf(byteArrayOf(1, 2))
+            val thoughtSignaturesB = listOf(byteArrayOf(3, 4))
+            val generation1 = Generation(
+                SpringAiAssistantMessage.builder()
+                    .content("First part")
+                    .toolCalls(
+                        listOf(
+                            SpringAiAssistantMessage.ToolCall(
+                                "call-1",
+                                "function",
+                                "get_weather",
+                                """{"location": "NYC"}"""
+                            )
+                        )
+                    )
+                    .properties(mapOf("thoughtSignatures" to thoughtSignaturesA, "chunk" to "one"))
+                    .build()
+            )
+            val generation2 = Generation(
+                SpringAiAssistantMessage.builder()
+                    .content("Second part")
+                    .toolCalls(
+                        listOf(
+                            SpringAiAssistantMessage.ToolCall(
+                                "call-2",
+                                "function",
+                                "get_time",
+                                """{"timezone": "EST"}"""
+                            )
+                        )
+                    )
+                    .properties(mapOf("thoughtSignatures" to thoughtSignaturesB, "chunk" to "two"))
+                    .build()
+            )
+
+            val mockMetadata = mockk<ChatResponseMetadata> {
+                every { usage } returns null
+            }
+            val chatResponse = mockk<ChatResponse> {
+                every { result } returns generation1
+                every { results } returns listOf(generation1, generation2)
+                every { metadata } returns mockMetadata
+            }
+            val chatModel = mockk<ChatModel> {
+                every { call(any<Prompt>()) } returns chatResponse
+            }
+            val chatOptions = mockk<ChatOptions> {
+                every { model } returns "test-model"
+                every { temperature } returns null
+                every { maxTokens } returns null
+                every { topP } returns null
+                every { topK } returns null
+                every { frequencyPenalty } returns null
+                every { presencePenalty } returns null
+                every { stopSequences } returns null
+            }
+            val sender = SpringAiLlmMessageSender(chatModel, chatOptions)
+
+            val response = sender.call(
+                messages = listOf(UserMessage("What's the weather and time?")),
+                tools = emptyList()
+            )
+
+            assertThat(response.message).isInstanceOf(AssistantMessageWithToolCalls::class.java)
+            val messageWithCalls = response.message as AssistantMessageWithToolCalls
+            assertThat(messageWithCalls.metadata).containsEntry("chunk", "two")
+            val signatures = messageWithCalls.metadata["thoughtSignatures"] as? List<*>
+            assertThat(signatures).isNotNull
+            assertThat(signatures).hasSize(1)
+            assertThat(signatures!![0]).isInstanceOf(ByteArray::class.java)
+            assertThat(signatures[0] as ByteArray).containsExactly(3, 4)
+        }
+    }
+
+    @Nested
+    inner class FallbackOptionsCopyTests {
+
+        @Test
+        fun `does not re-add omitted temperature when attaching tools`() {
+            // Plain ChatOptions (not ToolCallingChatOptions) forces the fallback builder path.
+            val chatOptions = mockk<ChatOptions> {
+                every { model } returns "gpt-4.1-mini"
+                every { temperature } returns null
+                every { maxTokens } returns 100
+                every { topP } returns 0.9
+                every { topK } returns null
+                every { frequencyPenalty } returns null
+                every { presencePenalty } returns null
+                every { stopSequences } returns null
+            }
+            val capturedPrompt = slot<Prompt>()
+            val generation = Generation(SpringAiAssistantMessage("done"))
+            val mockMetadata = mockk<ChatResponseMetadata> {
+                every { usage } returns null
+            }
+            val chatResponse = mockk<ChatResponse> {
+                every { result } returns generation
+                every { results } returns listOf(generation)
+                every { metadata } returns mockMetadata
+            }
+            val chatModel = mockk<ChatModel> {
+                every { call(capture(capturedPrompt)) } returns chatResponse
+            }
+            val tool = object : com.embabel.agent.api.tool.Tool {
+                override val definition = com.embabel.agent.api.tool.Tool.Definition(
+                    name = "echo",
+                    description = "Echo",
+                    inputSchema = com.embabel.agent.api.tool.Tool.InputSchema.empty(),
+                )
+
+                override fun call(input: String) =
+                    com.embabel.agent.api.tool.Tool.Result.text(input)
+            }
+            val sender = SpringAiLlmMessageSender(chatModel, chatOptions)
+
+            sender.call(
+                messages = listOf(UserMessage("hi")),
+                tools = listOf(tool),
+            )
+
+            val built = capturedPrompt.captured.options
+            assertThat(built).isNotNull
+            // Property extract avoids @NullMarked NPE when temperature was intentionally omitted.
+            assertThat(built).extracting("temperature").isNull()
+            assertThat(built).extracting("topP").isEqualTo(0.9)
+            assertThat(built).extracting("maxTokens").isEqualTo(100)
+        }
+    }
+
+    private fun testChatOptions(): ChatOptions = mockk {
+        every { model } returns "test-model"
+        every { temperature } returns null
+        every { maxTokens } returns null
+        every { topP } returns null
+        every { topK } returns null
+        every { frequencyPenalty } returns null
+        every { presencePenalty } returns null
+        every { stopSequences } returns null
+    }
+}

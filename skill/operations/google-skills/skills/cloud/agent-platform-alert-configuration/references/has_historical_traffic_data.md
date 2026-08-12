@@ -33,7 +33,7 @@ Use these instructions if the agent has historical metrics data available:
         -   If the `--live` command fails with `CredentialsMissingError` (exit
             code 1), report the error and instruct the user to run `gcloud auth
             application-default login` on their terminal.
-        -   For other unexpected failures, analyze the error message (e.g.,
+        -   For other unexpected failures, analyze the error message (such as
             connection timeouts, invalid permissions, or missing resources).
             Attempt to dynamically correct parameters (such as verifying or
             correcting the region, project ID, or metric type) and retry
@@ -60,11 +60,11 @@ Use these instructions if the agent has historical metrics data available:
 
 *Example classifications:*
 
--   *Steady*: Low variance data (e.g. steady QPS) with little or no weekly
+-   *Steady*: Low variance data (such as steady QPS) with little or no weekly
     cyclical pattern.
 -   *Seasonal*: Clear daily/weekly repeating patterns with high weekly
-    correlation (e.g. daily peak traffic).
--   *Bursty*: Highly volatile data with rapid spikes and quiet periods (e.g.
+    correlation (such as daily peak traffic).
+-   *Bursty*: Highly volatile data with rapid spikes and quiet periods (such as
     batch job workloads).
 
 -   **Fallback for Insufficient Data / No Traffic**:

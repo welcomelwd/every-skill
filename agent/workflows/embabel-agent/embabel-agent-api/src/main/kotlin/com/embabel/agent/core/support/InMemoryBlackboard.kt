@@ -1,0 +1,169 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.embabel.agent.core.support
+
+/**
+ * Simple in memory blackboard implementation
+ * backed by a map.
+ */
+import com.embabel.agent.core.Blackboard
+import com.embabel.agent.spi.BlackboardProvider
+import com.embabel.common.util.indent
+import com.embabel.common.util.indentLines
+import java.util.*
+import java.util.concurrent.ConcurrentHashMap
+
+class InMemoryBlackboard(
+    override val blackboardId: String = UUID.randomUUID().toString(),
+) : Blackboard {
+
+    private val _map: MutableMap<String, Any> = ConcurrentHashMap()
+    private val _entries: MutableList<Any> = Collections.synchronizedList(mutableListOf())
+    private val hiddens: MutableSet<Any> = Collections.synchronizedSet(mutableSetOf())
+    private val protectedKeys: MutableSet<String> = Collections.synchronizedSet(mutableSetOf())
+
+    override fun spawn(): Blackboard {
+        return InMemoryBlackboard().apply {
+            _map.putAll(this@InMemoryBlackboard._map)
+            synchronized(_entries) {
+                _entries.addAll(this@InMemoryBlackboard._entries)
+            }
+            protectedKeys.addAll(this@InMemoryBlackboard.protectedKeys)
+        }
+    }
+
+    override fun clear() {
+        // Preserve protected bindings and their values
+        val protectedValues = protectedKeys.mapNotNull { _map[it] }.toSet()
+
+        // Clear non-protected map entries
+        val keysToRemove = _map.keys - protectedKeys
+        keysToRemove.forEach { _map.remove(it) }
+
+        // Clear non-protected entries from the list
+        synchronized(_entries) {
+            _entries.removeIf { it !in protectedValues }
+        }
+
+        // Clear hiddens that aren't protected values
+        hiddens.removeIf { it !in protectedValues }
+    }
+
+    override fun hide(what: Any) {
+        hiddens += what
+    }
+
+    fun isHidden(what: Any): Boolean = hiddens.contains(what)
+
+    override val objects: List<Any>
+        get() = synchronized(_entries) {
+            (_entries - hiddens).toList() // Return a snapshot to avoid concurrent modification
+        }
+
+    override fun get(name: String): Any? {
+        val f = _map[name] ?: return null
+        if (isHidden(f)) {
+            return null
+        }
+        return f
+    }
+
+    override fun bind(
+        key: String,
+        value: Any,
+    ): Blackboard {
+        _map[key] = value
+        _entries.add(value)
+        return this
+    }
+
+    override fun bindProtected(
+        key: String,
+        value: Any,
+    ): Blackboard {
+        protectedKeys.add(key)
+        return bind(key, value)
+    }
+
+    override operator fun plusAssign(value: Any) {
+        addObject(value)
+    }
+
+    override fun plusAssign(pair: Pair<String, Any>) {
+        bind(pair.first, pair.second)
+    }
+
+    override operator fun set(
+        key: String,
+        value: Any,
+    ) {
+        bind(key, value)
+    }
+
+    override fun <V : Any> getOrPut(
+        name: String,
+        creator: () -> V,
+    ): V {
+        val entry = _map.getOrPut(name, creator)
+        return entry as V
+    }
+
+    override fun setCondition(
+        key: String,
+        value: Boolean,
+    ): Blackboard {
+        // Only store in _map, not in _entries. Conditions should not appear
+        // in the objects list or affect lastResult().
+        _map[key] = value
+        return this
+    }
+
+    override fun getCondition(key: String): Boolean? =
+        _map[key] as? Boolean
+
+    override fun addObject(value: Any): Blackboard {
+        _entries.add(value)
+        return this
+    }
+
+    override fun expressionEvaluationModel(): Map<String, Any> {
+        return _map.toMap()
+    }
+
+    override fun infoString(
+        verbose: Boolean?,
+        indent: Int,
+    ): String {
+        // Create snapshots for thread-safe iteration
+        val mapSnapshot = _map.toMap()
+        val objectsSnapshot = synchronized(_entries) { _entries.toList() }
+
+        return """
+            |${javaClass.simpleName}: id=$blackboardId
+            |map:
+            |${mapSnapshot.entries.joinToString(", ").indent(1)}
+            |entries:
+            |${objectsSnapshot.joinToString(", ").indent(1)}
+            |"""
+            .trimMargin()
+            .indentLines(indent)
+    }
+}
+
+object InMemoryBlackboardProvider : BlackboardProvider {
+
+    override fun createBlackboard(): Blackboard = InMemoryBlackboard()
+}

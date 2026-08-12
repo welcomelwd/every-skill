@@ -1,0 +1,19 @@
+[[reference.api-evolution]]
+=== API Evolution
+
+We strive to avoid breaking changes.
+
+Because Embabel builds on Spring's POJO support, framework code dependencies are localized and minimized.
+
+The key core surface area is the `Ai` and `PromptRunner` interfaces, which we will strive to avoid breaking.
+
+For maximum stability:
+
+- If possible, use the latest stable version of `embabel-agent` rather than a snapshot.
+Snapshots may change frequently.
+- Avoid using types under the `com.embabel.agent.experimental` package.
+- Be aware of the status of the Embabel modules you use
+- Avoid using any method or class marked with the `@ApiStatus.Experimental` or `@ApiStatus.Internal` annotations.
+
+IMPORTANT: application code should not depend on any types under the `com.embabel.agent.spi` package.
+This is intended for provision of runtime infrastructure only, and may change without notice.

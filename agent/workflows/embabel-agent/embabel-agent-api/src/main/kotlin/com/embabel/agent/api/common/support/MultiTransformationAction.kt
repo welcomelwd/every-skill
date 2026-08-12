@@ -1,0 +1,207 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.embabel.agent.api.common.support
+
+import com.embabel.agent.api.annotation.support.isStateType
+import com.embabel.agent.api.common.SomeOf
+import com.embabel.agent.api.common.Transformation
+import com.embabel.agent.api.common.TransformationActionContext
+import com.embabel.agent.api.event.StateTransitionEvent
+import com.embabel.agent.core.*
+import com.embabel.agent.core.support.AbstractAction
+import com.embabel.plan.CostComputation
+
+/**
+ * Transformer that can take multiple inputs.
+ * The block takes a List<Any>.
+ * Used from within ActionMethodManager to support methods with multiple parameters.
+ * Handles @State returns from @Action types
+ * @param clearBlackboard if true, clears the blackboard on completion before binding the output
+ */
+class MultiTransformationAction<O : Any>(
+    name: String,
+    description: String = name,
+    pre: List<String> = emptyList(),
+    post: List<String> = emptyList(),
+    cost: CostComputation = { 0.0 },
+    value: CostComputation = { 0.0 },
+    canRerun: Boolean = false,
+    readOnly: Boolean = false,
+    clearBlackboard: Boolean = false,
+    qos: ActionQos = ActionQos(),
+    inputs: Set<IoBinding>,
+    private val inputClasses: List<Class<*>>,
+    private val outputClass: Class<O>,
+    private val outputVarName: String? = IoBinding.DEFAULT_BINDING,
+    private val referencedInputProperties: Set<String>? = null,
+    toolGroups: Set<ToolGroupRequirement>,
+    private val block: Transformation<List<Any>, O>,
+) : AbstractAction(
+    name = name,
+    description = description,
+    pre = pre,
+    post = post,
+    cost = cost,
+    value = value,
+    inputs = inputs,
+    outputs = calculateOutputs(outputVarName, outputClass),
+    toolGroups = toolGroups,
+    canRerun = canRerun,
+    readOnly = readOnly,
+    clearBlackboard = clearBlackboard,
+    qos = qos,
+) {
+
+    override val domainTypes: Collection<JvmType>
+        get() = JvmType.fromClasses(inputClasses + outputClass)
+
+    override fun execute(
+        processContext: ProcessContext,
+    ): ActionStatus = ActionRunner.execute(processContext) {
+        val inputValues: List<Any> = inputs.map {
+            processContext.agentProcess.getValue(variable = it.name, type = it.type)
+                ?: throw IllegalArgumentException("Input ${it.name} of type ${it.type} not found in process context")
+        }
+        logger.debug("Resolved action {} inputs {}", name, inputValues)
+        val output = block.transform(
+            TransformationActionContext(
+                input = inputValues,
+                processContext = processContext,
+                inputClass = List::class.java as Class<List<Any>>,
+                outputClass = outputClass,
+                action = this,
+            )
+        )
+
+        if (output != null) {
+            if (clearBlackboard) {
+                // Clear blackboard if requested
+                // This facilitates looping and also increases efficiency
+                logger.info(
+                    "Action {} returned class {}: clearing blackboard and binding only the output instance",
+                    name,
+                    output::class.java.name,
+                )
+                processContext.blackboard.clear()
+            }
+
+            if (isStateType(output.javaClass)) {
+                // Hide any existing state objects to ensure only the current state's actions are available
+                // This provides state scoping without clearing the entire blackboard
+                val existingStates = processContext.blackboard.objects
+                    .filter { it !== output && isStateType(it.javaClass) }
+
+                val previousState = existingStates.lastOrNull()
+
+                existingStates.forEach { existingState ->
+                    processContext.blackboard.hide(existingState)
+                }
+
+                processContext.onProcessEvent(
+                    StateTransitionEvent(
+                        agentProcess = processContext.agentProcess,
+                        newState = output,
+                        previousState = previousState,
+                    )
+                )
+            }
+
+            if (!(output is Unit || output::class.java == Void::class.java)) {
+                bindOutput(processContext, output)
+            } else {
+                // Add sentinel for void/Unit returns to invalidate any @Trigger precondition
+                processContext.agentProcess += ActionVoidResult
+            }
+        } else {
+            // Add sentinel for null returns to invalidate any @Trigger precondition
+            processContext.agentProcess += ActionVoidResult
+        }
+    }
+
+    private fun bindOutput(
+        processContext: ProcessContext,
+        output: O,
+    ) {
+        if (!outputClass.isInstance(output)) {
+            throw IllegalArgumentException(
+                """
+                Output of action $name is not of type ${outputClass.name}.
+                Return was $output
+                """.trimIndent()
+            )
+        }
+        destructureAndBindIfNecessary(
+            obj = output,
+            name = name,
+            blackboard = processContext.blackboard,
+            logger = logger
+        )
+
+        if (outputVarName != null) {
+            logger.debug("Binding output of action {}: {} to {}", name, outputVarName, output)
+            processContext.agentProcess[outputVarName] = output
+        } else {
+            logger.debug("Adding output of action {}: {}", name, output)
+            processContext.agentProcess += output
+        }
+    }
+
+    override fun referencedInputProperties(variable: String): Set<String> {
+        return referencedInputProperties ?: run {
+            val fields = inputClasses.map { it.declaredFields.map { it.name } }.flatten().toSet()
+            fields
+        }
+    }
+
+    override fun toString(): String {
+        return "${javaClass.simpleName}: name=$name"
+    }
+}
+
+private fun calculateOutputs(
+    outputVarName: String?,
+    outputClass: Class<*>,
+): Set<IoBinding> {
+    return if (outputVarName == null) {
+        emptySet()
+    } else {
+        bindingsFrom(outputVarName, outputClass)
+    }
+}
+
+private fun bindingsFrom(
+    outputVarName: String?,
+    outputClass: Class<*>,
+): Set<IoBinding> {
+    if (SomeOf::class.java.isAssignableFrom(outputClass)) {
+        return SomeOf.eligibleFields(outputClass)
+            .map { field ->
+                IoBinding(
+                    // TODO bind to name if requires match
+                    name = IoBinding.DEFAULT_BINDING,//field.name,
+                    type = field.type.name,
+                )
+            }
+            .toSet()
+    }
+
+    return setOf(
+        IoBinding(
+            name = outputVarName,
+            type = outputClass,
+        )
+    )
+}

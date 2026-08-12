@@ -384,25 +384,50 @@ module is re-exported under its own name. A project that does
   tainted value reached a call — and is emitted alongside the forward composition above.
   Sources and sinks are direct I/O calls from the registry.
 - The source/sink registry covers Python, JavaScript, TypeScript (including TSX),
-  Go, Java, Rust, C, C++, C#, and Lua; a language not in the registry emits no I/O
-  or flow edges until its table is added.
+  Go, Java, Rust, C, C++, C#, Lua, PHP, and Dart; a language not in the registry emits no
+  I/O or flow edges until its table is added. PHP models `$_GET`/`$_POST`/
+  `$_REQUEST`/`$_COOKIE` (untrusted HTTP input → NETWORK) and `$_ENV`/`$_SERVER`
+  (→ ENV) superglobal sources, `getenv`/`file_get_contents` reads,
+  `file_put_contents` and `echo`/`print` (keyword STDOUT sinks) writes, and
+  `fopen` + arg-shaped `fwrite`/`fputs` handle writes.
 - Handle-based writes in the lean (non-Python) `FLOWS_TO` walk are being taught
-  incrementally (issue #1204). **Go** now tracks handle bindings, so a taint written
-  through a file/socket/db handle (`f := os.Create(p); f.Write(x)`) emits a flow edge
-  to the handle's resource. The remaining lean languages (Rust, Java, C#, JS/TS, C,
-  C++, Lua) still match **direct call sinks only** — a handle-method write there
-  (`io.open(p):write(x)`, `File::create(p).write(x)`) emits no flow edge, so such a
-  leak reads as `NO_FLOW` rather than `UNKNOWN` in a fully covered project. The
-  handle-tracking tables that feed the `READS_FROM`/`WRITES_TO` walk are the reuse
-  target as each language lands. This bites Lua hardest, since Lua has no direct
-  file-write sink at all (and no handle tables in either walk yet).
+  incrementally (issue #1204). **Go**, **Rust**, **Java**, **C#**, **JS/TS**, and
+  **Lua** now track handle bindings, so a taint written through a file/socket handle
+  (`f := os.Create(p); f.Write(x)`, Rust
+  `let mut f = File::create(p)?; f.write_all(s.as_bytes())?`, Java
+  `new FileWriter(p).write(s)` — including the wrapper
+  `new BufferedWriter(new FileWriter(p))` and factory
+  `Files.newBufferedWriter(Path.of(p))` forms — C#
+  `new StreamWriter(p).Write(s)`, JS/TS
+  `fs.createWriteStream(p).write(s)`, or Lua
+  `local f = io.open(p, "w"); f:write(s)`) emits a flow edge to the handle's
+  resource — path-sensitively (a rebind on one branch writes to all feasible
+  resources) and mode-aware (a read-only `os.Open`/`File::open`/`new FileReader`/
+  `new StreamReader` handle is not a write sink; Lua's `io.open` mode is unknowable
+  to the binder, so it stays a sound may-write gated by the method table). **C** and
+  **C++** cover the arg-shaped libc `FILE*` API, where the handle rides an
+  *argument* rather than a receiver (`FILE *f = fopen(p, "w"); fwrite(x, 1, n, f)`,
+  `fprintf(f, fmt, x)`, or `fprintf(stderr, fmt, x)` to a pre-bound std stream): the
+  tainted **payload** arguments flow to the handle's resource, an untracked `FILE*`
+  degrading to `FILE:<dynamic>`. Each arg sink pins its payload position — `fprintf`
+  forwards every non-handle argument (format + varargs), but `fwrite(buffer, size,
+  count, stream)` forwards only `buffer` (arg 0), so a tainted `size`/`count` is
+  control metadata, not a leak. The libc model applies only to *unresolved* calls, so
+  a project-defined function that happens to be named `fwrite`/`fprintf` is analysed
+  as itself. C++ also binds **type-declaration** stream handles
+  (`std::ofstream out(p)`), so a tainted `out << x` (stream insertion) or
+  `out.write(..)` reaches the file. Both `new`-shaped constructors and their wrapper
+  / identity-carrier (`new PrintWriter(new File(p))`) forms resolve, reusing the same
+  registry tables the `READS_FROM`/`WRITES_TO` walk uses. Every catalogued
+  handle-write shape across the lean languages now emits a flow edge rather than a
+  false `NO_FLOW`.
 
 These are deliberate ceilings, chosen so the feature is correct and cheap where
 it applies rather than broad and noisy.
 
 ## Language coverage
 
-`FLOWS_TO` covers **11 of the 14 supported languages** — every language whose
+`FLOWS_TO` covers **13 of the 14 supported languages** — every language whose
 source/sink table is registered in `FLOW_REGISTERED_LANGUAGES`
 (`codebase_rag/parsers/io_access/registry.py`). Python uses the deep,
 path-sensitive walk; the rest use the descriptor-driven lean walk. A language
@@ -423,9 +448,9 @@ edges, so a reachability question over it returns `UNKNOWN` rather than
 | C | ✅ | lean descriptor |
 | C# | ✅ | lean descriptor |
 | Lua | ✅ | lean descriptor |
-| PHP | ❌ | not covered — no sink table |
+| PHP | ✅ | lean descriptor |
 | Scala | ❌ | not covered — no sink table |
-| Dart | ❌ | not covered — no sink table |
+| Dart | ✅ | lean descriptor + Dart selector-chain path |
 
 ## Coverage metadata and the three-verdict query
 

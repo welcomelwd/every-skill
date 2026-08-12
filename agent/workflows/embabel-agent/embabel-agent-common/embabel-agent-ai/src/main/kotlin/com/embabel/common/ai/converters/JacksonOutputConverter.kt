@@ -1,0 +1,201 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.embabel.common.ai.converters
+
+import tools.jackson.core.JacksonException
+import tools.jackson.core.json.JsonReadFeature
+import tools.jackson.core.util.DefaultIndenter
+import tools.jackson.core.util.DefaultPrettyPrinter
+import tools.jackson.databind.JsonNode
+import tools.jackson.databind.ObjectMapper
+import tools.jackson.databind.json.JsonMapper
+import com.github.victools.jsonschema.generator.*
+import com.github.victools.jsonschema.module.jackson.JacksonModule
+import com.github.victools.jsonschema.module.jackson.JacksonOption
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
+import org.springframework.ai.converter.StructuredOutputConverter
+import org.slf4j.MarkerFactory
+import org.springframework.core.ParameterizedTypeReference
+import java.lang.reflect.Type
+
+/**
+ * Exposes a raw JSON Schema for converters that can describe their target type.
+ *
+ * This is separate from [StructuredOutputConverter.getFormat], which is prompt
+ * text for LLMs. Native structured-output payloads need the schema itself.
+ */
+interface JsonSchemaProvider {
+    fun getJsonSchema(): String
+}
+
+/**
+ * Controls whether generated JSON schemas are normalized from trusted type metadata.
+ */
+enum class RequiredFieldNormalization {
+    ENABLED,
+    DISABLED,
+}
+
+/**
+ * A Kotlin version of [org.springframework.ai.converter.BeanOutputConverter] that allows for customization
+ * of the used schema via [postProcessSchema]
+ */
+open class JacksonOutputConverter<T : Any> protected constructor(
+    private val type: Type,
+    val objectMapper: ObjectMapper,
+    private val requiredFieldNormalization: RequiredFieldNormalization = RequiredFieldNormalization.ENABLED,
+) : StructuredOutputConverter<T>, JsonSchemaProvider {
+
+    constructor(
+        clazz: Class<T>,
+        objectMapper: ObjectMapper,
+        requiredFieldNormalization: RequiredFieldNormalization = RequiredFieldNormalization.ENABLED,
+    ) : this(clazz as Type, objectMapper, requiredFieldNormalization)
+
+    constructor(
+        typeReference: ParameterizedTypeReference<T>,
+        objectMapper: ObjectMapper,
+        requiredFieldNormalization: RequiredFieldNormalization = RequiredFieldNormalization.ENABLED,
+    ) : this(typeReference.type, objectMapper, requiredFieldNormalization)
+
+    protected val logger: Logger = LoggerFactory.getLogger(javaClass)
+
+    /**
+     * Lenient ObjectMapper for parsing LLM output.
+     * Copies all configuration from the provided objectMapper and enables
+     * additional features to handle common JSON formatting issues from LLMs:
+     * - ALLOW_TRAILING_COMMA: `{"a": 1,}` is valid
+     * - ALLOW_SINGLE_QUOTES: `{'a': 'b'}` is valid
+     * - ALLOW_UNQUOTED_FIELD_NAMES: `{a: "b"}` is valid
+     * - ALLOW_JAVA_COMMENTS: `{"a": 1 /* comment */}` is valid
+     * - ALLOW_UNESCAPED_CONTROL_CHARS: """{"name":"Hello
+     * World"}""" is valid.
+     */
+    private val lenientMapper: ObjectMapper by lazy {
+        // Jackson 3: ObjectMapper is immutable; reconfigure via rebuild() builder.
+        // JsonReadFeature is JSON-specific and used directly (no mappedFeature() in Jackson 3).
+        (objectMapper as JsonMapper).rebuild()
+            .enable(JsonReadFeature.ALLOW_TRAILING_COMMA)
+            .enable(JsonReadFeature.ALLOW_SINGLE_QUOTES)
+            .enable(JsonReadFeature.ALLOW_UNQUOTED_PROPERTY_NAMES)
+            .enable(JsonReadFeature.ALLOW_JAVA_COMMENTS)
+            .enable(JsonReadFeature.ALLOW_YAML_COMMENTS)
+            .enable(JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS)
+            .build()
+    }
+
+    private val jsonSchemaValue: String by lazy {
+        val config = schemaGeneratorConfigBuilder().build()
+        val generator = SchemaGenerator(config)
+        val jsonNode: JsonNode = generator.generateSchema(this.type)
+        if (requiredFieldNormalization == RequiredFieldNormalization.ENABLED) {
+            jsonNode.normalizeRequiredFields(this.type, this.objectMapper)
+        }
+        postProcessSchema(jsonNode)
+        val objectWriter = this.objectMapper.writer()
+            .with(
+                DefaultPrettyPrinter()
+                    .withObjectIndenter(DefaultIndenter().withLinefeed(System.lineSeparator()))
+            )
+        try {
+            objectWriter.writeValueAsString(jsonNode)
+        } catch (e: JacksonException) {
+            logger.error("Could not pretty print json schema for jsonNode: {}", jsonNode)
+            throw RuntimeException("Could not pretty print json schema for " + this.type, e)
+        }
+    }
+
+    /**
+     * Template method that allows for customization of the JSON Schema generator.
+     * By defaults, this method generates a configuration that uses [Draft 2020-12](https://json-schema.org/draft/2020-12#draft-2020-12)
+     * of the specification, with the [JacksonModule] enabled.
+     */
+    protected open fun schemaGeneratorConfigBuilder(): SchemaGeneratorConfigBuilder {
+        return SchemaGeneratorConfigBuilder(
+            SchemaVersion.DRAFT_2020_12,
+            OptionPreset.PLAIN_JSON
+        )
+            .with(
+                JacksonModule(
+                    JacksonOption.RESPECT_JSONPROPERTY_REQUIRED,
+                    JacksonOption.RESPECT_JSONPROPERTY_ORDER
+                )
+            )
+            .with(Option.FORBIDDEN_ADDITIONAL_PROPERTIES_BY_DEFAULT);
+    }
+
+    /**
+     * Hook for subclasses to customize the generated JSON schema after the standard
+     * schema normalization has run.
+     *
+     * @param jsonNode the JSON schema, in the form of a JSON node
+     */
+    protected open fun postProcessSchema(jsonNode: JsonNode) = Unit
+
+    override fun convert(text: String): T {
+        val unwrapped = unwrapJson(text)
+        try {
+            return lenientMapper.readValue<Any?>(unwrapped, lenientMapper.constructType(this.type)) as T
+        } catch (e: JacksonException) {
+            // Some LLMs escape the very quotes that delimit a string value (e.g. `"key": \"value\"`),
+            // which Jackson cannot parse. Retry once with those delimiter quotes repaired. The repair
+            // rewrites `\"` only at string delimiter positions, so valid JSON containing legitimately
+            // escaped quotes (e.g. `["\"A\""]`) is never altered, even on this fallback path.
+            val repaired = fixMalformedEscapedQuotes(unwrapped)
+            if (repaired != unwrapped) {
+                try {
+                    return lenientMapper.readValue<Any?>(repaired, lenientMapper.constructType(this.type)) as T
+                } catch (_: JacksonException) {
+                    // fall through and report the original failure below
+                }
+            }
+            logger.error(
+                // Spring AI 2.0 removed org.springframework.ai.util.LoggingMarkers; reproduce the
+                // same SLF4J marker ("SENSITIVE") so existing sensitive-data log filtering still applies.
+                MarkerFactory.getMarker("SENSITIVE"),
+                "Could not parse the given text to the desired target type: \"{}\" into {}", unwrapped, this.type
+            )
+            throw RuntimeException(e)
+        }
+    }
+
+    private fun unwrapJson(text: String): String {
+        var result = text.trim()
+
+        // Remove markdown code blocks
+        if (result.startsWith("```") && result.endsWith("```")) {
+            result = result.removePrefix("```json")
+                .removePrefix("```")
+                .removeSuffix("```")
+                .trim()
+        }
+
+        return result
+    }
+
+    override fun getJsonSchema(): String = jsonSchemaValue
+
+    override fun getFormat(): String =
+        """|
+           |Your response should be in JSON format.
+           |Do not include any explanations, only provide a RFC8259 compliant JSON response following this format without deviation.
+           |Do not include markdown code blocks in your response.
+           |Remove the ```json markdown from the output.
+           |Here is the JSON Schema instance your output must adhere to:
+           |```${getJsonSchema()}```
+           |""".trimMargin()
+}

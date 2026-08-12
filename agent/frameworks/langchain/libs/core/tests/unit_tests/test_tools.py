@@ -365,7 +365,32 @@ def test_structured_single_str_decorator_no_infer_schema() -> None:
 
     assert isinstance(unstructured_tool_input, BaseTool)
     assert unstructured_tool_input.args_schema is None
+    assert unstructured_tool_input.description == "Return the arguments directly."
     assert unstructured_tool_input.run("foo") == "foo"
+
+
+def test_simple_tool_decorator_no_infer_schema_uses_explicit_description() -> None:
+    """Test that a simple tool preserves an explicit description."""
+
+    @tool(infer_schema=False, description="Echo the supplied input.")
+    def echo(tool_input: str) -> str:
+        return tool_input
+
+    assert echo.description == "Echo the supplied input."
+
+
+def test_simple_tool_decorator_no_infer_schema_requires_description_or_docstring() -> (
+    None
+):
+    """Test that a simple tool requires an authored description."""
+    with pytest.raises(
+        ValueError,
+        match="Function must have either a docstring or description",
+    ):
+
+        @tool(infer_schema=False)
+        def echo(tool_input: str) -> str:
+            return tool_input
 
 
 def test_structured_tool_types_parsed() -> None:
@@ -1121,6 +1146,30 @@ async def test_async_validation_error_handling_callable() -> None:
     tool_ = _MockStructuredTool(handle_validation_error=handling)
     actual = await tool_.arun({})
     assert expected == actual
+
+
+@pytest.mark.skipif(
+    sys.version_info >= (3, 14),
+    reason="pydantic.v1 namespace not supported with Python 3.14+",
+)
+async def test_async_validation_error_handling_pydantic_v1_schema() -> None:
+    """Test async validation error handling for Pydantic V1 schemas."""
+
+    class Args(BaseModelV1):
+        x: int
+
+    def foo(x: int) -> str:
+        """Return x as text."""
+        return str(x)
+
+    tool_ = StructuredTool.from_function(
+        foo,
+        args_schema=cast("ArgsSchema", Args),
+        handle_validation_error=True,
+    )
+
+    assert tool_.run({"x": "not-an-integer"}) == "Tool input validation error"
+    assert await tool_.arun({"x": "not-an-integer"}) == "Tool input validation error"
 
 
 @pytest.mark.parametrize(

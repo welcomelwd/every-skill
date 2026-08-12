@@ -38,10 +38,10 @@ python3 scripts/check_telemetry.py \
 Follow the instructions corresponding to the availability of historical metrics
 data:
 
-*   **Case 1: No historical metrics data available (e.g., brand new agent) or no
+*   **Case 1: No historical metrics data available (for example, brand new agent) or no
     monitoring namespaces found**: You MUST read and follow:
     [no_historical_traffic_data.md](no_historical_traffic_data.md)
-*   **Case 2: Historical metrics data available (e.g., active agent with
+*   **Case 2: Historical metrics data available (for example, active agent with
     traffic)**: You MUST read and follow:
     [has_historical_traffic_data.md](has_historical_traffic_data.md)
 

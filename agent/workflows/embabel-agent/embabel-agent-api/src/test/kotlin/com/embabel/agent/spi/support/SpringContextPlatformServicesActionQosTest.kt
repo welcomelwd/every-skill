@@ -1,0 +1,243 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+@file:OptIn(InternalObservabilityApi::class)
+
+package com.embabel.agent.spi.support
+
+import com.embabel.agent.api.channel.OutputChannel
+import com.embabel.agent.api.common.Asyncer
+import com.embabel.agent.api.event.AgenticEventListener
+import com.embabel.agent.api.event.observation.AgentInstrumentation
+import com.embabel.agent.api.event.observation.InternalObservabilityApi
+import com.embabel.agent.api.event.observation.NoOpAgentInstrumentation
+import com.embabel.agent.core.AgentPlatform
+import com.embabel.agent.core.AgentProcessRepository
+import com.embabel.agent.core.internal.LlmOperations
+import com.embabel.agent.spi.OperationScheduler
+import com.embabel.agent.spi.config.spring.AgentPlatformProperties
+import com.embabel.agent.spi.expression.spel.SpelLogicalExpressionParser
+import com.embabel.common.textio.template.TemplateRenderer
+import com.embabel.common.util.EmbabelObjectMapperHolder
+import tools.jackson.databind.ObjectMapper
+import io.micrometer.observation.Observation
+import io.mockk.every
+import io.mockk.mockk
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Nested
+import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.config.BeanDefinitionCustomizer
+import org.springframework.context.ApplicationContext
+import org.springframework.context.support.GenericApplicationContext
+import java.util.function.Supplier
+
+/**
+ * Unit tests for [SpringContextPlatformServices.actionQosProperties].
+ *
+ * Covers:
+ * - null application context (test/unit-test fallback — same path as [com.embabel.agent.test.integration.IntegrationTestUtils.dummyPlatformServices])
+ * - context present, [com.embabel.agent.spi.config.spring.AgentPlatformProperties] bean found with QoS configured
+ * - context present, [com.embabel.agent.spi.config.spring.AgentPlatformProperties] bean found with no QoS override
+ * - context present, [com.embabel.agent.spi.config.spring.AgentPlatformProperties] bean not registered (safe fallback via [org.springframework.context.ApplicationContext.getBeansOfType])
+ */
+class SpringContextPlatformServicesActionQosTest {
+
+    private lateinit var mockAgentPlatform: AgentPlatform
+    private lateinit var mockLlmOperations: LlmOperations
+    private lateinit var mockEventListener: AgenticEventListener
+    private lateinit var mockOperationScheduler: OperationScheduler
+    private lateinit var mockAgentProcessRepository: AgentProcessRepository
+    private lateinit var mockAsyncer: Asyncer
+    private lateinit var mockObjectMapper: ObjectMapper
+    private lateinit var mockOutputChannel: OutputChannel
+    private lateinit var mockTemplateRenderer: TemplateRenderer
+    private lateinit var mockApplicationContext: ApplicationContext
+
+    @BeforeEach
+    fun setup() {
+        mockAgentPlatform = mockk()
+        mockLlmOperations = mockk()
+        mockEventListener = mockk()
+        mockOperationScheduler = mockk()
+        mockAgentProcessRepository = mockk()
+        mockAsyncer = mockk()
+        mockObjectMapper = mockk()
+        mockOutputChannel = mockk()
+        mockTemplateRenderer = mockk()
+        mockApplicationContext = mockk()
+    }
+
+    private fun createServices(applicationContext: ApplicationContext?): SpringContextPlatformServices =
+        SpringContextPlatformServices(
+            agentPlatform = mockAgentPlatform,
+            llmOperations = mockLlmOperations,
+            eventListener = mockEventListener,
+            operationScheduler = mockOperationScheduler,
+            agentProcessRepository = mockAgentProcessRepository,
+            asyncer = mockAsyncer,
+            embabelObjectMapperHolder = EmbabelObjectMapperHolder(mockObjectMapper),
+            outputChannel = mockOutputChannel,
+            templateRenderer = mockTemplateRenderer,
+            customLogicalExpressionParser = SpelLogicalExpressionParser(),
+            applicationContext = applicationContext,
+        )
+
+    // ---------------------------------------------------------------------------
+
+    @Nested
+    inner class `Null application context` {
+
+        @Test
+        fun `returns empty ActionQosProperties when context is null`() {
+            // This is the path taken by dummyPlatformServices() in unit tests.
+            val services = createServices(applicationContext = null)
+
+            val props = services.actionQosProperties()
+
+            // All-null default = no-op — preserves pre-fix behaviour.
+            assertThat(props).isNotNull
+            assertThat(props.default.maxAttempts).isNull()
+            assertThat(props.default.backoffMillis).isNull()
+            assertThat(props.default.backoffMultiplier).isNull()
+            assertThat(props.default.backoffMaxInterval).isNull()
+            assertThat(props.default.idempotent).isNull()
+        }
+    }
+
+    @Nested
+    inner class `Application context present` {
+
+        @Test
+        fun `returns configured ActionQosProperties from context`() {
+            val platformProperties = AgentPlatformProperties().apply {
+                actionQos = AgentPlatformProperties.ActionQosProperties().apply {
+                    default = AgentPlatformProperties.ActionQosProperties.ActionProperties(
+                        maxAttempts = 2,
+                        backoffMillis = 500L,
+                        idempotent = true,
+                    )
+                }
+            }
+            every {
+                mockApplicationContext.getBeansOfType(AgentPlatformProperties::class.java, any(), any())
+            } returns mapOf("agentPlatformProperties" to platformProperties)
+
+            val services = createServices(mockApplicationContext)
+            val props = services.actionQosProperties()
+
+            assertThat(props.default.maxAttempts).isEqualTo(2)
+            assertThat(props.default.backoffMillis).isEqualTo(500L)
+            assertThat(props.default.idempotent).isTrue()
+        }
+
+        @Test
+        fun `returns all-null properties when AgentPlatformProperties has no qos override`() {
+            val platformProperties = AgentPlatformProperties()   // actionQos.default has all-null fields
+            every {
+                mockApplicationContext.getBeansOfType(AgentPlatformProperties::class.java, any(), any())
+            } returns mapOf("agentPlatformProperties" to platformProperties)
+
+            val services = createServices(mockApplicationContext)
+            val props = services.actionQosProperties()
+
+            // All fields null → withEffectiveQos() will treat it as no-op.
+            assertThat(props.default.maxAttempts).isNull()
+        }
+
+        @Test
+        fun `returns empty fallback when AgentPlatformProperties bean is not registered`() {
+            // getBeansOfType returns empty map instead of throwing NoSuchBeanDefinitionException.
+            every {
+                mockApplicationContext.getBeansOfType(AgentPlatformProperties::class.java, any(), any())
+            } returns emptyMap()
+
+            val services = createServices(mockApplicationContext)
+            val props = services.actionQosProperties()
+
+            // Safe fallback — same result as null context.
+            assertThat(props.default.maxAttempts).isNull()
+        }
+    }
+
+    @Nested
+    inner class `Instrumentation resolution` {
+
+        // Distinct AgentInstrumentation instances — identity matters for the isSameAs assertions.
+        private fun instrumentation(): AgentInstrumentation = object : AgentInstrumentation {
+            override fun <T> observe(context: () -> Observation.Context, work: () -> T): T = work()
+        }
+
+        private fun contextWith(
+            vararg beans: Pair<String, AgentInstrumentation>,
+            primary: String? = null,
+        ) = GenericApplicationContext().apply {
+            beans.forEach { (name, instr) ->
+                val customizers = if (name == primary) {
+                    arrayOf(BeanDefinitionCustomizer { it.isPrimary = true })
+                } else {
+                    emptyArray()
+                }
+                registerBean(name, AgentInstrumentation::class.java, Supplier { instr }, *customizers)
+            }
+            refresh()
+        }
+
+        @Test
+        fun `resolves the single AgentInstrumentation bean from the context`() {
+            val adapter = instrumentation()
+            val services = createServices(contextWith("adapter" to adapter))
+
+            assertThat(services.instrumentation).isSameAs(adapter)
+        }
+
+        @Test
+        fun `falls back to NoOp when no AgentInstrumentation bean is present`() {
+            val services = createServices(GenericApplicationContext().apply { refresh() })
+
+            // The master-switch guarantee: no adapter bean (module absent/disabled) => core stays NoOp.
+            assertThat(services.instrumentation).isSameAs(NoOpAgentInstrumentation)
+        }
+
+        @Test
+        fun `falls back to NoOp when the context is null`() {
+            val services = createServices(applicationContext = null)
+
+            assertThat(services.instrumentation).isSameAs(NoOpAgentInstrumentation)
+        }
+
+        @Test
+        fun `honours @Primary when several AgentInstrumentation beans exist`() {
+            val primary = instrumentation()
+            val other = instrumentation()
+            val services = createServices(
+                contextWith("other" to other, "primary" to primary, primary = "primary"),
+            )
+
+            assertThat(services.instrumentation).isSameAs(primary)
+        }
+
+        @Test
+        fun `falls back to NoOp when several beans exist with no primary`() {
+            val services = createServices(
+                contextWith("a" to instrumentation(), "b" to instrumentation()),
+            )
+
+            // Ambiguous, no primary → NoOp rather than an arbitrary pick or a thrown exception.
+            assertThat(services.instrumentation).isSameAs(NoOpAgentInstrumentation)
+        }
+    }
+
+}

@@ -1,0 +1,123 @@
+[[getting-started.first-agent]]
+=== Writing Your First Agent
+
+The easiest way to create your first agent is to use the <<getting-started.quickstart,Java or Kotlin template repositories>>.
+
+==== Example: WriteAndReviewAgent
+
+The template includes a `WriteAndReviewAgent` that demonstrates key concepts:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+@Agent(description = "Agent that writes and reviews stories")
+public class WriteAndReviewAgent {
+
+    @Action
+    public Story writeStory(UserInput userInput, OperationContext context) {
+        return context.ai()
+            .withAutoLlm()
+            .createObject("""
+                You are a creative writer who aims to delight and surprise.
+                Write a story about %s
+                """.formatted(userInput.getContent()),
+            Story.class);
+    }
+
+    @AchievesGoal(description = "Review a story")
+    @Action
+    public ReviewedStory reviewStory(Story story, OperationContext context) {
+        return context.ai()
+            .withLlmByRole("reviewer")
+            .createObject("""
+                You are a meticulous editor.
+                Carefully review this story:
+                %s
+            """.formatted(story.text),
+            ReviewedStory.class);
+    }
+}
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+@Agent(description = "Agent that writes and reviews stories")
+class WriteAndReviewAgent {
+
+    @Action
+    fun writeStory(userInput: UserInput, context: OperationContext): Story {
+        return context.ai()
+            .withAutoLlm()
+            .createObject("""
+                You are a creative writer who aims to delight and surprise.
+                Write a story about ${userInput.content}
+                """,
+                Story::class.java)
+    }
+
+    @AchievesGoal(description = "Review a story")
+    @Action
+    fun reviewStory(story: Story, context: OperationContext): ReviewedStory {
+        return context.ai()
+            .withLlmByRole("reviewer")
+            .createObject("""
+                You are a meticulous editor.
+                Carefully review this story:
+                ${story.text}
+            """,
+            ReviewedStory::class.java)
+    }
+}
+----
+====
+
+==== Key Concepts Demonstrated
+
+**Multiple LLMs with Different Configurations:**
+
+- Writer LLM uses high temperature (0.8) for creativity
+- Reviewer LLM uses low temperature (0.2) for analytical review
+- Different personas guide the model behavior
+
+**Actions and Goals:**
+
+- `@Action` methods are the steps the agent can take
+- `@AchievesGoal` marks the final action that completes the agent's work
+
+**Domain Objects:**
+
+- `Story` and `ReviewedStory` are strongly-typed domain objects
+- Help structure the interaction between actions
+
+==== Running Your Agent
+
+Set your API keys and run the shell:
+
+[source,bash]
+----
+export OPENAI_API_KEY="your_key_here"
+./scripts/shell.sh
+----
+
+In the shell, try:
+
+----
+x "Tell me a story about a robot learning to paint"
+----
+
+The agent will:
+
+1. Generate a creative story using the writer LLM
+2. Review and improve it using the reviewer LLM
+3. Return the final reviewed story
+
+==== Next Steps
+
+- Explore the https://github.com/embabel/embabel-agent-examples[examples repository] for more complex agents
+- Read the <<reference.reference,Reference Documentation>> for detailed API information
+- Try building your own domain-specific agents

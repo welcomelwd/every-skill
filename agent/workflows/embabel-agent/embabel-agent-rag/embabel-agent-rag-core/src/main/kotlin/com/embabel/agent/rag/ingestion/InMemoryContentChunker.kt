@@ -1,0 +1,573 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.embabel.agent.rag.ingestion
+
+import com.embabel.agent.rag.ingestion.ContentChunker.Companion.CHUNK_INDEX
+import com.embabel.agent.rag.ingestion.ContentChunker.Companion.CONTAINER_SECTION_ID
+import com.embabel.agent.rag.ingestion.ContentChunker.Companion.CONTAINER_SECTION_TITLE
+import com.embabel.agent.rag.ingestion.ContentChunker.Companion.CONTAINER_SECTION_URL
+import com.embabel.agent.rag.ingestion.ContentChunker.Companion.LEAF_SECTION_ID
+import com.embabel.agent.rag.ingestion.ContentChunker.Companion.LEAF_SECTION_TITLE
+import com.embabel.agent.rag.ingestion.ContentChunker.Companion.LEAF_SECTION_URL
+import com.embabel.agent.rag.ingestion.ContentChunker.Companion.ROOT_DOCUMENT_ID
+import com.embabel.agent.rag.ingestion.ContentChunker.Companion.SEQUENCE_NUMBER
+import com.embabel.agent.rag.ingestion.ContentChunker.Companion.TOTAL_CHUNKS
+import com.embabel.agent.rag.model.*
+import org.slf4j.LoggerFactory
+import java.util.*
+
+/**
+ * Simple implementation of ContentChunker that operates in memory.
+ * Will whole entire document in memory.
+ */
+class InMemoryContentChunker(
+    val config: ContentChunker.Config = ContentChunker.Config(),
+    override val chunkTransformer: ChunkTransformer = ChunkTransformer.NO_OP,
+) : ContentChunker {
+
+    private val logger = LoggerFactory.getLogger(javaClass)
+
+    override fun chunk(section: NavigableContainerSection): List<Chunk> {
+        val leaves = section.leaves().toList()
+        val totalContentLength = leaves.sumOf { it.content.length + it.title.length + 1 } // +1 for newline after title
+
+        // Determine root document ID: if section is a ContentRoot, use its ID, otherwise try to get from metadata
+        val rootId = if (section is ContentRoot) {
+            section.id
+        } else {
+            section.metadata[ROOT_DOCUMENT_ID] as? String ?: section.id
+        }
+
+        // Determine the document for transformation context
+        val document = section as? ContentRoot
+
+        // Strategy 1: If total content fits in a single chunk, combine everything
+        val chunks = if (totalContentLength <= config.maxChunkSize) {
+            logger.debug(
+                "Creating single chunk for container section '{}' with {} leaves (total length: {} <= max: {})",
+                section.title, leaves.size, totalContentLength, config.maxChunkSize
+            )
+            listOf(createSingleChunkFromContainer(section, leaves, rootId))
+        } else {
+            // Strategy 2: Try to group leaves intelligently before splitting
+            logger.debug(
+                "Total content ({} chars) exceeds maxChunkSize ({}), attempting intelligent grouping",
+                totalContentLength, config.maxChunkSize
+            )
+            chunkLeavesIntelligently(section, leaves, rootId)
+        }
+
+        // Apply transformer if configured
+        return applyTransformer(chunks, section, document)
+    }
+
+    /**
+     * Apply the configured chunk transformer to all chunks.
+     */
+    private fun applyTransformer(
+        chunks: List<Chunk>,
+        section: Section,
+        document: ContentRoot?,
+    ): List<Chunk> {
+        val context = ChunkTransformationContext(section = section, document = document)
+        return chunks.map { chunk -> chunkTransformer.transform(chunk, context) }
+    }
+
+    /**
+     * Split multiple MaterializedContainerSections into Chunks
+     */
+    fun splitSections(sections: List<NavigableContainerSection>): List<Chunk> {
+        return sections.flatMap { chunk(it) }
+    }
+
+    private fun createSingleChunkFromContainer(
+        section: NavigableContainerSection,
+        leaves: List<LeafSection>,
+        rootId: String,
+    ): Chunk {
+        val combinedContent = leaves.joinToString("\n\n") { leaf ->
+            if (leaf.title.isNotBlank()) "${leaf.title}\n${leaf.content}" else leaf.content
+        }.trim()
+
+        val combinedMetadata = mutableMapOf<String, Any?>()
+        combinedMetadata.putAll(section.metadata)
+        combinedMetadata[ROOT_DOCUMENT_ID] = rootId
+        combinedMetadata[CONTAINER_SECTION_ID] = section.id
+        combinedMetadata[CONTAINER_SECTION_TITLE] = section.title
+        combinedMetadata[CONTAINER_SECTION_URL] = section.uri
+        combinedMetadata[CHUNK_INDEX] = 0
+        combinedMetadata[TOTAL_CHUNKS] = 1
+        combinedMetadata[SEQUENCE_NUMBER] = 0
+
+        return Chunk.Companion(
+            id = UUID.randomUUID().toString(),
+            text = combinedContent,
+            metadata = combinedMetadata,
+            parentId = section.id
+        )
+    }
+
+    private fun chunkLeavesIntelligently(
+        containerSection: NavigableContainerSection,
+        leaves: List<LeafSection>,
+        rootId: String,
+    ): List<Chunk> {
+        val allChunks = mutableListOf<Chunk>()
+        val leafGroups = groupLeavesForOptimalChunking(leaves)
+        var sequenceNumber = 0
+
+        logger.debug("Grouped {} leaves into {} groups for chunking", leaves.size, leafGroups.size)
+
+        for (group in leafGroups) {
+            when {
+                group.size == 1 -> {
+                    // Single leaf group
+                    val leaf = group.first()
+                    val leafContentSize = leaf.content.length + leaf.title.length + 1
+
+                    if (leafContentSize <= config.maxChunkSize) {
+                        // Small enough for single chunk
+                        allChunks.add(createSingleLeafChunk(containerSection, leaf, rootId, sequenceNumber++))
+                    } else {
+                        // Too large, split it
+                        val chunks = splitLeafIntoMultipleChunks(containerSection, leaf, rootId, sequenceNumber)
+                        sequenceNumber += chunks.size
+                        allChunks.addAll(chunks)
+                    }
+                }
+
+                else -> {
+                    // Multi-leaf group - create combined chunk
+                    allChunks.add(createCombinedLeafChunk(containerSection, group, rootId, sequenceNumber++))
+                }
+            }
+        }
+
+        return allChunks
+    }
+
+    private fun groupLeavesForOptimalChunking(leaves: List<LeafSection>): List<List<LeafSection>> {
+        val groups = mutableListOf<List<LeafSection>>()
+        val currentGroup = mutableListOf<LeafSection>()
+        var currentGroupSize = 0
+
+        for (leaf in leaves) {
+            val leafSize = leaf.content.length + leaf.title.length + 1 // +1 for newline
+
+            // If adding this leaf would exceed maxChunkSize, finalize current group
+            if (currentGroup.isNotEmpty() && currentGroupSize + leafSize + 2 > config.maxChunkSize) { // +2 for separator
+                groups.add(currentGroup.toList())
+                currentGroup.clear()
+                currentGroupSize = 0
+            }
+
+            // If single leaf is too large, it goes in its own group
+            if (leafSize > config.maxChunkSize) {
+                if (currentGroup.isNotEmpty()) {
+                    groups.add(currentGroup.toList())
+                    currentGroup.clear()
+                    currentGroupSize = 0
+                }
+                groups.add(listOf(leaf))
+            } else {
+                // Add leaf to current group
+                currentGroup.add(leaf)
+                currentGroupSize += leafSize + 2 // +2 for separator between leaves
+            }
+        }
+
+        // Add final group if it has content
+        if (currentGroup.isNotEmpty()) {
+            groups.add(currentGroup.toList())
+        }
+
+        return groups
+    }
+
+    private fun createCombinedLeafChunk(
+        containerSection: NavigableContainerSection,
+        leaves: List<LeafSection>,
+        rootId: String,
+        sequenceNumber: Int,
+    ): Chunk {
+        val combinedContent = leaves.joinToString("\n\n") { leaf ->
+            if (leaf.title.isNotBlank()) "${leaf.title}\n${leaf.content}" else leaf.content
+        }.trim()
+
+        val combinedMetadata = mutableMapOf<String, Any?>()
+        combinedMetadata.putAll(containerSection.metadata)
+        combinedMetadata[ROOT_DOCUMENT_ID] = rootId
+        combinedMetadata[CONTAINER_SECTION_ID] = containerSection.id
+        combinedMetadata[CONTAINER_SECTION_TITLE] = containerSection.title
+        combinedMetadata[CONTAINER_SECTION_URL] = containerSection.uri
+        combinedMetadata[CHUNK_INDEX] = 0
+        combinedMetadata[TOTAL_CHUNKS] = 1
+        combinedMetadata[SEQUENCE_NUMBER] = sequenceNumber
+
+        return Chunk.Companion(
+            id = UUID.randomUUID().toString(),
+            text = combinedContent,
+            metadata = combinedMetadata,
+            parentId = containerSection.id
+        )
+    }
+
+    private fun createSingleLeafChunk(
+        containerSection: NavigableContainerSection,
+        leaf: LeafSection,
+        rootId: String,
+        sequenceNumber: Int,
+    ): Chunk {
+        val content = if (leaf.title.isNotBlank()) "${leaf.title}\n${leaf.content}" else leaf.content
+
+        return Chunk.Companion(
+            id = UUID.randomUUID().toString(),
+            text = content.trim(),
+            metadata = leaf.metadata + mapOf(
+                ROOT_DOCUMENT_ID to rootId,
+                CONTAINER_SECTION_ID to containerSection.id,
+                CONTAINER_SECTION_TITLE to containerSection.title,
+                LEAF_SECTION_ID to leaf.id,
+                LEAF_SECTION_TITLE to leaf.title,
+                LEAF_SECTION_URL to leaf.uri,
+                CHUNK_INDEX to 0,
+                TOTAL_CHUNKS to 1,
+                SEQUENCE_NUMBER to sequenceNumber
+            ),
+            parentId = leaf.id
+        )
+    }
+
+    private fun splitLeafIntoMultipleChunks(
+        containerSection: NavigableContainerSection,
+        leaf: LeafSection,
+        rootId: String,
+        startingSequenceNumber: Int,
+    ): List<Chunk> {
+        val chunks = mutableListOf<Chunk>()
+        val fullContent = if (leaf.title.isNotBlank()) "${leaf.title}\n${leaf.content}" else leaf.content
+        val textChunks = splitText(fullContent.trim()).filter { it.trim().isNotEmpty() }
+
+        logger.debug("Split leaf section '{}' into {} text chunks", leaf.title, textChunks.size)
+
+        textChunks.forEachIndexed { index, textChunk ->
+            val chunk = Chunk.Companion(
+                id = UUID.randomUUID().toString(),
+                text = textChunk.trim(),
+                metadata = leaf.metadata + mapOf(
+                    ROOT_DOCUMENT_ID to rootId,
+                    CONTAINER_SECTION_ID to containerSection.id,
+                    CONTAINER_SECTION_TITLE to containerSection.title,
+                    LEAF_SECTION_ID to leaf.id,
+                    LEAF_SECTION_TITLE to leaf.title,
+                    LEAF_SECTION_URL to leaf.uri,
+                    CHUNK_INDEX to index,
+                    TOTAL_CHUNKS to textChunks.size,
+                    SEQUENCE_NUMBER to (startingSequenceNumber + index)
+                ),
+                parentId = leaf.id
+            )
+            chunks.add(chunk)
+        }
+
+        return chunks
+    }
+
+    private fun splitText(text: String): List<String> {
+        // First, try to split by paragraphs
+        val paragraphs = text.split("\n\n").filter { it.trim().isNotEmpty() }
+
+        val chunks = mutableListOf<String>()
+        var currentChunk = StringBuilder()
+
+        // An oversized paragraph MIXING table lines with prose (single newlines — no
+        // blank line isolating the table) would fall through to sentence splitting,
+        // whose fake boundaries ("excl.") cut inside rows and even inside numeric
+        // tokens. Split such paragraphs into runs of table lines vs prose lines
+        // first, so each run takes its proper path below.
+        val blocks = paragraphs.flatMap { p ->
+            if (p.length > config.maxChunkSize) splitTableProseBlocks(p) else listOf(p)
+        }
+
+        for (paragraph in blocks) {
+            // A table paragraph too long for one chunk splits by ROWS with the header
+            // repeated in every piece — "sentences" have no meaning inside a table, and
+            // a row severed from its header row is retrieved next to the wrong label.
+            // Handled BEFORE the finalize-with-overlap below: table pieces are
+            // self-contained, so no overlap is seeded into them.
+            if (paragraph.length > config.maxChunkSize && isTableParagraph(paragraph)) {
+                if (currentChunk.isNotEmpty()) {
+                    chunks.add(currentChunk.toString().trim())
+                    currentChunk = StringBuilder()
+                }
+                chunks.addAll(splitTableByRows(paragraph))
+                continue
+            }
+
+            // If adding this paragraph would exceed the limit, finalize current chunk
+            if (currentChunk.isNotEmpty() &&
+                currentChunk.length + paragraph.length + 2 > config.maxChunkSize
+            ) {
+
+                chunks.add(currentChunk.toString().trim())
+
+                // Start new chunk with overlap from previous chunk if possible
+                currentChunk = StringBuilder()
+                if (chunks.isNotEmpty()) {
+                    val overlap = getOverlapText(chunks.last())
+                    if (overlap.isNotEmpty() && overlap.length + paragraph.length + 2 <= config.maxChunkSize) {
+                        currentChunk.append(overlap).append("\n\n")
+                    }
+                }
+            }
+
+            // If single paragraph is too long, split it by sentences
+            if (paragraph.length > config.maxChunkSize) {
+                val sentenceChunks = splitBySentences(paragraph)
+                for (sentenceChunk in sentenceChunks) {
+                    if (currentChunk.isNotEmpty() &&
+                        currentChunk.length + sentenceChunk.length + 2 > config.maxChunkSize
+                    ) {
+
+                        chunks.add(currentChunk.toString().trim())
+                        currentChunk = StringBuilder()
+
+                        // Add overlap
+                        if (chunks.isNotEmpty()) {
+                            val overlap = getOverlapText(chunks.last())
+                            if (overlap.isNotEmpty() && overlap.length + sentenceChunk.length + 2 <= config.maxChunkSize) {
+                                currentChunk.append(overlap).append("\n\n")
+                            }
+                        }
+                    }
+
+                    if (currentChunk.isNotEmpty()) {
+                        currentChunk.append("\n\n")
+                    }
+                    currentChunk.append(sentenceChunk)
+                }
+            } else {
+                // Add paragraph as is
+                if (currentChunk.isNotEmpty()) {
+                    currentChunk.append("\n\n")
+                }
+                currentChunk.append(paragraph)
+            }
+        }
+
+        // Add final chunk if it has content
+        if (currentChunk.isNotEmpty()) {
+            chunks.add(currentChunk.toString().trim())
+        }
+
+        // Safety check: ensure no chunk exceeds max size and filter out empty chunks
+        val finalChunks = enforceMaxSize(chunks)
+
+        return finalChunks.ifEmpty {
+            if (text.trim().isNotEmpty()) listOf(text.trim()) else emptyList()
+        }
+    }
+
+    private fun splitBySentences(text: String): List<String> {
+        // Split by sentence endings, but be careful with abbreviations
+        val sentences = text.split(Regex("(?<=[.!?])\\s+"))
+            .filter { it.trim().isNotEmpty() }
+
+        val chunks = mutableListOf<String>()
+        var currentChunk = StringBuilder()
+
+        for (sentence in sentences) {
+            if (currentChunk.isNotEmpty() &&
+                currentChunk.length + sentence.length + 1 > config.maxChunkSize
+            ) {
+
+                chunks.add(currentChunk.toString().trim())
+                currentChunk = StringBuilder()
+
+                // Add overlap from previous chunk
+                if (chunks.isNotEmpty()) {
+                    val overlap = getOverlapText(chunks.last())
+                    if (overlap.isNotEmpty() && overlap.length + sentence.length + 1 <= config.maxChunkSize) {
+                        currentChunk.append(overlap).append(" ")
+                    }
+                }
+            }
+
+            if (currentChunk.isNotEmpty()) {
+                currentChunk.append(" ")
+            }
+            currentChunk.append(sentence)
+        }
+
+        if (currentChunk.isNotEmpty()) {
+            chunks.add(currentChunk.toString().trim())
+        }
+
+        // Safety check: ensure no chunk exceeds max size and filter out empty chunks
+        val finalChunks = enforceMaxSize(chunks)
+
+        return finalChunks.ifEmpty {
+            if (text.trim().isNotEmpty()) listOf(text.trim()) else emptyList()
+        }
+    }
+
+    private fun getOverlapText(previousChunk: String): String {
+        if (previousChunk.length <= config.overlapSize) {
+            return ""
+        }
+
+        // If the overlap window lands inside a markdown table, snap to whole rows and
+        // re-attach the table's header — a headerless row fragment is retrieved next to
+        // the wrong label, which is worse than no overlap at all.
+        tableAwareOverlap(previousChunk)?.let { return it }
+
+        // Try to get overlap at a sentence boundary
+        val overlap = previousChunk.takeLast(config.overlapSize)
+        val sentenceStart = overlap.indexOf(". ") + 2
+
+        return if (sentenceStart > 1 && sentenceStart < overlap.length) {
+            overlap.substring(sentenceStart)
+        } else {
+            // Fallback to word boundary
+            val words = overlap.split(" ")
+            if (words.size > 1) {
+                words.drop(1).joinToString(" ")
+            } else {
+                ""
+            }
+        }
+    }
+
+    /**
+     * If the last [ContentChunker.Config.overlapSize] characters of [previousChunk] begin inside a
+     * markdown table, return an overlap of complete table rows with the table's header row(s)
+     * prepended. Returns null when the overlap window does not start inside a table.
+     */
+    private fun tableAwareOverlap(previousChunk: String): String? {
+        val raw = previousChunk.takeLast(config.overlapSize)
+        // Snap to whole lines: drop the (possibly partial) first line of the window.
+        val snapped = if (raw.contains('\n')) raw.substringAfter('\n') else raw
+        val firstContent = snapped.lineSequence().firstOrNull { it.isNotBlank() } ?: return null
+        if (!isTableLine(firstContent)) {
+            return null
+        }
+        // `snapped` starts right after a newline, so its lines align with the tail of the chunk's lines.
+        val prevLines = previousChunk.lines()
+        var idx = prevLines.size - snapped.lines().size
+        while (idx < prevLines.size && prevLines[idx].isBlank()) {
+            idx++
+        }
+        // Walk back to the start of the table block the overlap begins in.
+        var blockStart = idx
+        while (blockStart > 0 && isTableLine(prevLines[blockStart - 1])) {
+            blockStart--
+        }
+        if (blockStart == idx) {
+            // The window happens to start at the table's first row — header already present.
+            return snapped.trim()
+        }
+        val header = tableHeaderOf(prevLines.subList(blockStart, prevLines.size))
+        return (header + prevLines.subList(idx, prevLines.size)).joinToString("\n").trim()
+    }
+
+
+    /**
+     * Split a paragraph into runs of consecutive table lines and non-table lines.
+     * Returns the paragraph unchanged when it holds no table lines at all.
+     */
+    private fun splitTableProseBlocks(paragraph: String): List<String> {
+        val lines = paragraph.lines()
+        if (lines.none { isTableLine(it) }) return listOf(paragraph)
+        val blocks = mutableListOf<String>()
+        val current = mutableListOf<String>()
+        var inTable = false
+        for (line in lines) {
+            val table = isTableLine(line)
+            if (current.isNotEmpty() && table != inTable) {
+                blocks.add(current.joinToString("\n").trim())
+                current.clear()
+            }
+            inTable = table
+            current.add(line)
+        }
+        if (current.isNotEmpty()) blocks.add(current.joinToString("\n").trim())
+        return blocks.filter { it.isNotBlank() }
+    }
+
+    /**
+     * Bound every chunk to maxChunkSize by character-splitting oversized ones — EXCEPT
+     * table content. A piece from [splitTableByRows] is row-atomic by construction and
+     * legitimately exceeds the budget when its header plus a SINGLE row does; a blind
+     * character cut severs the row from its header (retrieved next to the wrong label)
+     * and can split a numeric token in half, making the value unfindable. An oversized
+     * table piece is the lesser harm, so it passes through whole.
+     */
+    private fun enforceMaxSize(chunks: List<String>): List<String> =
+        chunks.flatMap { chunk ->
+            when {
+                chunk.length <= config.maxChunkSize -> listOf(chunk)
+                isTableParagraph(chunk) -> listOf(chunk)
+                else -> chunk.chunked(config.maxChunkSize).filter { it.trim().isNotEmpty() }
+            }
+        }.filter { it.trim().isNotEmpty() }
+
+    /**
+     * Split an oversized markdown table into pieces of complete rows, each carrying the table's
+     * header row(s), so every piece reads as a self-contained table.
+     */
+    private fun splitTableByRows(table: String): List<String> {
+        val lines = table.lines().filter { it.isNotBlank() }
+        val header = tableHeaderOf(lines)
+        val rows = lines.drop(header.size)
+        val headerSize = header.sumOf { it.length + 1 }
+
+        val pieces = mutableListOf<String>()
+        val currentRows = mutableListOf<String>()
+        var currentSize = headerSize
+        for (row in rows) {
+            if (currentRows.isNotEmpty() && currentSize + row.length + 1 > config.maxChunkSize) {
+                pieces.add((header + currentRows).joinToString("\n"))
+                currentRows.clear()
+                currentSize = headerSize
+            }
+            currentRows.add(row)
+            currentSize += row.length + 1
+        }
+        if (currentRows.isNotEmpty()) {
+            pieces.add((header + currentRows).joinToString("\n"))
+        }
+        return pieces
+    }
+
+    /** The header row plus its separator row (`|---|…`) if present; else just the first line. */
+    private fun tableHeaderOf(tableLines: List<String>): List<String> =
+        if (tableLines.size >= 2 && isSeparatorLine(tableLines[1])) {
+            tableLines.take(2)
+        } else {
+            tableLines.take(1)
+        }
+
+    private fun isTableLine(line: String): Boolean = line.trimStart().startsWith("|")
+
+    private fun isSeparatorLine(line: String): Boolean =
+        isTableLine(line) && line.contains('-') && line.all { it in "|-: \t" }
+
+    private fun isTableParagraph(paragraph: String): Boolean {
+        val lines = paragraph.lines().filter { it.isNotBlank() }
+        return lines.isNotEmpty() && lines.all { isTableLine(it) }
+    }
+
+}

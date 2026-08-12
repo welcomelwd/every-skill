@@ -1,0 +1,10 @@
+[[agent.guide]]
+== Getting Started
+:sectids:
+:sectanchors:
+
+include::quickstart/page.adoc[]
+include::installing/page.adoc[]
+include::running/page.adoc[]
+include::a-little-ai/page.adoc[]
+include::first-agent/page.adoc[]

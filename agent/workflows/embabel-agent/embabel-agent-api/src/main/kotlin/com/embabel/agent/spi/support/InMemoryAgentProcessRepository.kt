@@ -1,0 +1,92 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.embabel.agent.spi.support
+
+import com.embabel.agent.core.AbstractAgentProcessRepository
+import com.embabel.agent.core.AgentProcess
+import com.embabel.agent.spi.config.spring.ProcessRepositoryProperties
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.read
+import kotlin.concurrent.write
+
+/**
+ * In-memory implementation of [AgentProcessRepository] with configurable window size
+ * to prevent memory overflow by evicting the oldest entries when the limit is reached.
+ */
+class InMemoryAgentProcessRepository(
+    private val properties: ProcessRepositoryProperties = ProcessRepositoryProperties(),
+) : AbstractAgentProcessRepository() {
+
+    private val map: ConcurrentHashMap<String, AgentProcess> = ConcurrentHashMap()
+    private val accessOrder: ConcurrentLinkedQueue<String> = ConcurrentLinkedQueue()
+    private val lock = ReentrantReadWriteLock()
+    private val evictionPolicy = HierarchyAwareEvictionPolicy(properties.windowSize)
+
+    override fun findById(id: String): AgentProcess? = lock.read {
+        map[id]
+    }
+
+    override fun findByParentId(parentId: String): List<AgentProcess> = lock.read {
+        map.values.filter { it.parentId == parentId }
+    }
+
+    override fun doSave(agentProcess: AgentProcess): AgentProcess = lock.write {
+        val processId = agentProcess.id
+
+        // If this process already exists, remove it from access order to re-add at end
+        if (map.containsKey(processId)) {
+            accessOrder.remove(processId)
+        }
+
+        map[processId] = agentProcess
+
+        // Only track root processes for eviction.
+        // Child processes are evicted together with their parent hierarchy.
+        if (agentProcess.isRootProcess) {
+            accessOrder.offer(processId)
+            evictionPolicy.evictIfNeeded(accessOrder, map)
+        }
+
+        agentProcess
+    }
+
+    override fun doUpdate(agentProcess: AgentProcess) {
+        // Nothing to do here as the reference is already updated in memory
+    }
+
+    override fun delete(agentProcess: AgentProcess) {
+        lock.write {
+            val processId = agentProcess.id
+            map.remove(processId)
+            accessOrder.remove(processId)
+        }
+    }
+
+    /**
+     * Get current size of the repository for testing purposes.
+     */
+    fun size(): Int = lock.read { map.size }
+
+    /**
+     * Clear all entries from the repository for testing purposes.
+     */
+    fun clear() = lock.write {
+        map.clear()
+        accessOrder.clear()
+    }
+}

@@ -1,0 +1,31 @@
+= Embabel Agent Framework User Guide
+:doctype: book
+:toc: left
+:toclevels: 4
+:numbered:
+:icons: font
+:hide-uri-scheme:
+:docinfo: shared
+:imagesdif: ./images
+
+ifndef::imagesdir[]
+:imagesdir: images
+endif::[]
+
+image:common/315px-Meister_der_Weltenchronik_001.png[]
+
+ifdef::backend-html5[]
+
+Embabel Agent Release: {embabel-agent-version}
+
+(C) 2024-2026 Embabel Pty, Ltd
+
+endif::backend-html5[]
+
+//==========================================================================
+
+include::authors.adoc[]
+
+include::user-guide.adoc[]
+
+//==========================================================================

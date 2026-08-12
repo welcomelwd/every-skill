@@ -33,50 +33,67 @@ def validate_widget(
 
   if len(xy_chart.data_sets) == 0:
     raise ValueError("xy_chart must contain at least one data_set")
-  ds = xy_chart.data_sets[0]
 
-  has_promql = bool(ds.time_series_query.prometheus_query)
-  has_lts = bool(ds.time_series_query.time_series_filter)
-  if not (has_promql or has_lts):
-    raise ValueError(
-        "data_set must contain either prometheus_query or time_series_filter"
-    )
+  # Phase 1: Structural exclusivity applies to ALL datasets
+  for idx, ds in enumerate(xy_chart.data_sets):
+    has_promql = bool(ds.time_series_query.prometheus_query)
+    has_lts = bool(ds.time_series_query.time_series_filter)
+    
+    if not (has_promql or has_lts):
+      raise ValueError(f"data_set[{idx}] must contain either prometheus_query or time_series_filter")
+    if has_promql and has_lts:
+      raise ValueError(f"data_set[{idx}] cannot contain BOTH prometheus_query and time_series_filter")
 
-  if expected_promql_substring:
-    if not has_promql:
-      raise ValueError("Expected PromQL but found LTS filter")
-    if expected_promql_substring not in ds.time_series_query.prometheus_query:
-      raise ValueError(
-          "PromQL query missing expected substring"
-          f" '{expected_promql_substring}':"
-          f" {ds.time_series_query.prometheus_query}"
-      )
+  # Phase 2: Find at least one explicitly matching dataset for the assertions
+  last_err = None
+  for ds in xy_chart.data_sets:
+    try:
+      has_promql = bool(ds.time_series_query.prometheus_query)
+      has_lts = bool(ds.time_series_query.time_series_filter)
 
-  if expected_lts_filter_substring:
-    if not has_lts:
-      raise ValueError("Expected LTS filter but found PromQL")
-    if (
-        expected_lts_filter_substring
-        not in ds.time_series_query.time_series_filter.filter
-    ):
-      raise ValueError(
-          "LTS filter missing expected substring"
-          f" '{expected_lts_filter_substring}':"
-          f" {ds.time_series_query.time_series_filter.filter}"
-      )
+      if expected_promql_substring:
+        if not has_promql:
+          raise ValueError("Expected PromQL but found LTS filter")
+        if expected_promql_substring not in ds.time_series_query.prometheus_query:
+          raise ValueError(
+              "PromQL query missing expected substring"
+              f" '{expected_promql_substring}':"
+              f" {ds.time_series_query.prometheus_query}"
+          )
 
-  if expected_unit_override:
-    if ds.time_series_query.unit_override != expected_unit_override:
-      raise ValueError(
-          f"Expected unit_override '{expected_unit_override}', got"
-          f" '{ds.time_series_query.unit_override}'"
-      )
+      if expected_lts_filter_substring:
+        if not has_lts:
+          raise ValueError("Expected LTS filter but found PromQL")
+        if (
+            expected_lts_filter_substring
+            not in ds.time_series_query.time_series_filter.filter
+        ):
+          raise ValueError(
+              "LTS filter missing expected substring"
+              f" '{expected_lts_filter_substring}':"
+              f" {ds.time_series_query.time_series_filter.filter}"
+          )
 
-  if expected_plot_type:
-    if ds.plot_type != expected_plot_type:
-      raise ValueError(
-          f"Expected plot_type '{expected_plot_type}', got '{ds.plot_type}'"
-      )
+      if expected_unit_override:
+        if ds.time_series_query.unit_override != expected_unit_override:
+          raise ValueError(
+              f"Expected unit_override '{expected_unit_override}', got"
+              f" '{ds.time_series_query.unit_override}'"
+          )
+
+      if expected_plot_type:
+        if ds.plot_type != expected_plot_type:
+          raise ValueError(
+              f"Expected plot_type '{expected_plot_type}', got '{ds.plot_type}'"
+          )
+          
+      return  # Found a dataset that completely matches the criteria!
+      
+    except ValueError as e:
+      last_err = e
+      
+  # If we exhausted all datasets in this widget and none matched perfectly:
+  raise ValueError(f"No matching data_set found in widget. Last dataset error: {last_err}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -162,10 +179,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 1
 
-    last_err = None
+    # Phase 1: Guarantee ALL generated files are structurally valid.
+    parsed_widgets = []
     for path, content in files_to_check:
       try:
         widget = textproto_util.parse_and_validate_widget(content)
+        validate_widget(widget) # Strict structural rules
+        parsed_widgets.append((path, widget))
+      except Exception as e:
+        print(f"ERROR: File '{path}' is structurally invalid: {e}", file=sys.stderr)
+        return 1
+        
+    # Phase 2: If we have specific expectations, find at least one matching file.
+    if not (args.expected_promql_substring or args.expected_lts_filter_substring 
+            or args.expected_unit_override or args.expected_plot_type):
+      # No specific assertions required, so passing structure is enough.
+      for path, widget in parsed_widgets:
+        print(f"Successfully validated structure of Widget '{path}'")
+      return 0
+      
+    last_err = None
+    for path, widget in parsed_widgets:
+      try:
         validate_widget(
             widget=widget,
             expected_promql_substring=args.expected_promql_substring,

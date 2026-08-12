@@ -1,0 +1,151 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.embabel.agent.spi.loop
+
+import com.embabel.agent.api.common.Asyncer
+import com.embabel.agent.api.tool.Tool
+import com.embabel.agent.api.tool.ToolCallContext
+import com.embabel.agent.api.tool.callback.ToolCallInspector
+import com.embabel.agent.api.tool.callback.ToolLoopInspector
+import com.embabel.agent.api.tool.callback.ToolLoopTransformer
+import com.embabel.agent.api.tool.config.ToolLoopConfiguration
+import com.embabel.agent.api.tool.config.ToolLoopConfiguration.ToolLoopType
+import com.embabel.agent.spi.loop.support.DefaultToolLoop
+import com.embabel.agent.spi.loop.support.ParallelToolLoop
+
+import tools.jackson.databind.ObjectMapper
+
+/**
+ * Factory for creating [ToolLoop] instances.
+ *
+ * ## Threading and context propagation
+ *
+ * Parallel tool execution is governed by the [Asyncer] abstraction, which is the
+ * single extension point for controlling threading behavior and propagating
+ * execution context (e.g., security context, MDC) to tool execution threads.
+ *
+ * An [Asyncer] is always required. In a Spring environment, the [Asyncer] bean
+ * is injected automatically via [com.embabel.agent.spi.config.spring.AsyncConfiguration].
+ * For programmatic usage, provide an [Asyncer] via [create].
+ *
+ * @see Asyncer
+ */
+interface ToolLoopFactory {
+
+    /**
+     * Create a [ToolLoop] instance.
+     *
+     * @param llmMessageSender message sender for LLM communication
+     * @param objectMapper for JSON deserialization
+     * @param injectionStrategy strategy for dynamic tool injection
+     * @param maxIterations maximum loop iterations
+     * @param toolDecorator optional decorator for injected tools
+     * @param toolLoopInspectors read-only observers for tool loop lifecycle events
+     * @param toolLoopTransformers transformers for modifying conversation history or tool results
+     * @param toolCallInspectors read-only observers for individual tool call events
+     * @param toolCallContext context propagated to tool invocations
+     */
+    fun create(
+        llmMessageSender: LlmMessageSender,
+        objectMapper: ObjectMapper,
+        injectionStrategy: ToolInjectionStrategy,
+        maxIterations: Int,
+        toolDecorator: ((Tool) -> Tool)?,
+        toolLoopInspectors: List<ToolLoopInspector>,
+        toolLoopTransformers: List<ToolLoopTransformer>,
+        toolCallInspectors: List<ToolCallInspector>,
+        toolCallContext: ToolCallContext,
+        toolNotFoundPolicy: ToolNotFoundPolicy? = null,
+        emptyResponsePolicy: EmptyResponsePolicy? = null,
+    ): ToolLoop
+
+    companion object {
+        /**
+         * Create a factory with the specified configuration and asyncer.
+         *
+         * @param config the tool loop configuration
+         * @param asyncer asyncer for parallel mode with context propagation
+         */
+        fun create(
+            config: ToolLoopConfiguration,
+            asyncer: Asyncer,
+            defaultToolNotFoundPolicy: ToolNotFoundPolicy,
+            defaultEmptyResponsePolicy: EmptyResponsePolicy = ExitOnEmptyPolicy,
+        ): ToolLoopFactory =
+            ConfigurableToolLoopFactory(config, asyncer, defaultToolNotFoundPolicy, defaultEmptyResponsePolicy)
+    }
+}
+
+/**
+ * Internal [ToolLoopFactory] implementation based on [ToolLoopConfiguration].
+ *
+ * @param config the tool loop configuration
+ * @param asyncer the asyncer to use for parallel tool execution
+ */
+internal class ConfigurableToolLoopFactory(
+    private val config: ToolLoopConfiguration,
+    private val asyncer: Asyncer,
+    private val defaultToolNotFoundPolicy: ToolNotFoundPolicy,
+    private val defaultEmptyResponsePolicy: EmptyResponsePolicy = ExitOnEmptyPolicy,
+) : ToolLoopFactory {
+
+    override fun create(
+        llmMessageSender: LlmMessageSender,
+        objectMapper: ObjectMapper,
+        injectionStrategy: ToolInjectionStrategy,
+        maxIterations: Int,
+        toolDecorator: ((Tool) -> Tool)?,
+        toolLoopInspectors: List<ToolLoopInspector>,
+        toolLoopTransformers: List<ToolLoopTransformer>,
+        toolCallInspectors: List<ToolCallInspector>,
+        toolCallContext: ToolCallContext,
+        toolNotFoundPolicy: ToolNotFoundPolicy?,
+        emptyResponsePolicy: EmptyResponsePolicy?,
+    ): ToolLoop {
+        val tnfPolicy = toolNotFoundPolicy ?: defaultToolNotFoundPolicy
+        val erPolicy = emptyResponsePolicy ?: defaultEmptyResponsePolicy
+        return when (config.type) {
+            ToolLoopType.DEFAULT -> DefaultToolLoop(
+                llmMessageSender = llmMessageSender,
+                objectMapper = objectMapper,
+                injectionStrategy = injectionStrategy,
+                maxIterations = maxIterations,
+                toolDecorator = toolDecorator,
+                toolLoopInspectors = toolLoopInspectors,
+                toolLoopTransformers = toolLoopTransformers,
+                toolCallInspectors = toolCallInspectors,
+                toolCallContext = toolCallContext,
+                toolNotFoundPolicy = tnfPolicy,
+                emptyResponsePolicy = erPolicy,
+            )
+            ToolLoopType.PARALLEL -> ParallelToolLoop(
+                llmMessageSender = llmMessageSender,
+                objectMapper = objectMapper,
+                injectionStrategy = injectionStrategy,
+                maxIterations = maxIterations,
+                toolDecorator = toolDecorator,
+                toolLoopInspectors = toolLoopInspectors,
+                toolLoopTransformers = toolLoopTransformers,
+                toolCallInspectors = toolCallInspectors,
+                asyncer = asyncer,
+                parallelConfig = config.parallel,
+                toolCallContext = toolCallContext,
+                toolNotFoundPolicy = tnfPolicy,
+                emptyResponsePolicy = erPolicy,
+            )
+        }
+    }
+}

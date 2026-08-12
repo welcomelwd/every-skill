@@ -1,0 +1,160 @@
+# This workflow will build a Ascii Doctor project with Maven, 
+# This workflow uses actions that are not certified by GitHub.
+# They are provided by a third-party and are governed by
+# separate terms of service, privacy policy, and support
+# documentation.
+
+name: Publish Docs
+
+on:
+  # Triggered from Build workflow when .adoc files change
+  repository_dispatch:
+    types: [publish-docs]
+
+  workflow_dispatch:  # Enables manual triggering
+    inputs:
+      environment:
+        description: 'Deploy Environment'
+        required: true
+        default: 'embabel-dev'
+        type: choice
+        options:
+          - embabel-dev
+          - embabel-sit
+          - embabel-prod
+      vm_instance:
+        description: 'VM Instance Name'
+        required: true
+        default: 'embabel-webserver'
+        type: string
+      vm_zone:
+        description: 'VM Zone'
+        required: true
+        default: 'us-east1-b'
+        type: string
+  
+  # Automatic trigger on file changes
+  push:
+    branches:
+      - main
+    paths:
+      - 'embabel-agent-docs/**/*.adoc'
+  
+env:
+  PROJECT_ID: ${{ github.event.inputs.environment || 'embabel-dev' }}
+  SERVICE_ACCOUNT: embabel-ci-build@embabel-dev.iam.gserviceaccount.com
+  VM_INSTANCE: ${{ github.event.inputs.vm_instance || 'embabel-webserver' }}
+  VM_ZONE: ${{ github.event.inputs.vm_zone || 'us-east1-b' }}
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    # Set default working directory for all steps
+    defaults:
+      run:
+        working-directory: ./embabel-agent-docs
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Graphviz
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y graphviz
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven  
+      - name: Build and analyze
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Needed to get PR information, if any
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: mvn -Pguide-html,dokka package
+
+      - name: Extract version from pom.xml
+        id: get_version
+        run: |
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
+
+      - name: Create deployment archive
+        run: |
+          echo "Creating deployment archive at $(date)"
+          # Clean up any stale archive from previous runs
+          rm -f docs-bundle.tar.gz
+          cd target
+          tar -czf ../docs-bundle.tar.gz generated-docs dokka-aggregate
+          echo "Archive created at $(date), size: $(ls -lh ../docs-bundle.tar.gz | awk '{print $5}')"
+
+      - name: Google Auth
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{secrets.GCP_SERVICE_ACCOUNT_CREDENTIALS}}
+          service_account: embabel-ci-build@embabel-dev.iam.gserviceaccount.com
+      
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy archive to VM
+        run: |
+          echo "Starting deployment at $(date)"
+          VERSION="${{ steps.get_version.outputs.VERSION }}"
+          echo "Deploying version: $VERSION"
+          
+          # Upload the single archive file
+          gcloud compute scp docs-bundle.tar.gz \
+            ${{ github.event.inputs.vm_instance || 'embabel-webserver' }}:~/ \
+            --zone=${{ github.event.inputs.vm_zone || 'us-east1-b' }}
+          
+          echo "Archive uploaded at $(date)"
+          
+          # Extract and move files on the VM with versioned directories
+          gcloud compute ssh ${{ github.event.inputs.vm_instance || 'embabel-webserver' }} \
+            --zone=${{ github.event.inputs.vm_zone || 'us-east1-b' }} \
+            --command="
+              echo 'Starting extraction and deployment on VM at \$(date)' &&
+              VERSION='$VERSION' &&
+              echo 'Deploying version: $VERSION' &&
+              sudo rm -rf /var/www/html/embabel-agent/guide/\$VERSION &&
+              sudo rm -rf /var/www/html/embabel-agent/api-docs/\$VERSION &&
+              sudo mkdir -p /var/www/html/embabel-agent/guide/\$VERSION &&
+              sudo mkdir -p /var/www/html/embabel-agent/api-docs/\$VERSION &&
+              cd /tmp &&
+              sudo tar -xzf ~/docs-bundle.tar.gz &&
+              sudo cp -r generated-docs/* /var/www/html/embabel-agent/guide/\$VERSION/ &&
+              sudo cp -r dokka-aggregate/* /var/www/html/embabel-agent/api-docs/\$VERSION/ &&
+              rm -f ~/docs-bundle.tar.gz &&
+              sudo rm -rf /tmp/generated-docs /tmp/dokka-aggregate &&
+              echo 'Deployment completed on VM at \$(date)'
+            "
+          
+          echo "Deployment completed at $(date)"
+          
+          # Clean up local bundle
+          rm -f docs-bundle.tar.gz
+
+      - name: Verify deployment
+        run: |
+          VERSION="${{ steps.get_version.outputs.VERSION }}"
+          gcloud compute ssh ${{ github.event.inputs.vm_instance || 'embabel-webserver' }} \
+            --zone=${{ github.event.inputs.vm_zone || 'us-east1-b' }} \
+            --command="
+              echo 'Deployed version: $VERSION' &&
+              echo 'Files in versioned guide directory:' &&
+              sudo ls -la /var/www/html/embabel-agent/guide/$VERSION/ | head -10 &&
+              echo 'Files in versioned api-docs directory:' &&
+              sudo ls -la /var/www/html/embabel-agent/api-docs/$VERSION/ | head -10 &&
+              echo 'Testing web access:' &&
+              curl -I http://localhost/embabel-agent/guide/$VERSION/index.html || echo 'Versioned guide not responding'
+            "
+      - name: Trigger acceptance repo workflow to validate User Guide
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          repository: embabel/embabel-acceptance-tests
+          event-type: publish-docs

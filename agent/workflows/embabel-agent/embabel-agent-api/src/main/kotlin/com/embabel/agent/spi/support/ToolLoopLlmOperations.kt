@@ -1,0 +1,1037 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+@file:OptIn(InternalObservabilityApi::class)
+
+package com.embabel.agent.spi.support
+
+import com.embabel.agent.api.common.Asyncer
+import com.embabel.agent.api.event.LlmInvocationEvent
+import com.embabel.agent.api.event.LlmRequestEvent
+import com.embabel.agent.api.event.ToolLoopStartEvent
+import com.embabel.agent.api.event.observation.AgentInstrumentation
+import com.embabel.agent.api.event.observation.InternalObservabilityApi
+import com.embabel.agent.api.event.observation.LlmObservationContext
+import com.embabel.agent.api.event.observation.NoOpAgentInstrumentation
+import com.embabel.agent.api.event.observation.ToolLoopObservationContext
+import com.embabel.agent.api.tool.Tool
+import com.embabel.agent.api.tool.ToolCallContext
+import com.embabel.agent.api.tool.callback.AfterLlmCallContext
+import com.embabel.agent.api.tool.callback.ToolLoopInspector
+import com.embabel.agent.api.tool.config.ToolLoopConfiguration
+import com.embabel.agent.core.LlmInvocation
+import com.embabel.agent.core.ReplanRequestedException
+import com.embabel.agent.core.Usage
+import com.embabel.agent.core.support.LlmCall
+import com.embabel.agent.core.support.LlmInteraction
+import com.embabel.agent.spi.AutoLlmSelectionCriteriaResolver
+import com.embabel.agent.spi.LlmService
+import com.embabel.agent.spi.ToolDecorator
+import com.embabel.agent.spi.loop.AutoCorrectionPolicy
+import com.embabel.agent.spi.loop.ChainedToolInjectionStrategy
+import com.embabel.agent.spi.loop.LlmMessageRequest
+import com.embabel.agent.spi.loop.LlmMessageResponse
+import com.embabel.agent.spi.loop.LlmMessageSender
+import com.embabel.agent.spi.loop.NativeStructuredOutputRequest
+import com.embabel.agent.spi.loop.RequestAwareLlmMessageSender
+import com.embabel.agent.spi.loop.StructuredOutputRequest
+import com.embabel.agent.spi.loop.ToolInjectionStrategy
+import com.embabel.agent.spi.loop.ToolLoop
+import com.embabel.agent.spi.loop.ToolLoopFactory
+import com.embabel.agent.spi.loop.ToolLoopResult
+import com.embabel.common.ai.model.NativeStructuredOutputMode
+import com.embabel.common.ai.model.getNativeStructuredOutput
+import com.embabel.agent.spi.support.guardrails.validateAssistantResponse
+import com.embabel.agent.spi.support.guardrails.validateUserInput
+import com.embabel.agent.spi.validation.DefaultValidationPromptGenerator
+import com.embabel.agent.spi.validation.ValidationPromptGenerator
+import com.embabel.chat.AssistantMessage
+import com.embabel.chat.Message
+import com.embabel.chat.SystemMessage
+import com.embabel.chat.UserMessage
+import com.embabel.common.ai.model.LlmOptions
+import com.embabel.common.ai.model.ModelProvider
+import com.embabel.common.core.thinking.ThinkingBlock
+import com.embabel.common.core.thinking.ThinkingException
+import com.embabel.common.core.thinking.ThinkingResponse
+import com.embabel.common.core.thinking.spi.InternalThinkingApi
+import com.embabel.common.core.thinking.spi.extractAllThinkingBlocks
+import com.embabel.common.textio.template.TemplateRenderer
+import tools.jackson.databind.ObjectMapper
+import tools.jackson.module.kotlin.jacksonObjectMapper
+import jakarta.validation.Validator
+import java.time.Duration
+import java.time.Instant
+import javax.annotation.concurrent.ThreadSafe
+
+/**
+ * Output converter abstraction for parsing LLM output.
+ * Framework-agnostic interface that can be implemented by Spring AI converters or others.
+ *
+ * @param T the output type
+ */
+interface OutputConverter<T> {
+    /**
+     * Convert the LLM output string to the target type.
+     */
+    fun convert(source: String): T?
+
+    /**
+     * Get the format instructions to include in the prompt.
+     * Returns null if no format instructions are needed (e.g., for String output).
+     */
+    fun getFormat(): String?
+
+    /**
+     * Get the raw JSON Schema for native structured-output payloads.
+     * This is not prompt text; it is intended for provider adapters.
+     */
+    fun getJsonSchema(): String? = null
+}
+
+/**
+ * LlmOperations implementation that uses Embabel's framework-agnostic tool loop.
+ *
+ * This class provides the core tool loop orchestration logic without depending on
+ * any specific LLM framework (Spring AI, LangChain4j, etc.). Subclasses provide
+ * the framework-specific implementations for message sending and output conversion.
+ *
+ * @param modelProvider ModelProvider to get the LLM model
+ * @param toolDecorator ToolDecorator to decorate tools
+ * @param validator Validator for bean validation
+ * @param validationPromptGenerator Generator for validation prompts
+ * @param dataBindingProperties Properties for data binding configuration
+ * @param autoLlmSelectionCriteriaResolver Resolver for auto LLM selection
+ * @param promptsProperties Properties for prompt configuration
+ * @param objectMapper ObjectMapper for JSON serialization
+ * @param instrumentation Port for direct instrumentation of the LLM and tool-loop spans (no-op by default)
+ * @param templateRenderer TemplateRenderer for rendering prompt templates (default: NoOpTemplateRenderer)
+ */
+@ThreadSafe
+open class ToolLoopLlmOperations(
+    modelProvider: ModelProvider,
+    toolDecorator: ToolDecorator,
+    validator: Validator,
+    validationPromptGenerator: ValidationPromptGenerator = DefaultValidationPromptGenerator(),
+    dataBindingProperties: LlmDataBindingProperties = LlmDataBindingProperties(),
+    autoLlmSelectionCriteriaResolver: AutoLlmSelectionCriteriaResolver = AutoLlmSelectionCriteriaResolver.DEFAULT,
+    promptsProperties: LlmOperationsPromptsProperties = LlmOperationsPromptsProperties(),
+    objectMapper: ObjectMapper = jacksonObjectMapper(),
+    protected val instrumentation: AgentInstrumentation = NoOpAgentInstrumentation,
+    asyncer: Asyncer = ExecutorAsyncer(java.util.concurrent.Executors.newCachedThreadPool()),
+    protected val toolLoopFactory: ToolLoopFactory = ToolLoopFactory.create(ToolLoopConfiguration(), asyncer, AutoCorrectionPolicy()),
+    protected val templateRenderer: TemplateRenderer = NoOpTemplateRenderer,
+) : AbstractLlmOperations(
+    toolDecorator = toolDecorator,
+    modelProvider = modelProvider,
+    validator = validator,
+    validationPromptGenerator = validationPromptGenerator,
+    dataBindingProperties = dataBindingProperties,
+    autoLlmSelectionCriteriaResolver = autoLlmSelectionCriteriaResolver,
+    promptsProperties = promptsProperties,
+    asyncer = asyncer,
+    objectMapper = objectMapper,
+) {
+
+    override fun <O> doTransform(
+        messages: List<Message>,
+        interaction: LlmInteraction,
+        outputClass: Class<O>,
+        llmRequestEvent: LlmRequestEvent<O>?,
+    ): O {
+        val llm = chooseLlm(interaction.llm)
+        val promptContributions = buildPromptContributions(interaction, llm)
+
+        val messageSender = createMessageSender(llm, interaction.llm, llmRequestEvent)
+
+        val converter = if (outputClass != String::class.java) {
+            createOutputConverter(outputClass, interaction)
+        } else null
+
+        val schemaFormat = converter?.getFormat()
+        val nativeStructuredOutputRequest = nativeStructuredOutputRequest(outputClass, converter, interaction)
+
+        val outputParser: (String) -> O = if (outputClass == String::class.java) {
+            @Suppress("UNCHECKED_CAST")
+            { text -> sanitizeStringOutput(text) as O }
+        } else {
+            { text -> converter!!.convert(text)!! }
+        }
+
+        val injectedToolDecorator = createInjectedToolDecorator(llmRequestEvent, interaction)
+        val injectionStrategy = createInjectionStrategy(interaction)
+
+        // Merge process-level and interaction-level context (interaction wins on conflict)
+        val effectiveContext = resolveToolCallContext(llmRequestEvent, interaction)
+
+        val toolLoop = toolLoopFactory.create(
+            llmMessageSender = structuredOutputMessageSender(
+                delegate = messageSender,
+                nativeStructuredOutputRequest = nativeStructuredOutputRequest,
+            ),
+            objectMapper = objectMapper,
+            injectionStrategy = injectionStrategy,
+            maxIterations = interaction.maxToolIterations,
+            toolDecorator = injectedToolDecorator,
+            toolLoopInspectors = resolveToolLoopInspectors(interaction, llm, llmRequestEvent),
+            toolLoopTransformers = interaction.toolLoopTransformers,
+            toolCallInspectors = interaction.toolCallInspectors,
+            toolCallContext = effectiveContext,
+            toolNotFoundPolicy = interaction.toolNotFoundPolicy,
+        )
+
+        val initialMessages = buildInitialMessages(promptContributions, messages, schemaFormat)
+
+        emitCallEvent(llmRequestEvent, promptContributions, messages, schemaFormat)
+
+        // Guardrails: Pre-validation of user input
+        val userMessages = messages.filterIsInstance<UserMessage>()
+        validateUserInput(userMessages, interaction, llmRequestEvent?.agentProcess?.blackboard)
+
+        val tools = interaction.tools
+        val toolLoopStartEvent = publishToolLoopStartEvent(llmRequestEvent, tools, interaction, outputClass)
+
+        val result = toolLoop
+            .instrumented(llmRequestEvent, toolLoopStartEvent)
+            .execute(
+                initialMessages = initialMessages,
+                initialTools = tools,
+                outputParser = outputParser,
+            )
+
+        handleToolLoopCompletion(toolLoopStartEvent, result, llmRequestEvent)
+
+        // Guardrails: Post-validation of assistant response
+        // For the tool loop path, validate the final result based on its type
+        val finalResult = result.result
+        when (finalResult) {
+            is String -> validateAssistantResponse(finalResult, interaction, llmRequestEvent?.agentProcess?.blackboard)
+            is AssistantMessage -> validateAssistantResponse(
+                finalResult,
+                interaction,
+                llmRequestEvent?.agentProcess?.blackboard
+            )
+            else -> validateAssistantResponse(
+                result.rawResponseText,
+                interaction,
+                llmRequestEvent?.agentProcess?.blackboard
+            )
+        }
+
+        return finalResult
+    }
+
+    override fun <O> doTransformIfPossible(
+        messages: List<Message>,
+        interaction: LlmInteraction,
+        outputClass: Class<O>,
+        llmRequestEvent: LlmRequestEvent<O>,
+    ): Result<O> {
+        val llm = chooseLlm(interaction.llm)
+        val promptContributions = buildPromptContributions(interaction, llm)
+
+        val messageSender = createMessageSender(llm, interaction.llm, llmRequestEvent)
+
+        val converter = createMaybeReturnOutputConverter(outputClass, interaction)!!
+
+        val schemaFormat = converter.getFormat()
+
+        val outputParser: (String) -> MaybeReturn<O> = { text ->
+            if (text.isNotBlank()) converter.convert(text)!! else MaybeReturn.noOutput()
+        }
+
+        // Create a decorator for dynamically injected tools (e.g., from UnfoldingTool)
+        val injectedToolDecorator: ((Tool) -> Tool) = { tool: Tool ->
+            toolDecorator.decorate(
+                tool = tool,
+                agentProcess = llmRequestEvent.agentProcess,
+                action = llmRequestEvent.action,
+                llmOptions = interaction.llm,
+            )
+        }
+
+        val injectionStrategy = if (interaction.additionalInjectionStrategies.isNotEmpty()) {
+            ChainedToolInjectionStrategy(
+                listOf(ToolInjectionStrategy.DEFAULT) + interaction.additionalInjectionStrategies
+            )
+        } else {
+            ToolInjectionStrategy.DEFAULT
+        }
+
+        // Merge process-level and interaction-level context (interaction wins on conflict)
+        val effectiveContext = resolveToolCallContext(llmRequestEvent, interaction)
+
+        val toolLoop = toolLoopFactory.create(
+            llmMessageSender = messageSender,
+            objectMapper = objectMapper,
+            injectionStrategy = injectionStrategy,
+            maxIterations = interaction.maxToolIterations,
+            toolDecorator = injectedToolDecorator,
+            toolLoopInspectors = resolveToolLoopInspectors(interaction, llm, llmRequestEvent),
+            toolLoopTransformers = interaction.toolLoopTransformers,
+            toolCallInspectors = interaction.toolCallInspectors,
+            toolCallContext = effectiveContext,
+            toolNotFoundPolicy = interaction.toolNotFoundPolicy,
+        )
+
+        // Build MaybeReturn prompt contribution
+        val maybeReturnPromptContribution = templateRenderer.renderLoadedTemplate(
+            promptsProperties.maybePromptTemplate,
+            emptyMap(),
+        )
+
+        val initialMessages = buildInitialMessagesWithMaybeReturn(
+            promptContributions,
+            messages,
+            maybeReturnPromptContribution,
+            schemaFormat,
+        )
+
+        emitCallEvent(llmRequestEvent, promptContributions, messages, schemaFormat)
+
+        // Guardrails: Pre-validation of user input
+        val userMessages = messages.filterIsInstance<UserMessage>()
+        validateUserInput(userMessages, interaction, llmRequestEvent.agentProcess.blackboard)
+
+        val tools = interaction.tools
+        val toolLoopStartEvent = publishToolLoopStartEvent(llmRequestEvent, tools, interaction, outputClass)
+
+        val result = toolLoop
+            .instrumented(llmRequestEvent, toolLoopStartEvent)
+            .execute(
+                initialMessages = initialMessages,
+                initialTools = tools,
+                outputParser = outputParser,
+            )
+
+        handleToolLoopCompletion(toolLoopStartEvent, result, llmRequestEvent)
+
+        // ToolLoopResult.result is non-nullable by design - if tool loop completes, it has a result
+        val maybeReturn = result.result
+
+        // Guardrails: Post-validation of assistant response
+        // For MaybeReturn, validate the success value if it's a validatable type
+        when (val successValue = maybeReturn.success) {
+            is String -> validateAssistantResponse(successValue, interaction, llmRequestEvent.agentProcess.blackboard)
+            is AssistantMessage -> validateAssistantResponse(successValue, interaction, llmRequestEvent.agentProcess.blackboard)
+            else -> validateAssistantResponse(
+                result.rawResponseText,
+                interaction,
+                llmRequestEvent.agentProcess.blackboard
+            )
+        }
+
+        // Convert MaybeReturn<O> to Result<O>
+        return maybeReturn.toResult()
+    }
+
+    @OptIn(InternalThinkingApi::class)
+    override fun <O> doTransformWithThinking(
+        messages: List<Message>,
+        interaction: LlmInteraction,
+        outputClass: Class<O>,
+        llmRequestEvent: LlmRequestEvent<O>?,
+    ): ThinkingResponse<O> {
+        val llm = chooseLlm(interaction.llm)
+        val promptContributions = buildPromptContributions(interaction, llm)
+
+        val messageSender = createMessageSender(llm, interaction.llm, llmRequestEvent)
+
+        val converter = if (outputClass != String::class.java) {
+            createOutputConverter(outputClass, interaction)
+        } else null
+
+        val schemaFormat = converter?.getFormat()
+        val nativeStructuredOutputRequest = nativeStructuredOutputRequest(outputClass, converter, interaction)
+
+        // Output parser that extracts thinking blocks and parses the result
+        // For String output: return raw text (with thinking tags preserved)
+        // For other types: converter chain handles thinking suppression for JSON parsing
+        val outputParser: (String) -> ThinkingResponse<O> = { text ->
+            val thinkingBlocks = extractAllThinkingBlocks(text)
+            val result = if (outputClass == String::class.java) {
+                @Suppress("UNCHECKED_CAST")
+                text as O  // Raw text, not sanitized - thinking blocks preserved in response
+            } else {
+                try {
+                    converter!!.convert(text)!!
+                } catch (e: Exception) {
+                    // Preserve thinking blocks in exceptions
+                    throw ThinkingException(
+                        message = "Conversion failed: ${e.message}",
+                        thinkingBlocks = thinkingBlocks
+                    )
+                }
+            }
+            ThinkingResponse(result, thinkingBlocks)
+        }
+
+        val injectedToolDecorator = createInjectedToolDecorator(llmRequestEvent, interaction)
+        val injectionStrategy = createInjectionStrategy(interaction)
+        val effectiveContext = resolveToolCallContext(llmRequestEvent, interaction)
+
+        val toolLoop = toolLoopFactory.create(
+            llmMessageSender = structuredOutputMessageSender(
+                delegate = messageSender,
+                nativeStructuredOutputRequest = nativeStructuredOutputRequest,
+            ),
+            objectMapper = objectMapper,
+            injectionStrategy = injectionStrategy,
+            maxIterations = interaction.maxToolIterations,
+            toolDecorator = injectedToolDecorator,
+            toolLoopInspectors = resolveToolLoopInspectors(interaction, llm, llmRequestEvent),
+            toolLoopTransformers = interaction.toolLoopTransformers,
+            toolCallInspectors = interaction.toolCallInspectors,
+            toolCallContext = effectiveContext,
+            toolNotFoundPolicy = interaction.toolNotFoundPolicy,
+        )
+
+        val initialMessages = buildInitialMessages(promptContributions, messages, schemaFormat)
+
+        emitCallEvent(llmRequestEvent, promptContributions, messages, schemaFormat)
+
+        // Guardrails: Pre-validation of user input
+        val userMessages = messages.filterIsInstance<UserMessage>()
+        validateUserInput(userMessages, interaction, llmRequestEvent?.agentProcess?.blackboard)
+
+        val tools = interaction.tools
+        val toolLoopStartEvent = publishToolLoopStartEvent(llmRequestEvent, tools, interaction, outputClass)
+
+        val result = toolLoop
+            .instrumented(llmRequestEvent, toolLoopStartEvent)
+            .execute(
+                initialMessages = initialMessages,
+                initialTools = tools,
+                outputParser = outputParser,
+            )
+
+        handleToolLoopCompletion(toolLoopStartEvent, result, llmRequestEvent)
+
+        val finalIterationResponse = result.result
+
+        // Accumulate thinking blocks from ALL assistant messages across all iterations
+        // Filter by role to catch both AssistantMessage and AssistantMessageWithToolCalls
+        val allThinkingBlocks = result.conversationHistory
+            .filter { it.role == com.embabel.chat.Role.ASSISTANT }
+            .flatMap { extractAllThinkingBlocks(it.content) }
+
+        // Merge accumulated thinking blocks with the final result
+        val thinkingResponse = ThinkingResponse(
+            result = finalIterationResponse.result,
+            thinkingBlocks = allThinkingBlocks
+        )
+
+        // Guardrails: Post-validation of assistant response (includes thinking blocks)
+        validateAssistantResponse(thinkingResponse, interaction, llmRequestEvent?.agentProcess?.blackboard)
+
+        return thinkingResponse
+    }
+
+    @OptIn(InternalThinkingApi::class)
+    override fun <O> doTransformWithThinkingIfPossible(
+        messages: List<Message>,
+        interaction: LlmInteraction,
+        outputClass: Class<O>,
+        llmRequestEvent: LlmRequestEvent<O>?,
+    ): Result<ThinkingResponse<O>> {
+        return try {
+            val llm = chooseLlm(interaction.llm)
+            val promptContributions = buildPromptContributions(interaction, llm)
+
+            val messageSender = createMessageSender(llm, interaction.llm, llmRequestEvent)
+
+            val converter = createMaybeReturnOutputConverter(outputClass, interaction)!!
+
+            val schemaFormat = converter.getFormat()
+
+            // Output parser: extract thinking blocks FIRST, then parse MaybeReturn
+            val outputParser: (String) -> Result<ThinkingResponse<O>> = { text ->
+                val thinkingBlocks = extractAllThinkingBlocks(text)
+                try {
+                    val maybeResult = if (text.isNotBlank()) {
+                        converter.convert(text)!!
+                    } else {
+                        MaybeReturn.noOutput<O>()
+                    }
+
+                    // Convert MaybeReturn<O> to Result<ThinkingResponse<O>>
+                    @Suppress("UNCHECKED_CAST")
+                    val innerResult = maybeResult.toResult()
+                    when {
+                        innerResult.isSuccess -> {
+                            val thinkingResponse = ThinkingResponse(
+                                result = innerResult.getOrThrow(),
+                                thinkingBlocks = thinkingBlocks
+                            )
+                            Result.success(thinkingResponse)
+                        }
+
+                        else -> {
+                            // LLM indicated it can't create the object - wrap with thinking blocks
+                            Result.failure(
+                                ThinkingException(
+                                    message = "Object creation not possible: ${innerResult.exceptionOrNull()?.message ?: "Unknown error"}",
+                                    thinkingBlocks = thinkingBlocks
+                                )
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    // Conversion failed - wrap exception with captured thinking blocks
+                    Result.failure(
+                        ThinkingException(
+                            message = "Conversion failed: ${e.message}",
+                            thinkingBlocks = thinkingBlocks
+                        )
+                    )
+                }
+            }
+
+            val injectedToolDecorator = createInjectedToolDecorator(llmRequestEvent, interaction)
+            val injectionStrategy = createInjectionStrategy(interaction)
+            val effectiveContext = resolveToolCallContext(llmRequestEvent, interaction)
+
+            val toolLoop = toolLoopFactory.create(
+                llmMessageSender = messageSender,
+                objectMapper = objectMapper,
+                injectionStrategy = injectionStrategy,
+                maxIterations = interaction.maxToolIterations,
+                toolDecorator = injectedToolDecorator,
+                toolLoopInspectors = resolveToolLoopInspectors(interaction, llm, llmRequestEvent),
+                toolLoopTransformers = interaction.toolLoopTransformers,
+                toolCallInspectors = interaction.toolCallInspectors,
+                toolCallContext = effectiveContext,
+                toolNotFoundPolicy = interaction.toolNotFoundPolicy,
+            )
+
+            // Build MaybeReturn prompt contribution
+            val maybeReturnPromptContribution = templateRenderer.renderLoadedTemplate(
+                promptsProperties.maybePromptTemplate,
+                emptyMap(),
+            )
+
+            val initialMessages = buildInitialMessagesWithMaybeReturn(
+                promptContributions,
+                messages,
+                maybeReturnPromptContribution,
+                schemaFormat,
+            )
+
+            emitCallEvent(llmRequestEvent, promptContributions, messages, schemaFormat)
+
+            // Guardrails: Pre-validation of user input
+            val userMessages = messages.filterIsInstance<UserMessage>()
+            validateUserInput(userMessages, interaction, llmRequestEvent?.agentProcess?.blackboard)
+
+            val tools = interaction.tools
+            val toolLoopStartEvent = publishToolLoopStartEvent(llmRequestEvent, tools, interaction, outputClass)
+
+            val result = toolLoop
+                .instrumented(llmRequestEvent, toolLoopStartEvent)
+                .execute(
+                    initialMessages = initialMessages,
+                    initialTools = tools,
+                    outputParser = outputParser,
+                )
+
+            handleToolLoopCompletion(toolLoopStartEvent, result, llmRequestEvent)
+
+            val finalIterationResult = result.result
+
+            // Accumulate thinking blocks from ALL assistant messages across all iterations
+            // Filter by role to catch both AssistantMessage and AssistantMessageWithToolCalls
+            val allThinkingBlocks = accumulateThinkingBlocks(result.conversationHistory)
+
+            // Merge accumulated thinking blocks with the final result (success or failure path)
+            val thinkingResult = mergeThinkingBlocksWithResult(finalIterationResult, allThinkingBlocks)
+
+            // Guardrails: Post-validation of assistant response
+            // Validate ThinkingResponse on success, or thinking blocks on failure (if non-empty)
+            if (thinkingResult.isSuccess) {
+                validateAssistantResponse(
+                    thinkingResult.getOrNull()!!,
+                    interaction,
+                    llmRequestEvent?.agentProcess?.blackboard
+                )
+            } else {
+                val exception = thinkingResult.exceptionOrNull()
+                if (exception is ThinkingException && exception.thinkingBlocks.isNotEmpty()) {
+                    val thinkingResponse = ThinkingResponse(
+                        result = null,
+                        thinkingBlocks = exception.thinkingBlocks
+                    )
+                    validateAssistantResponse(
+                        thinkingResponse,
+                        interaction,
+                        llmRequestEvent?.agentProcess?.blackboard
+                    )
+                }
+            }
+
+            thinkingResult
+        } catch (e: Exception) {
+            // Technical errors (including GuardRailViolationException) return Result.failure
+            // without ThinkingException wrapper - thinking blocks weren't extracted yet
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Create an LlmMessageSender for the given LLM and options.
+     * Subclasses implement this to provide framework-specific message senders.
+     *
+     * @param llm The LLM service to use
+     * @param options The LLM options
+     * @param llmRequestEvent Optional domain context for instrumentation.
+     *        When present, subclasses may use this to wrap the underlying model
+     *        for observability (e.g., emitting events with the final prompt).
+     * @return A framework-agnostic message sender
+     */
+    protected open fun createMessageSender(
+        llm: LlmService<*>,
+        options: LlmOptions,
+        llmRequestEvent: LlmRequestEvent<*>? = null,
+    ): LlmMessageSender {
+        return llm.createMessageSender(options)
+    }
+
+    private fun structuredOutputMessageSender(
+        delegate: LlmMessageSender,
+        nativeStructuredOutputRequest: NativeStructuredOutputRequest?,
+    ): LlmMessageSender =
+        if (nativeStructuredOutputRequest == null) {
+            delegate
+        } else {
+            StructuredOutputLlmMessageSender(delegate, nativeStructuredOutputRequest)
+        }
+
+    private fun <O> nativeStructuredOutputRequest(
+        outputClass: Class<O>,
+        converter: OutputConverter<O>?,
+        interaction: LlmInteraction,
+    ): NativeStructuredOutputRequest? =
+        converter?.getJsonSchema()?.let { jsonSchema ->
+            NativeStructuredOutputRequest(
+                structuredOutputRequest = StructuredOutputRequest(
+                    name = outputClass.simpleName,
+                    schema = jsonSchema,
+                ),
+                nativeStructuredOutputMode = interaction.llm.getNativeStructuredOutput()
+                    ?: NativeStructuredOutputMode.DEFAULT,
+            )
+        }
+
+    /**
+     * Create an output converter for the given output class.
+     * Subclasses implement this to provide framework-specific converters.
+     *
+     * @param outputClass The target output class
+     * @param interaction The LLM interaction context
+     * @return An output converter, or null for String output
+     */
+    protected open fun <O> createOutputConverter(
+        outputClass: Class<O>,
+        interaction: LlmInteraction,
+    ): OutputConverter<O>? {
+        // Default implementation returns null - subclasses should override
+        return null
+    }
+
+    /**
+     * Create an output converter for MaybeReturn wrapper type.
+     * Used by doTransformIfPossible for "if possible" semantics.
+     * Subclasses implement this to provide framework-specific converters.
+     *
+     * @param outputClass The target output class (inner type of MaybeReturn)
+     * @param interaction The LLM interaction context
+     * @return An output converter for MaybeReturn<O>, or null to fall back to try-catch
+     */
+    internal open fun <O> createMaybeReturnOutputConverter(
+        outputClass: Class<O>,
+        interaction: LlmInteraction,
+    ): OutputConverter<MaybeReturn<O>>? {
+        // Default implementation returns null - subclasses should override
+        return null
+    }
+
+    /**
+     * Sanitize string output (e.g., remove thinking blocks).
+     * Subclasses can override for custom sanitization.
+     */
+    protected open fun sanitizeStringOutput(text: String): String = text
+
+    /**
+     * Emit a call event for observability.
+     * Subclasses can override to emit framework-specific events.
+     */
+    protected open fun emitCallEvent(
+        llmRequestEvent: LlmRequestEvent<*>?,
+        promptContributions: String,
+        messages: List<Message>,
+        schemaFormat: String?,
+    ) {
+        // Default: no-op. Subclasses can emit framework-specific events.
+    }
+
+    /**
+     * Build prompt contributions from interaction and LLM.
+     */
+    protected fun buildPromptContributions(
+        interaction: LlmInteraction,
+        llm: LlmService<*>,
+    ): String = buildPromptContributionsString(interaction.promptContributors, llm.promptContributors)
+
+    /**
+     * Build initial messages for the tool loop, including system prompt contributions and schema.
+     * All system content is consolidated into a single system message at the beginning
+     * to ensure proper message ordering for cross-model compatibility
+     * (OpenAI best practice, required by DeepSeek, etc.).
+     *
+     * @see <a href="https://github.com/embabel/embabel-agent/issues/1295">GitHub Issue #1295</a>
+     */
+    protected fun buildInitialMessages(
+        promptContributions: String,
+        messages: List<Message>,
+        schemaFormat: String? = null,
+    ): List<Message> {
+        // Extract system messages from input and separate non-system messages
+        val systemContents = mutableListOf<String>()
+        val nonSystemMessages = mutableListOf<Message>()
+
+        // Add prompt contributions first (if any)
+        if (promptContributions.isNotEmpty()) {
+            systemContents.add(promptContributions)
+        }
+
+        // Partition input messages into system content and non-system messages
+        for (message in messages) {
+            if (message is SystemMessage) {
+                systemContents.add(message.content)
+            } else {
+                nonSystemMessages.add(message)
+            }
+        }
+
+        // Add schema format last in system content (if any)
+        if (schemaFormat != null) {
+            systemContents.add(schemaFormat)
+        }
+
+        // Build the final message list with consolidated system message first
+        return buildList {
+            if (systemContents.isNotEmpty()) {
+                add(SystemMessage(systemContents.joinToString("\n\n")))
+            }
+            addAll(nonSystemMessages)
+        }
+    }
+
+    /**
+     * Build initial messages with MaybeReturn prompt for "if possible" semantics.
+     * Adds the MaybeReturn prompt as a UserMessage after system message, before other messages.
+     */
+    protected fun buildInitialMessagesWithMaybeReturn(
+        promptContributions: String,
+        messages: List<Message>,
+        maybeReturnPrompt: String,
+        schemaFormat: String?,
+    ): List<Message> {
+        val baseMessages = buildInitialMessages(promptContributions, messages, schemaFormat)
+        val firstMessage = baseMessages.firstOrNull()
+        return if (firstMessage is SystemMessage) {
+            // Keep system message first, insert MaybeReturn prompt, then remaining messages
+            listOf(firstMessage, UserMessage(maybeReturnPrompt)) + baseMessages.drop(1)
+        } else {
+            listOf(UserMessage(maybeReturnPrompt)) + baseMessages
+        }
+    }
+
+    /**
+     * Record LLM usage for observability.
+     */
+    protected fun recordUsage(
+        llm: LlmService<*>,
+        usage: Usage,
+        llmRequestEvent: LlmRequestEvent<*>?,
+    ) {
+        logger.debug("Usage is {}", usage)
+        llmRequestEvent?.let {
+            val llmi = LlmInvocation(
+                llmMetadata = llm,
+                usage = usage,
+                agentName = it.agentProcess.agent.name,
+                timestamp = it.timestamp,
+                runningTime = Duration.between(it.timestamp, Instant.now()),
+            )
+            it.agentProcess.recordLlmInvocation(llmi)
+        }
+    }
+
+    /**
+     * Resolve the effective [ToolCallContext] by merging process-level context
+     * (from [ProcessOptions]) with interaction-level context.
+     * Interaction-level values win on conflict.
+     */
+    private fun resolveToolCallContext(
+        llmRequestEvent: LlmRequestEvent<*>?,
+        interaction: LlmInteraction,
+    ): ToolCallContext {
+        val processContext = llmRequestEvent
+            ?.agentProcess
+            ?.processContext
+            ?.processOptions
+            ?.toolCallContext
+            ?: ToolCallContext.EMPTY
+        return processContext.merge(interaction.toolCallContext)
+    }
+
+    /**
+     * Check if examples should be generated based on properties and interaction settings.
+     */
+    protected fun shouldGenerateExamples(llmCall: LlmCall): Boolean {
+        if (promptsProperties.generateExamplesByDefault) {
+            return llmCall.generateExamples != false
+        }
+        return llmCall.generateExamples == true
+    }
+
+    // ========== Private helper methods to reduce duplication ==========
+
+    /**
+     * Create a decorator for dynamically injected tools (e.g., from UnfoldingTool).
+     */
+    private fun createInjectedToolDecorator(
+        llmRequestEvent: LlmRequestEvent<*>?,
+        interaction: LlmInteraction,
+    ): ((Tool) -> Tool)? = llmRequestEvent?.let { event ->
+        { tool: Tool ->
+            toolDecorator.decorate(
+                tool = tool,
+                agentProcess = event.agentProcess,
+                action = event.action,
+                llmOptions = interaction.llm,
+            )
+        }
+    }
+
+    /**
+     * Create the injection strategy based on interaction configuration.
+     */
+    private fun createInjectionStrategy(interaction: LlmInteraction): ToolInjectionStrategy =
+        if (interaction.additionalInjectionStrategies.isNotEmpty()) {
+            ChainedToolInjectionStrategy(
+                listOf(ToolInjectionStrategy.DEFAULT) + interaction.additionalInjectionStrategies
+            )
+        } else {
+            ToolInjectionStrategy.DEFAULT
+        }
+
+    /**
+     * Create a per-call billing inspector that records each LLM invocation and emits an
+     * [LlmInvocationEvent].
+     *
+     * The inspector captures `llm` and `llmRequestEvent` via closure, so each tool-loop
+     * instance gets its own inspector — per-call by construction (survives CONCURRENT
+     * mode and validation/binding retries).
+     *
+     * Listener exceptions are isolated by `notifyAfterLlmCall`'s try/catch in the
+     * underlying tool loop, so a misbehaving listener cannot break the loop.
+     */
+    private fun createBillingInspector(
+        llm: LlmService<*>,
+        llmRequestEvent: LlmRequestEvent<*>,
+    ): ToolLoopInspector = object : ToolLoopInspector {
+        override fun afterLlmCall(context: AfterLlmCallContext) {
+            val usage = context.usage ?: return
+            val invocation = LlmInvocation(
+                llmMetadata = llm,
+                usage = usage,
+                agentName = llmRequestEvent.agentProcess.agent.name,
+                timestamp = Instant.now(),
+                runningTime = Duration.ZERO,
+            )
+            llmRequestEvent.agentProcess.recordLlmInvocation(invocation)
+            llmRequestEvent.agentProcess.processContext.onProcessEvent(
+                LlmInvocationEvent(
+                    agentProcess = llmRequestEvent.agentProcess,
+                    invocation = invocation,
+                    interactionId = llmRequestEvent.interaction.id.value,
+                )
+            )
+        }
+    }
+
+    /**
+     * Build the effective inspector list for a tool loop: the user-provided
+     * [LlmInteraction.toolLoopInspectors] plus the per-call billing inspector
+     * when an [LlmRequestEvent] is present (i.e. the call is agent-bound).
+     */
+    private fun resolveToolLoopInspectors(
+        interaction: LlmInteraction,
+        llm: LlmService<*>,
+        llmRequestEvent: LlmRequestEvent<*>?,
+    ): List<ToolLoopInspector> =
+        interaction.toolLoopInspectors + listOfNotNull(
+            llmRequestEvent?.let { createBillingInspector(llm, it) }
+        )
+
+    /**
+     * Publish ToolLoopStartEvent and return it for later completion tracking.
+     */
+    private fun <O> publishToolLoopStartEvent(
+        llmRequestEvent: LlmRequestEvent<O>?,
+        tools: List<Tool>,
+        interaction: LlmInteraction,
+        outputClass: Class<O>,
+    ): ToolLoopStartEvent? = llmRequestEvent?.let { event ->
+        ToolLoopStartEvent(
+            agentProcess = event.agentProcess,
+            action = event.action,
+            toolNames = tools.map { it.definition.name },
+            maxIterations = interaction.maxToolIterations,
+            interactionId = interaction.id.value,
+            outputClass = outputClass,
+        ).also { startEvent ->
+            event.agentProcess.processContext.onProcessEvent(startEvent)
+        }
+    }
+
+    /**
+     * Handle tool loop completion: publish completed event, check for replan.
+     * Throws ReplanRequestedException if replan was requested.
+     *
+     * Per-call usage recording happens in the billing inspector
+     * ([createBillingInspector]) — no aggregate post-loop recording is needed here.
+     */
+    private fun <O> handleToolLoopCompletion(
+        toolLoopStartEvent: ToolLoopStartEvent?,
+        result: ToolLoopResult<O>,
+        llmRequestEvent: LlmRequestEvent<*>?,
+    ) {
+        // Publish ToolLoopCompletedEvent after the tool loop
+        toolLoopStartEvent?.let { startEvent ->
+            llmRequestEvent!!.agentProcess.processContext.onProcessEvent(
+                startEvent.completedEvent(
+                    totalIterations = result.totalIterations,
+                    replanRequested = result.replanRequested,
+                )
+            )
+        }
+
+        // If replan was requested, re-throw the exception to propagate to action executor
+        if (result.replanRequested) {
+            throw ReplanRequestedException(
+                reason = result.replanReason ?: "Tool requested replan",
+                blackboardUpdater = result.blackboardUpdater,
+            )
+        }
+    }
+
+    /**
+     * Accumulates thinking blocks from all assistant messages in the conversation history.
+     * Filters by ASSISTANT role to catch both AssistantMessage and AssistantMessageWithToolCalls.
+     */
+    @OptIn(InternalThinkingApi::class)
+    private fun accumulateThinkingBlocks(conversationHistory: List<Message>): List<ThinkingBlock> {
+        return conversationHistory
+            .filter { it.role == com.embabel.chat.Role.ASSISTANT }
+            .flatMap { extractAllThinkingBlocks(it.content) }
+    }
+
+    /**
+     * Merges accumulated thinking blocks with the final iteration result.
+     * Handles both success and failure paths, preserving ThinkingException when present.
+     */
+    @OptIn(InternalThinkingApi::class)
+    private fun <O> mergeThinkingBlocksWithResult(
+        finalIterationResult: Result<ThinkingResponse<O>>,
+        allThinkingBlocks: List<ThinkingBlock>
+    ): Result<ThinkingResponse<O>> {
+        return if (finalIterationResult.isSuccess) {
+            val finalResponse = finalIterationResult.getOrNull()!!
+            Result.success(
+                ThinkingResponse(
+                    result = finalResponse.result,
+                    thinkingBlocks = allThinkingBlocks
+                )
+            )
+        } else {
+            val exception = finalIterationResult.exceptionOrNull()
+            if (exception is ThinkingException) {
+                Result.failure(
+                    ThinkingException(
+                        message = exception.message ?: "Unknown error",
+                        thinkingBlocks = allThinkingBlocks
+                    )
+                )
+            } else {
+                finalIterationResult
+            }
+        }
+    }
+
+    /**
+     * Wrap this [ToolLoop] so its execution is observed under the `embabel.llm` span
+     * ([LlmObservationContext]) and the nested `embabel.tool_loop` span
+     * ([ToolLoopObservationContext]). Centralizing the two-span envelope here keeps the span shape
+     * identical across every transform path (doTransform, …IfPossible, …WithThinking,
+     * …WithThinkingIfPossible) instead of each path re-implementing — or forgetting — it.
+     *
+     * Each span is opened only when its driving event is present: the `embabel.llm` span requires an
+     * [llmRequestEvent] (agent-bound call), the `embabel.tool_loop` span a [toolLoopStartEvent]. A naked
+     * call (both null) runs the delegate directly with no observation, exactly as before.
+     */
+    private fun ToolLoop.instrumented(
+        llmRequestEvent: LlmRequestEvent<*>?,
+        toolLoopStartEvent: ToolLoopStartEvent?,
+    ): ToolLoop = InstrumentedToolLoop(this, instrumentation, llmRequestEvent, toolLoopStartEvent)
+
+    /**
+     * Decorator that opens the `embabel.llm` and `embabel.tool_loop` spans around a [ToolLoop]'s
+     * execution. The actual generation content (prompt/completion/tokens) is carried by the nested
+     * Spring AI ChatModel span produced inside [delegate]'s loop, so these spans stay thin structural
+     * wrappers; see [LlmObservationContext]/[ToolLoopObservationContext] and their conventions.
+     */
+    private class InstrumentedToolLoop(
+        private val delegate: ToolLoop,
+        private val instrumentation: AgentInstrumentation,
+        private val llmRequestEvent: LlmRequestEvent<*>?,
+        private val toolLoopStartEvent: ToolLoopStartEvent?,
+    ) : ToolLoop {
+        override fun <O> execute(
+            initialMessages: List<Message>,
+            initialTools: List<Tool>,
+            outputParser: (String) -> O,
+        ): ToolLoopResult<O> {
+            val runLoop = {
+                if (toolLoopStartEvent == null) {
+                    delegate.execute(initialMessages, initialTools, outputParser)
+                } else {
+                    val toolLoopContext = ToolLoopObservationContext(toolLoopStartEvent, initialMessages)
+                    instrumentation.observe({ toolLoopContext }) {
+                        delegate.execute(initialMessages, initialTools, outputParser)
+                            .also { toolLoopContext.output = it }
+                    }
+                }
+            }
+            return if (llmRequestEvent == null) {
+                runLoop()
+            } else {
+                instrumentation.observe({ LlmObservationContext(llmRequestEvent) }) { runLoop() }
+            }
+        }
+    }
+
+}
