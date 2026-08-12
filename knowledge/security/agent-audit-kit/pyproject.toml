@@ -1,0 +1,70 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-audit-kit"
+version = "0.3.73"
+description = "Security scanner for MCP-connected AI agent pipelines"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "AgentAuditKit Contributors"}
+]
+keywords = ["mcp", "security", "scanner", "ai-agents", "claude-code"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = [
+    "click>=8.1",
+    "pyyaml>=6.0",
+    "tomli>=2.0; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "mypy>=1.0",
+    # Pin the linter minor so CI is reproducible. ruff 0.16.0 (2026-07-24)
+    # enabled stricter defaults (import-order I001, TRY004, ...) that flag ~281
+    # pre-existing style issues; cap below it so an upstream release can't turn
+    # CI red without a deliberate bump. Bump the cap + `ruff check --fix` to adopt.
+    "ruff>=0.15,<0.16",
+    "types-PyYAML>=6.0",
+]
+
+[project.scripts]
+agent-audit-kit = "agent_audit_kit.cli:cli"
+
+[project.urls]
+Homepage = "https://github.com/sattyamjjain/agent-audit-kit"
+Repository = "https://github.com/sattyamjjain/agent-audit-kit"
+Issues = "https://github.com/sattyamjjain/agent-audit-kit/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agent_audit_kit"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+# CVE fixtures contain intentionally broken / vulnerable code; they are
+# scanner INPUT, not library code, so lint them loosely.
+extend-exclude = ["tests/fixtures/cves"]
+
+[[tool.mypy.overrides]]
+# reportlab is used only in output/pdf_report.py; it has no py.typed marker.
+module = ["reportlab", "reportlab.*", "sigstore", "sigstore.*"]
+ignore_missing_imports = true

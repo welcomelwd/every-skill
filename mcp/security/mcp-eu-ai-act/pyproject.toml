@@ -1,0 +1,70 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "eu-ai-act-scanner"
+version = "2.0.38"
+description = "Run `eu-ai-act-scanner` before your next deploy — finds every EU AI Act + GDPR gap in your AI project. Detects 22 AI frameworks, returns pass/fail per article with fix instructions. Zero config, free. Also available as MCP server for Claude/Cursor."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.27.0",
+]
+keywords = [
+    "EU AI Act",
+    "compliance",
+    "CLI",
+    "scanner",
+    "MCP",
+    "AI regulation",
+    "risk assessment",
+    "trust-layer",
+    "ai-certification",
+    "ai-proof",
+]
+
+[project.urls]
+Homepage = "https://github.com/ark-forge/mcp-eu-ai-act"
+Repository = "https://github.com/ark-forge/mcp-eu-ai-act"
+Documentation = "https://mcp.arkforge.tech/fr/mcp-eu-ai-act.html?utm_source=pypi"
+Pricing = "https://arkforge.tech/en/pricing.html?utm_source=pypi&utm_medium=pypi_sidebar&utm_campaign=mcp_euaiact"
+
+[project.scripts]
+eu-ai-act-scanner = "cli:main"
+eu-ai-act-mcp = "server:run_mcp"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+only-include = ["server.py", "cli.py", "gdpr_module.py"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"data/eu_ai_act_articles.json" = "data/eu_ai_act_articles.json"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short -q"
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["server", "gdpr_module"]
+omit = [
+    ".venv/*",
+    "venv/*",
+    "node_modules/*",
+    "dist/*",
+    "__pycache__/*",
+    "*/site-packages/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "pass",
+]
+show_missing = true
+skip_empty = true

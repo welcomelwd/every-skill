@@ -1,0 +1,47 @@
+name: Publish to MCP Registry
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for manual trigger'
+        required: false
+        default: 'manual'
+
+permissions:
+  contents: read
+  id-token: write  # Required for OIDC authentication with MCP Registry
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
+          sudo mv mcp-publisher /usr/local/bin/
+
+      - name: Login to MCP Registry (GitHub OIDC)
+        run: mcp-publisher login github-oidc
+
+      - name: Publish to MCP Registry (skip if already published)
+        run: |
+          set +e
+          output=$(mcp-publisher publish 2>&1)
+          rc=$?
+          echo "$output"
+          if [ $rc -eq 0 ]; then
+            echo "Published successfully"
+            exit 0
+          fi
+          if echo "$output" | grep -qi "already exists\|duplicate\|already published\|conflict"; then
+            echo "Version already published to MCP Registry (idempotent skip)"
+            exit 0
+          fi
+          echo "::error::MCP Registry publish failed with exit code $rc"
+          exit 1

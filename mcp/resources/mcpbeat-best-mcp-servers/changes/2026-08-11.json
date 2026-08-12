@@ -1,0 +1,165 @@
+{
+  "date": "2026-08-11",
+  "findings": {
+    "fixed": 461,
+    "high": 78,
+    "new": 1702
+  },
+  "licence": "CC BY 4.0",
+  "notable": [
+    {
+      "detail": "destroy.fs",
+      "kind": "new_high",
+      "server": "AtlasDevHQ/atlas",
+      "url": "https://mcpbeat.com/mcp-servers/atlasdevhq/atlas/"
+    },
+    {
+      "detail": "claim.read_only",
+      "kind": "new_high",
+      "server": "EllisMorrow/Caelune",
+      "url": "https://mcpbeat.com/mcp-servers/ellismorrow/omniclip-rag-mcp/"
+    },
+    {
+      "detail": "claim.read_only",
+      "kind": "new_high",
+      "server": "unsoldgroup/mail-index",
+      "url": "https://mcpbeat.com/mcp-servers/alunsoldantarctica/mail-index/"
+    },
+    {
+      "detail": "claim.read_only",
+      "kind": "new_high",
+      "server": "arifulislamat/database-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/arifulislamat/database-mcp-postgres/"
+    },
+    {
+      "detail": "claim.local_only",
+      "kind": "new_high",
+      "server": "cesteral/mcp-open-advertising",
+      "url": "https://mcpbeat.com/mcp-servers/cesteral/sa360-mcp/"
+    },
+    {
+      "detail": "exfil.cloud_meta",
+      "kind": "new_high",
+      "server": "cesteral/mcp-open-advertising",
+      "url": "https://mcpbeat.com/mcp-servers/cesteral/snapchat-mcp/"
+    },
+    {
+      "detail": "combo.secrets_out",
+      "kind": "new_high",
+      "server": "getnable/finopsmcp",
+      "url": "https://mcpbeat.com/mcp-servers/chaandannn/finops-mcp/"
+    },
+    {
+      "detail": "combo.secrets_out",
+      "kind": "new_high",
+      "server": "sipyourdrink-ltd/bernstein",
+      "url": "https://mcpbeat.com/mcp-servers/chernistry/bernstein/"
+    },
+    {
+      "detail": "combo.secrets_out",
+      "kind": "new_high",
+      "server": "delimit-ai/delimit-mcp-server",
+      "url": "https://mcpbeat.com/mcp-servers/delimit-ai/delimit-mcp-server/"
+    },
+    {
+      "detail": "claim.read_only",
+      "kind": "new_high",
+      "server": "j0hanz/filesystem-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/j0hanz/filesystem-context/"
+    },
+    {
+      "detail": "combo.obf_exfil",
+      "kind": "new_high",
+      "server": "kryptobaseddev/cleo",
+      "url": "https://mcpbeat.com/mcp-servers/kryptobaseddev/cleo-mcp-server/"
+    },
+    {
+      "detail": "exfil.cloud_meta",
+      "kind": "new_high",
+      "server": "nirholas/three.ws",
+      "url": "https://mcpbeat.com/mcp-servers/nirholas/three-token-mcp/"
+    },
+    {
+      "detail": "search_products",
+      "kind": "schema",
+      "server": "BuyWhere/buywhere",
+      "url": "https://mcpbeat.com/mcp-servers/buywhere/catalog-api/"
+    },
+    {
+      "detail": "get_panel_status",
+      "kind": "schema",
+      "server": "minds-ai-co/minds-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/getminds/minds/"
+    },
+    {
+      "detail": "decide_contract_method",
+      "kind": "schema",
+      "server": "sallim-app/contract-compass",
+      "url": "https://mcpbeat.com/mcp-servers/sallim/contract-compass/"
+    },
+    {
+      "detail": "realty_search_auctions",
+      "kind": "schema",
+      "server": "sallim-app/korea-realty",
+      "url": "https://mcpbeat.com/mcp-servers/sallim/korea-realty/"
+    },
+    {
+      "detail": "extract_entities",
+      "kind": "schema",
+      "server": "koala73/worldmonitor",
+      "url": "https://mcpbeat.com/mcp-servers/worldmonitor/mcp/"
+    },
+    {
+      "detail": "decide_contract_method",
+      "kind": "schema",
+      "server": "sallim-app/contract-compass",
+      "url": "https://mcpbeat.com/mcp-servers/naru/contract-compass/"
+    },
+    {
+      "detail": "check_visa",
+      "kind": "schema",
+      "server": "EasyOnward/mcp-server",
+      "url": "https://mcpbeat.com/mcp-servers/easyonward/mcp-server/"
+    },
+    {
+      "detail": "connect_todoist",
+      "kind": "schema",
+      "server": "lanchuske/local-mcp-releases",
+      "url": "https://mcpbeat.com/mcp-servers/local-mcp/local-mcp/"
+    },
+    {
+      "detail": "create_accounting_run",
+      "kind": "schema",
+      "server": "daliu/meta-council",
+      "url": "https://mcpbeat.com/mcp-servers/meta-council/decision-intelligence/"
+    },
+    {
+      "detail": "pangolinfo_capabilities",
+      "kind": "schema",
+      "server": "pangolinfo/pangolinfo-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/pangolinfo/amazon-mcp/"
+    },
+    {
+      "detail": "jobs_skill_trends",
+      "kind": "schema",
+      "server": "ReadyAPIs-com/readyapis",
+      "url": "https://mcpbeat.com/mcp-servers/readyapis/api/"
+    },
+    {
+      "detail": "twprojects-search",
+      "kind": "schema",
+      "server": "Teamwork/mcp",
+      "url": "https://mcpbeat.com/mcp-servers/teamwork/mcp/"
+    }
+  ],
+  "servers": {
+    "gone": 44,
+    "new": 177
+  },
+  "source": "https://mcpbeat.com/data/2026-08-11/",
+  "tools": {
+    "added": 3287,
+    "removed": 3286,
+    "schema_changed": 5188
+  }
+}

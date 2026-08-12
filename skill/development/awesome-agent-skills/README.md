@@ -1813,6 +1813,7 @@ Official skills published by Cypress to help create, maintain, understand, and f
 - **[csthink/dashmotion](https://github.com/csthink/dashmotion/tree/main/skills/dashmotion)** - Animated technical diagrams from plain English or Mermaid, self-contained HTML/SVG
 - **[browser-act/browser-act](https://github.com/browser-act/skills/tree/main/browser-act)** - Automate authenticated browsers with extraction and human handoff
 - **[JasonColapietro/suede-creator-skills](https://github.com/JasonColapietro/suede-creator-skills)** - Agent orchestration, code review grading, AI eval, creator tooling skills.
+- **[Ryan-yang125/motion-lexicon](https://github.com/Ryan-yang125/motion-lexicon/tree/main/skills/motion-lexicon)** - Build and review product motion with installable React components
 
 </details>
 

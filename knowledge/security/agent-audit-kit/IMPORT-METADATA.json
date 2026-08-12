@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "repository": "sattyamjjain/agent-audit-kit",
+  "source_url": "https://github.com/sattyamjjain/agent-audit-kit",
+  "ref": "main",
+  "resolved_commit": "56cecf4f4ff4b70d5a70e30dde6b1443b1487107",
+  "category": "knowledge",
+  "subcategory": "security",
+  "slug": "agent-audit-kit",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-12T10:11:01+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 768,
+  "copied_bytes": 5391823,
+  "excluded_files": [
+    "examples/vulnerable-configs/03-hardcoded-secrets/.env: sensitive filename"
+  ],
+  "execution": "never run by this importer"
+}

@@ -1,0 +1,10 @@
+- id: agent-audit-kit
+  name: AgentAuditKit Security Scan
+  description: Scan MCP agent configs, hooks, and dependencies for security issues
+  entry: agent-audit-kit scan
+  language: python
+  types: [json, yaml]
+  files: '(\.mcp\.json|mcp.*\.json|settings\.json|\.env|package\.json|pyproject\.toml)'
+  args: ['--ci']
+  pass_filenames: false
+  always_run: false

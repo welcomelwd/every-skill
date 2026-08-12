@@ -1,0 +1,16 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.ark-forge/mcp-eu-ai-act",
+  "description": "EU AI Act + GDPR compliance scanner. One call, no arguments, 10 seconds. 22 AI frameworks detected.",
+  "version": "2.0.31",
+  "repository": {
+    "url": "https://github.com/ark-forge/mcp-eu-ai-act",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.arkforge.tech/mcp"
+    }
+  ]
+}

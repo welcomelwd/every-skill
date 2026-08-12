@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+# ...but test fixtures deliberately carry .vscode/ configs the ide_task_rce
+# scanner reads (AAK-IDE-TASK-001..004). Re-include the directory, then its files.
+!tests/fixtures/**/.vscode/
+!tests/fixtures/**/.vscode/**
+*.swp
+*.swo
+
+# Test/Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*
+
+# Claude Code auto-memory
+.claude/auto-memory/dirty-files
+
+# Agent Audit Kit cache
+.agent-audit-kit/
+
+# Benchmark data (downloaded configs)
+benchmarks/data/
+benchmarks/results.json
+benchmarks/site/
+
+# v0.3.3: cve-watcher persistent state
+.aak/cve-watcher-state.json
+
+# Private strategy note — kept locally, never tracked in the public tree
+# (removed from tracking 2026-07-28; its own header said "do not commit").
+KILL-CRITERIA.md
+
+# Scan output does not belong in version control. findings.sarif sat at the repo
+# root as an orphan artifact (referenced by nothing, 8 findings from an old scan)
+# that drifted from rules.json on every rule change. SARIF is generated on demand
+# (`aak scan --format sarif`) and the GitHub Action uploads it to Code Scanning.
+# Root-anchored so the intentional example under examples/case-studies/ is untouched.
+/findings.sarif
+/*.sarif

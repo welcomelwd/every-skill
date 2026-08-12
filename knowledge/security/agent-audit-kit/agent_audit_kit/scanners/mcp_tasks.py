@@ -1,0 +1,193 @@
+"""MCP Tasks primitive scanner (AAK-TASKS-001..004).
+
+Inspects source files for the shapes flagged in ROADMAP §2.2:
+- 001 task read endpoint with no owner/tenant check          (SEP-1686 leakage)
+- 002 credentials retained in a task row past terminal state (SEP-1686 leakage)
+- 003 task has no TTL / cancellation endpoint                (SEP-1686 lifecycle)
+- 004 task creation with no quota / concurrency bound        (SEP-2663 task-DoS)
+
+004 is the 2026-07-28 spec-ahead arm: SEP-2663 makes long-running Tasks a
+first-class primitive (`tasks/create`), and an unbounded creation path — no
+per-caller quota, max-in-flight, or concurrency cap — is a task-flood DoS. It is
+a *distinct* signal from 003 (which is about TTL / cancellation): a server can
+have a TTL and a cancel endpoint yet still accept unlimited concurrent task
+creation.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+from agent_audit_kit.models import Finding
+from agent_audit_kit.scanners._helpers import find_line_number, make_finding, SKIP_DIRS
+
+
+_SCAN_EXTS = {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs"}
+_MAX_FILE_BYTES = 512_000
+
+_TASK_HINT = re.compile(
+    r"\b(?:Task|task)\s*(?:Manager|Store|Queue|Runner|Primitive|SEP[_-]?1686)\b|"
+    r"class\s+\w*Task\w*\b|"
+    r"/tasks/[{:<]|task_id",
+)
+
+# A concrete MCP Tasks *primitive* — a task class / store / manager, the
+# SEP-1686 marker, or an MCP `tasks/*` method. Bare `task_id` (a variable in
+# any job-queue or Celery worker) is deliberately NOT enough: rules 002/003
+# gate on this so they stop firing on every module that merely mentions a
+# task, while the SEP-1686 leakage shapes (which always define a task object)
+# still match.
+_TASK_PRIMITIVE = re.compile(
+    r"class\s+\w*Task\w*\b|"
+    r"\b(?:Task|task)\s*(?:Manager|Store|Queue|Runner|Primitive)\b|"
+    r"\bSEP[_-]?1686\b|"
+    r"/tasks/[{:<]|"
+    r"\btasks/(?:create|get|list|cancel|result)\b",
+)
+
+_TASK_GET_RE = re.compile(
+    r"""(?:def|async\s+def)\s+(?:get_task|read_task|task_read|get_by_id|findTask)\s*\([^)]*\)[^:]*:""",
+    re.DOTALL,
+)
+
+_OWNER_CHECK_RE = re.compile(
+    r"\b(?:owner|requesting_user|current_user|authenticated_user|principal|tenant_id|caller_id)\b",
+    re.IGNORECASE,
+)
+
+_CREDENTIAL_FIELD_RE = re.compile(
+    r"""\bself\.(?:credentials?|api_key|token|secret|password)\s*=""",
+    re.IGNORECASE,
+)
+
+_TERMINAL_STATE_RE = re.compile(
+    r"(?:completed|failed|cancelled|done|finished|terminal)",
+    re.IGNORECASE,
+)
+
+_ZEROIZE_RE = re.compile(
+    r"""(?:\bself\.(?:credentials?|api_key|token|secret|password)\s*=\s*None\b|"""
+    r"""\bdel\s+self\.(?:credentials?|api_key|token|secret|password)\b|"""
+    r"""\bclear_secret\s*\(|"""
+    r"""\bzero_?ize\s*\()""",
+)
+
+_TTL_RE = re.compile(
+    r"""\b(?:ttl|expires_at|expiry|deadline)\s*[:=]""",
+    re.IGNORECASE,
+)
+_CANCEL_RE = re.compile(
+    r"""\bdef\s+cancel_?\w*\s*\(|\bdef\s+abort_?\w*\s*\(|\bdef\s+terminate_?\w*\s*\(""",
+)
+
+# A task-creation path (SEP-2663 `tasks/create`) — the surface a flood targets.
+_TASK_CREATE_RE = re.compile(
+    r"""(?ix)
+    \btasks/create\b
+  | (?:def|async\s+def)\s+(?:create_task|enqueue_?\w*|submit_?\w*|add_task|spawn_task|start_task)\s*\(
+  | \b(?:create_task|enqueueTask|submitTask|addTask)\s*\(
+    """,
+)
+# A per-caller quota / concurrency / rate bound — its presence SUPPRESSES 004.
+_QUOTA_RE = re.compile(
+    r"""(?ix)
+    \bmax[_-]?tasks\b | \bmaxTasks\b | \btask[_-]?limit\b
+  | \bquota\b | \bmax[_-]?concurren\w* | \bconcurrency[_-]?limit\b
+  | \bmax[_-]?in[_-]?flight\b | \bmax[_-]?pending\b
+  | \brate[_-]?limit\w* | \bratelimit\b | \bbackpressure\b
+  | \bSemaphore\b | \basyncio\.Semaphore\b | \bBoundedSemaphore\b
+    """,
+)
+
+
+def _iter_source(project_root: Path) -> list[Path]:
+    out: list[Path] = []
+    for path in project_root.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in _SCAN_EXTS:
+            continue
+        if any(part in SKIP_DIRS for part in path.parts):
+            continue
+        try:
+            if path.stat().st_size > _MAX_FILE_BYTES:
+                continue
+        except OSError:
+            continue
+        out.append(path)
+    return out
+
+
+def _check_file(path: Path, project_root: Path) -> list[Finding]:
+    findings: list[Finding] = []
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return findings
+    if not _TASK_HINT.search(text):
+        return findings
+    rel = str(path.relative_to(project_root))
+
+    m_get = _TASK_GET_RE.search(text)
+    if m_get:
+        window = text[m_get.start() : m_get.start() + 1200]
+        if not _OWNER_CHECK_RE.search(window):
+            findings.append(
+                make_finding(
+                    "AAK-TASKS-001",
+                    rel,
+                    f"Task read function {m_get.group(0)!r} has no owner/tenant check in the first 1200 chars",
+                    line_number=find_line_number(text, m_get.group(0)),
+                )
+            )
+
+    if (
+        _TASK_PRIMITIVE.search(text)
+        and _CREDENTIAL_FIELD_RE.search(text)
+        and _TERMINAL_STATE_RE.search(text)
+    ):
+        if not _ZEROIZE_RE.search(text):
+            m_cred = _CREDENTIAL_FIELD_RE.search(text)
+            findings.append(
+                make_finding(
+                    "AAK-TASKS-002",
+                    rel,
+                    "Task object stores credential fields but never zeroizes on terminal state",
+                    line_number=find_line_number(text, m_cred.group(0)) if m_cred else None,
+                )
+            )
+
+    if _TASK_PRIMITIVE.search(text) and not _TTL_RE.search(text) and not _CANCEL_RE.search(text):
+        findings.append(
+            make_finding(
+                "AAK-TASKS-003",
+                rel,
+                "MCP Tasks primitive (task class/store) defines no TTL or cancellation path",
+            )
+        )
+
+    # AAK-TASKS-004 (SEP-2663): a task-creation path with no quota / concurrency
+    # bound is a task-flood DoS. Distinct from 003 (TTL/cancel).
+    m_create = _TASK_CREATE_RE.search(text)
+    if _TASK_PRIMITIVE.search(text) and m_create and not _QUOTA_RE.search(text):
+        findings.append(
+            make_finding(
+                "AAK-TASKS-004",
+                rel,
+                "MCP Tasks creation path has no per-caller quota, max-in-flight, "
+                "or concurrency bound — unbounded task creation is a task-flood "
+                "DoS (SEP-2663).",
+                line_number=find_line_number(text, m_create.group(0)),
+            )
+        )
+
+    return findings
+
+
+def scan(project_root: Path) -> tuple[list[Finding], set[str]]:
+    findings: list[Finding] = []
+    scanned: set[str] = set()
+    for path in _iter_source(project_root):
+        rel = str(path.relative_to(project_root))
+        scanned.add(rel)
+        findings.extend(_check_file(path, project_root))
+    return findings, scanned

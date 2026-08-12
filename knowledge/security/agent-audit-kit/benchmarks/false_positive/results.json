@@ -1,0 +1,70 @@
+{
+  "benign_slice_n": 368,
+  "benign_slice_predicate": "official MCP Registry latest-version server AND status=active AND auth_mode in {static-credential, header-nonsecret, local-stdio} AND not in AAK's shipped CVE/advisory feed (vuln_db.json + CVE-pin package names)",
+  "configs_with_high_critical": 1,
+  "finding_set_digest": "6a00de66acf2ab433f934d050ac1b720f375df3173f7cbda9f396b1c3ecafab3",
+  "findings_per_config": 2.15,
+  "high_critical_config_rate": 0.0027,
+  "high_critical_findings": 1,
+  "rule_family_buckets": {
+    "AAK-MCP": 515,
+    "AAK-OAUTH": 275
+  },
+  "severity_buckets": {
+    "critical": 1,
+    "high": 0,
+    "info": 0,
+    "low": 348,
+    "medium": 441
+  },
+  "tool": "agent-audit-kit",
+  "top30_high_critical": [
+    {
+      "config": "ai.spala/public-mcp",
+      "evidence": "Server 'public-mcp' URL: https://mcp.spala.ai/mcp \u2014 no authentication headers",
+      "rule_id": "AAK-MCP-001",
+      "severity": "critical"
+    }
+  ],
+  "top_noisy_high_critical_rules": [
+    {
+      "high_critical_findings": 1,
+      "rule_id": "AAK-MCP-001",
+      "severity": "critical",
+      "title": "Remote MCP server without authentication"
+    }
+  ],
+  "top_rules_overall": [
+    {
+      "findings": 368,
+      "rule_id": "AAK-MCP-ATTEST-001",
+      "severity": "medium",
+      "title": "MCP server admitted without attestation"
+    },
+    {
+      "findings": 275,
+      "rule_id": "AAK-OAUTH-008",
+      "severity": "low",
+      "title": "MCP OAuth surface with no RFC 9728 Protected Resource Metadata discovery"
+    },
+    {
+      "findings": 73,
+      "rule_id": "AAK-MCP-005",
+      "severity": "medium",
+      "title": "MCP server uses npx/uvx to fetch and execute remote packages"
+    },
+    {
+      "findings": 73,
+      "rule_id": "AAK-MCP-007",
+      "severity": "low",
+      "title": "MCP server lacks version pinning in args"
+    },
+    {
+      "findings": 1,
+      "rule_id": "AAK-MCP-001",
+      "severity": "critical",
+      "title": "Remote MCP server without authentication"
+    }
+  ],
+  "total_findings": 790
+}

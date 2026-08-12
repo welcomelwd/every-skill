@@ -90,6 +90,7 @@ repo to install.
   - [**Bigtable Basics**](./skills/cloud/bigtable-basics)
   - [**Cloud SQL Basics**](./skills/cloud/cloud-sql-basics)
   - [**Data Lineage Summary**](./skills/cloud/datalineage-summary)
+  - [**GCP Managed Airflow DAG Authoring Guide**](./skills/cloud/managed-airflow-dag-authoring)
   - [**Managed Service for Apache Airflow (formerly Cloud Composer) Migration Guide**](./skills/cloud/managed-airflow-migrations)
   - [**Spanner Basics**](./skills/cloud/spanner-basics)
 - **Developer tools**

@@ -1,0 +1,28 @@
+{
+  "schema_version": "2",
+  "manifest_version": "2026-04-28",
+  "issuer": "github.com/sattyamjjain",
+  "next_review": "2026-05-05",
+  "corpora": [
+    {
+      "id": "ipi_wild_2026_04",
+      "target_filename": "ipi_wild_payloads_2026_04.json",
+      "body_url": "https://raw.githubusercontent.com/sattyamjjain/agent-audit-kit/main/agent_audit_kit/data/ipi_wild_payloads_2026_04.json",
+      "sha256": "PENDING_INITIAL_PUBLISH",
+      "source_url": "https://www.helpnetsecurity.com/2026/04/24/indirect-prompt-injection-in-the-wild/",
+      "license": "CC-BY-4.0",
+      "first_seen": "2026-04-24",
+      "fetched_at": "2026-04-28"
+    },
+    {
+      "id": "fhi_universal_suffixes",
+      "target_filename": "fhi_universal_suffixes.txt",
+      "body_url": "https://raw.githubusercontent.com/sattyamjjain/agent-audit-kit/main/agent_audit_kit/data/fhi_universal_suffixes.txt",
+      "sha256": "PENDING_INITIAL_PUBLISH",
+      "source_url": "https://arxiv.org/abs/2604.20994",
+      "license": "arXiv non-exclusive license to distribute",
+      "first_seen": "2026-04-23",
+      "fetched_at": "2026-04-28"
+    }
+  ]
+}

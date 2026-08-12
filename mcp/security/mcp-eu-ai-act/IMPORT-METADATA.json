@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "repository": "ark-forge/mcp-eu-ai-act",
+  "source_url": "https://github.com/ark-forge/mcp-eu-ai-act",
+  "ref": "main",
+  "resolved_commit": "980e749d188d7e9b6d31c2d6c7f29d713cedd806",
+  "category": "mcp",
+  "subcategory": "security",
+  "slug": "mcp-eu-ai-act",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-12T10:11:01+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 77,
+  "copied_bytes": 877746,
+  "excluded_files": [
+    "assets/logo-400x400.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

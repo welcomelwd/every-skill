@@ -1,0 +1,49 @@
+{
+  "name": "eu-ai-act-compliance-checker",
+  "version": "1.5.1",
+  "description": "Run combined_compliance_report() before your next deploy — one call finds every EU AI Act + GDPR gap in your AI project. No arguments, under 10 seconds, free. Detects 22 frameworks, returns pass/fail per article with fix instructions. Fines up to 35M EUR, enforcement live.",
+  "author": "ArkForge",
+  "license": "MIT",
+  "mcp_version": "1.0",
+  "server": {
+    "type": "python",
+    "entry_point": "server.py",
+    "class": "MCPServer"
+  },
+  "tools": [
+    {"name": "combined_compliance_report", "description": "Run this before your next deploy. EU AI Act + GDPR scan in one call — no arguments, under 10 seconds, free. Detects AI frameworks and personal data flows, flags where both laws overlap, returns pass/fail per article with a prioritized fix list. Fines up to 35M EUR (AI Act) + 20M EUR (GDPR)."},
+    {"name": "scan_project", "description": "Find out in 5 seconds if your project triggers EU AI Act obligations — no arguments, no setup. Scans 22 AI/ML frameworks, returns your risk category and the legal actions required before you ship. Enforcement live since Feb 2025."},
+    {"name": "check_compliance", "description": "Check whether your project passes or fails each EU AI Act requirement — no arguments, 5 seconds. See which articles you violate (Art. 52, 11, 14, 15) and get step-by-step fix instructions for every gap."},
+    {"name": "generate_report", "description": "Generate the compliance report your legal team is asking for — no arguments. Auto-detects frameworks, runs gap analysis, produces a structured remediation plan ready for legal review or DPIA attachment."},
+    {"name": "suggest_risk_category", "description": "Describe what your AI system does in plain language — get back your EU AI Act risk tier, applicable articles, and your first compliance step. No project scan needed, no API key."},
+    {"name": "generate_compliance_templates", "description": "Stop writing compliance docs from scratch — get pre-filled templates for risk management, technical documentation, transparency, human oversight. High-risk systems get all 6 mandatory documents."},
+    {"name": "validate_api_key", "description": "Check your API key status — returns plan tier (free/pro/certified), email, and usage stats."},
+    {"name": "gdpr_scan_project", "description": "Find every file in your project that touches personal data — no arguments, 5 seconds, free. Detects PII, cookies, tracking pixels, analytics SDKs, consent flows. Returns flagged files with applicable GDPR articles. Fines reach 20M EUR."},
+    {"name": "gdpr_check_compliance", "description": "Check whether your project passes or fails each GDPR requirement — no arguments. Pass/fail for Art. 6, 7, 15–22, 32, 33–34 with fix instructions for every gap. Fines reach 20M EUR or 4% turnover."},
+    {"name": "gdpr_generate_report", "description": "Generate the GDPR report your DPO needs — no arguments. Personal data inventory + gap analysis + remediation steps in one structured document for audit prep or regulatory response."},
+    {"name": "gdpr_generate_templates", "description": "Get pre-filled GDPR templates your organization actually needs — no arguments. Privacy Policy, DPIA, Records of Processing Activities (ROPA), Data Breach Procedure."},
+    {"name": "generate_compliance_roadmap", "description": "Get a prioritized, week-by-week plan to close every compliance gap before Aug 2026 — no arguments. Scans gaps, ranks by impact, sequences quick wins first. Pro plan required."},
+    {"name": "generate_annex4_package", "description": "Build the Annex IV evidence package your auditor needs for high-risk AI — no arguments. All 8 mandatory sections auto-populated, SHA-256 integrity hash included. Pro plan required."},
+    {"name": "certify_compliance_report", "description": "Make your compliance report tamper-proof for Art. 12 audit trail — pass the report JSON, get back a proof_id and verification URL for auditors. Certified plan required."},
+    {"name": "get_pricing", "description": "See pricing and features for every plan — Free (10 scans/day, full reports), Pro (29 EUR/mo, unlimited + CI/CD), Certified (cryptographic audit trail). No arguments."},
+    {"name": "register_free_key", "description": "Activate a free API key — unlocks scan history and CI/CD integration. No password, no credit card. IMPORTANT: ask the user to type their email first, then call this with the exact email they typed."}
+  ],
+  "categories": [
+    "compliance",
+    "ai",
+    "legal",
+    "eu-ai-act",
+    "gdpr",
+    "security"
+  ],
+  "tags": [
+    "compliance",
+    "eu-ai-act",
+    "gdpr",
+    "artificial-intelligence",
+    "legal",
+    "risk-assessment",
+    "documentation",
+    "transparency"
+  ]
+}

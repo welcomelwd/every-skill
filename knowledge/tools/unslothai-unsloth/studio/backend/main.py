@@ -341,7 +341,9 @@ from utils.torch_warmup import (
     start_background_warm,
     warm_status,
 )
-from utils.cache_cleanup import clear_unsloth_compiled_cache
+from utils.cache_cleanup import (
+    clear_compiled_cache_unless_shared as _clear_compiled_cache_unless_shared,
+)
 from utils.lifespan_shutdown import run_lifespan_shutdown
 from utils.native_path_leases import native_path_leases_supported
 from utils.update_status import (
@@ -629,6 +631,16 @@ def _post_warm_background_work(generation: Optional[int] = None) -> None:
     _warm_rag_embedder()
 
 
+def clear_compiled_cache_unless_shared(app: FastAPI) -> None:
+    """Clear the compiled cache unless a sibling backend of this install is live.
+
+    The decision lives in cache_cleanup, next to the paths it clears and the lock
+    that serializes it against a sibling's startup; run_server puts the probe on
+    app.state because main.py must not import run.py back.
+    """
+    _clear_compiled_cache_unless_shared(getattr(app.state, "live_sibling_backend", None))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: detect hardware, seed default admin if needed. Shutdown: clean up compiled cache."""
@@ -639,7 +651,7 @@ async def lifespan(app: FastAPI):
     import structlog as _structlog
 
     _lifespan_log = _structlog.get_logger(__name__)
-    clear_unsloth_compiled_cache()
+    clear_compiled_cache_unless_shared(app)
 
     # Move the legacy sandbox up here rather than from the first request: the
     # copy can be minutes when the studio home is on another filesystem.
@@ -783,7 +795,7 @@ async def lifespan(app: FastAPI):
 
     await run_lifespan_shutdown(
         terminate_hub_downloads,
-        clear_unsloth_compiled_cache,
+        lambda: clear_compiled_cache_unless_shared(app),
         _hw_module,
     )
     # Shutdown cleared the state this warm produced, so release the one-per-process latch.
@@ -1851,6 +1863,15 @@ def _get_cached_system_gpu_info(logger) -> tuple[dict[str, Any], dict[str, Any]]
             )
             enriched_devices.append(enriched_dev)
 
+        # The tile divides the aggregate by the SUMMED per-device totals, so both must
+        # describe the same cards. The two probes enumerate independently: visibility
+        # drops a device whose mem_get_info raises, the aggregate side reads torch
+        # properties only and keeps it. A device in one and not the other inflates the
+        # percentage and floors free at 0, so identical index sets only (#7452).
+        aggregate_basis_matches = metrics_match and {
+            d.get("index") for d in utilization_info.get("devices", [])
+        } == {d.get("index") for d in enriched_devices}
+
         try:
             from core.inference.llama_cpp import LlamaCppBackend
             from utils.hardware import DeviceType, get_device
@@ -1878,6 +1899,11 @@ def _get_cached_system_gpu_info(logger) -> tuple[dict[str, Any], dict[str, Any]]
             "devices": enriched_devices,
             "backend": visibility_info.get("backend"),
             "gguf_gpu_ids_supported": gpu_ids_supported,
+            # Host-level used VRAM, for when no counter is attributable to one card
+            # (#7452). Only the Windows ROCm path sets it; None everywhere else.
+            "vram_used_gb_aggregate": utilization_info.get("vram_used_gb_aggregate")
+            if aggregate_basis_matches
+            else None,
         }
 
         # Keep inference placement separate on train-capable hosts where a forced Vulkan llama.cpp
