@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.0",
+  "source_date": "2026-08-14",
+  "batch": "AM",
+  "source_markdown": "knowledge/github-trending/2026-08-14.md",
+  "projects": [
+    {
+      "repository": "kepano/obsidian-skills",
+      "source_url": "https://github.com/kepano/obsidian-skills",
+      "category": "skill",
+      "subcategory": "development",
+      "slug": "obsidian-skills",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "a1dc48e68138490d522c04cbf5822214c6eb1202"
+    },
+    {
+      "repository": "lexbeam-software/eu-ai-act-mcp",
+      "source_url": "https://github.com/lexbeam-software/eu-ai-act-mcp",
+      "category": "mcp",
+      "subcategory": "security",
+      "slug": "eu-ai-act-mcp-lexbeam",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "ab322f04e3ecdde51f8a46b5c5c85bc56986b925"
+    },
+    {
+      "repository": "agent-diff-bench/agent-diff",
+      "source_url": "https://github.com/agent-diff-bench/agent-diff",
+      "category": "agent",
+      "subcategory": "evaluations",
+      "slug": "agent-diff",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "3bb9c40707df23d89e5dbc0e40c424ba38c69ff8"
+    },
+    {
+      "repository": "altic-dev/FluidVoice",
+      "source_url": "https://github.com/altic-dev/FluidVoice",
+      "category": "knowledge",
+      "subcategory": "products",
+      "slug": "fluidvoice",
+      "license": "GPL-3.0",
+      "download": true,
+      "ref": "main",
+      "commit": "ab7faa13e696423dded0119ea145b9023dfe1e63"
+    }
+  ]
+}
