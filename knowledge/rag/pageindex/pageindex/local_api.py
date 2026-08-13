@@ -97,6 +97,7 @@ class LocalAPI:
             raise PageIndexAPIError(
                 "Failed to submit document: PDF has no content. All pages are blank."
             )
+        self._unique_doc_name(os.path.basename(file_path))
 
         try:
             if mode == "flash":
@@ -115,7 +116,7 @@ class LocalAPI:
         doc_id = "pi-" + uuid.uuid4().hex
         meta = {
             "id": doc_id,
-            "name": os.path.basename(file_path),
+            "name": self._unique_doc_name(os.path.basename(file_path)),
             "description": description,
             "status": "completed",
             "createdAt": _now_iso(),
@@ -129,7 +130,23 @@ class LocalAPI:
         from .utils import remove_fields
         self._store.save_document(
             doc_id, meta, remove_fields(structure, fields=["text"]), pages)
-        return {"doc_id": doc_id}
+        return {"doc_id": doc_id, "name": meta["name"]}
+
+    def _unique_doc_name(self, name: str) -> str:
+        """Mirror the cloud upload: a taken name gets _1.._99 appended,
+        beyond that the submit is rejected."""
+        taken = {meta.get("name") for meta in self._store.list_metas()}
+        if name not in taken:
+            return name
+        base, ext = os.path.splitext(name)
+        for num in range(1, 100):
+            candidate = f"{base}_{num}{ext}"
+            if candidate not in taken:
+                return candidate
+        raise PageIndexAPIError(
+            "Failed to submit document: Too many files with similar names. "
+            "Please use a different file name."
+        )
 
     @staticmethod
     def _extract_page_texts(file_path: str) -> list[str]:
@@ -189,6 +206,11 @@ class LocalAPI:
         pdf_pages = [(p.get("markdown", ""), 0) for p in pages]
         add_node_text(structure, pdf_pages)
         return structure
+
+    def raw_tree(self, doc_id: str) -> list | None:
+        """Stored tree verbatim — keeps start_index/end_index, which
+        get_tree's cloud wire shape renames and drops."""
+        return self._store.get_tree(doc_id)
 
     def get_tree(self, doc_id: str, node_summary: bool = False,
                  include_text: bool = True) -> dict[str, Any]:

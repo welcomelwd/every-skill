@@ -1,23 +1,36 @@
 """PageIndex SDK client: the 0.2.x cloud surface, now with a local mode."""
 from __future__ import annotations
 
-from typing import Any, Iterator, Optional, Union
+import os
+import time
+import warnings
+from typing import Any, Callable, Iterator, Optional, Union
 
 from .errors import PageIndexAPIError
 
 
 def _parse_pages(pages: str) -> list[int]:
-    result = []
+    result: set[int] = set()
+    too_many = (f"Page specification '{pages}' spans more than "
+                "10000 pages; request a narrower range")
     for part in pages.split(","):
         part = part.strip()
         if "-" in part:
             start, end = (int(x) for x in part.split("-", 1))
             if start > end:
                 raise ValueError(f"Invalid range '{part}': start must be <= end")
-            result.extend(range(start, end + 1))
         else:
-            result.append(int(part))
-    return sorted(set(result))
+            start = end = int(part)
+        # Bound each part arithmetically before materializing it — a spec
+        # like "1-999999999" would otherwise expand to a billion integers.
+        # The cap is on distinct pages, so overlapping parts (a parent
+        # section plus its children) don't double-count.
+        if end - start + 1 > 10_000:
+            raise ValueError(too_many)
+        result.update(range(start, end + 1))
+        if len(result) > 10_000:
+            raise ValueError(too_many)
+    return sorted(result)
 
 
 def _normalize_retrieve_model(model: str) -> str:
@@ -47,10 +60,12 @@ class PageIndexClient:
             trees. Defaults to the packaged config (see pageindex/config.yaml).
         summary_model (str, optional): Local mode only — LLM used for node
             summaries and document descriptions.
-        retrieve_model (str, optional): Local mode only — exposed as
-            ``client.retrieve_model`` (the agent demo reads it); the SDK
-            itself consumes it once agent-based local chat lands in a
-            later release.
+        retrieve_model (str, optional): Local mode only — the model the
+            local chat surfaces (``chat_completions``, ``responses``)
+            default to, exposed as ``client.retrieve_model``.
+            ``provider/model`` names route through LiteLLM; for an
+            OpenAI-compatible server that itself serves slashed model ids
+            (vLLM, TGI), prefix ``openai/`` (e.g. ``openai/Qwen/...``).
         storage_path (str, optional): Local mode only — directory where
             indexed documents are stored. Defaults to ``./.pageindex``.
 
@@ -62,10 +77,9 @@ class PageIndexClient:
     instead of inferring it from api_key.
 
     Local mode differences (all documented per method): indexing is
-    synchronous, only PDFs are supported, and ``chat_completions`` (until
-    agent-based local chat lands in a later release) / folders /
-    ``beta_headers`` / the deprecated retrieval API (``submit_query``,
-    ``get_retrieval``) are cloud-only.
+    synchronous, only PDFs are supported, and folders / ``beta_headers`` /
+    the deprecated retrieval API (``submit_query``, ``get_retrieval``) are
+    cloud-only.
     """
 
     BASE_URL = "https://api.pageindex.ai"
@@ -126,12 +140,14 @@ class PageIndexClient:
         beta_headers: Optional[list[str]] = None,
         folder_id: Optional[str] = None,
         metadata: Optional[dict] = None,
+        wait: bool = False,
     ) -> dict[str, Any]:
         """
-        Submit a PDF document for processing. Returns {'doc_id': ...}.
+        Submit a PDF document for processing. Returns {'doc_id': ..., 'name': ...}.
 
-        Cloud: uploads the file; processing is asynchronous — poll
-        ``is_retrieval_ready(doc_id)`` before retrieving.
+        Cloud: uploads the file; processing is asynchronous. Pass
+        ``wait=True`` to block until the document is ready, or poll
+        ``get_document(doc_id)['status']`` yourself.
 
         Local: indexes the document in this call (it blocks while your LLM
         builds the tree — minutes for a standard index of a long document),
@@ -151,14 +167,67 @@ class PageIndexClient:
             metadata (dict, optional): Your own JSON-serializable tags for the
                 document; returned in get_tree/get_ocr responses and
                 list_documents entries (both modes).
+            wait (bool): Return only once the document is ready for use.
+                Cloud: polls status until "completed" (raises on "failed" or
+                after 30 minutes). Local: indexing is synchronous already, so
+                this changes nothing. Leave False to submit many documents
+                concurrently and poll afterwards.
 
         Returns:
-            dict: {'doc_id': ...}
+            dict: {'doc_id': ..., 'name': ...}. 'name' is the stored document
+                name: a taken name gains a numeric suffix (name_1..name_99)
+                and a UserWarning is emitted. Older cloud servers omit 'name'.
         """
-        return self._api.submit_document(
+        result = self._api.submit_document(
             file_path=file_path, mode=mode,
             beta_headers=beta_headers, folder_id=folder_id, metadata=metadata,
         )
+        stored = result.get("name")
+        if stored and stored != os.path.basename(file_path):
+            warnings.warn(
+                f'Document "{os.path.basename(file_path)}" was stored as '
+                f'"{stored}".',
+                stacklevel=2,
+            )
+        if wait:
+            self._wait_until_ready(result["doc_id"])
+        return result
+
+    def _wait_until_ready(self, doc_id: str, timeout: float = 1800.0) -> None:
+        import requests
+        interval = 2.0
+        deadline = time.monotonic() + timeout
+        poll_failures = 0
+        while True:
+            try:
+                status = self.get_document(doc_id).get("status")
+                poll_failures = 0
+            except (PageIndexAPIError, requests.RequestException) as exc:
+                # Tolerate transient poll failures; a 30-minute wait should
+                # not die on one 502 or dropped connection.
+                poll_failures += 1
+                if poll_failures >= 3:
+                    raise PageIndexAPIError(
+                        f"Could not poll document status (doc_id: {doc_id}): "
+                        f"{exc}. Processing continues in the cloud — poll "
+                        "get_document(doc_id) for status."
+                    ) from exc
+                status = None
+            if status == "completed":
+                return
+            if status == "failed":
+                raise PageIndexAPIError(
+                    f"Document processing failed (doc_id: {doc_id})."
+                )
+            if time.monotonic() >= deadline:
+                raise PageIndexAPIError(
+                    f"Timed out after {int(timeout)}s waiting for document "
+                    f"processing (doc_id: {doc_id}, last status: {status}). "
+                    "Processing continues in the cloud — poll "
+                    "get_document(doc_id) for status."
+                )
+            time.sleep(interval)
+            interval = min(interval * 1.5, 15.0)
 
     # ---------- OCR FUNCTIONALITY ----------
 
@@ -256,11 +325,11 @@ class PageIndexClient:
 
         Cloud-only: the cloud API marks this endpoint deprecated in favor of
         chat completions, so local mode does not implement it — raises
-        PageIndexAPIError. Use ``chat_completions`` (cloud) instead.
+        PageIndexAPIError. Use ``chat_completions`` instead.
         """
         return self._require_cloud(
             "submit_query is cloud-only — the retrieval API is deprecated in "
-            "favor of chat completions; use chat_completions in cloud mode."
+            "favor of chat completions; use chat_completions instead."
         ).submit_query(doc_id=doc_id, query=query, thinking=thinking)
 
     def get_retrieval(self, retrieval_id: str) -> dict[str, Any]:
@@ -269,53 +338,217 @@ class PageIndexClient:
 
         Cloud-only: the cloud API marks this endpoint deprecated in favor of
         chat completions, so local mode does not implement it — raises
-        PageIndexAPIError. Use ``chat_completions`` (cloud) instead.
+        PageIndexAPIError. Use ``chat_completions`` instead.
         """
         return self._require_cloud(
             "get_retrieval is cloud-only — the retrieval API is deprecated in "
-            "favor of chat completions; use chat_completions in cloud mode."
+            "favor of chat completions; use chat_completions instead."
         ).get_retrieval(retrieval_id=retrieval_id)
 
     # ---------- CHAT COMPLETIONS ----------
 
     def chat_completions(
         self,
-        messages: list[dict[str, str]],
+        messages: Union[str, list[dict[str, str]]],
         stream: bool = False,
         doc_id: Optional[Union[str, list[str]]] = None,
         temperature: Optional[float] = None,
         stream_metadata: bool = False,
         enable_citations: bool = False,
+        model: Optional[str] = None,
+        max_turns: Optional[int] = None,
     ) -> Union[dict[str, Any], Iterator[str], Iterator[dict[str, Any]]]:
         """
-        PageIndex Chat Completions, scoped to specific PageIndex documents.
+        PageIndex Chat Completions: document QA in one call.
+
+        Cloud: the hosted chat endpoint. Local: a managed document-QA agent
+        run over the local tools against your own LLM backend's
+        /chat/completions (requires ``pageindex[openai]``; the OpenAI SDK's
+        usual env config — OPENAI_API_KEY, OPENAI_BASE_URL — selects the
+        backend, so any OpenAI-compatible server works; a ``/`` in the
+        model name means LiteLLM provider routing, so prefix ``openai/``
+        when the backend itself serves slashed ids, e.g.
+        ``openai/Qwen/...`` on vLLM). The non-stream
+        response carries the final answer only; streaming yields the
+        agent's visible text as it is produced, including narration before
+        tool calls. ``finish_reason`` reports loop completion ("stop") —
+        the engine does not surface per-turn backend finish reasons. For
+        the tool-use process and prompt-cache round-trip use
+        ``responses()`` or ``messages()``.
 
         Args:
-            messages: Conversation messages with 'role' and 'content' keys.
+            messages: Conversation messages with 'role' and 'content' keys,
+                or a bare query string (it becomes a single user message).
+                Local also accepts system/developer messages — their content
+                is appended to the managed system prompt.
             stream: Enable streaming responses.
             doc_id: Document ID or list of IDs to scope the conversation.
-            temperature: Sampling temperature (0.0-1.0).
+                Keep it identical across a conversation's calls — the
+                targeting block it adds is re-set each call and is part
+                of the cached prompt prefix.
+            temperature: Sampling temperature, passed through to the model.
             stream_metadata: With stream=True, yield chunk dicts instead of
                 text pieces.
-            enable_citations: Enable citation instructions in responses.
+            enable_citations: Cloud-only — local mode raises (citations need
+                block-level OCR data local mode does not store).
+            model: Local only — backend model name (defaults to
+                ``retrieve_model``). The cloud endpoint selects its own.
+            max_turns: Local only — cap on agent turns per call.
 
         Returns:
             - stream=False: complete response dict ({'id', 'object', 'created',
               'choices', 'usage'})
             - stream=True, stream_metadata=False: iterator of text chunks
             - stream=True, stream_metadata=True: iterator of chunk dicts
-
-        Local: not yet supported — raises PageIndexAPIError. Agent-based
-        local chat arrives in a later release.
         """
-        return self._require_cloud(
-            "chat_completions is not yet supported in local mode — it arrives "
-            "in a later release. Create the client with an api_key to use "
-            "cloud chat."
-        ).chat_completions(
+        if isinstance(messages, str):
+            if not messages.strip():
+                raise PageIndexAPIError(
+                    "messages must be a non-empty string or a list of "
+                    "message dicts.")
+            messages = [{"role": "user", "content": messages}]
+        from .cloud_api import CloudAPI
+        if not isinstance(self._api, CloudAPI):
+            from .local_chat import run_chat_completions
+            return run_chat_completions(
+                self, messages, stream=stream, doc_id=doc_id,
+                temperature=temperature, stream_metadata=stream_metadata,
+                enable_citations=enable_citations, model=model,
+                max_turns=max_turns,
+            )
+        if model is not None or max_turns is not None:
+            raise PageIndexAPIError(
+                "model and max_turns are local-mode parameters — the cloud "
+                "chat endpoint selects its own model."
+            )
+        return self._api.chat_completions(
             messages=messages, stream=stream, doc_id=doc_id,
             temperature=temperature, stream_metadata=stream_metadata,
             enable_citations=enable_citations,
+        )
+
+    def responses(
+        self,
+        input: Union[str, list[dict[str, Any]]],
+        model: Optional[str] = None,
+        stream: bool = False,
+        doc_id: Optional[Union[str, list[str]]] = None,
+        instructions: Optional[str] = None,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_turns: Optional[int] = None,
+    ) -> Union[dict[str, Any], Iterator[dict[str, Any]]]:
+        """
+        Document QA over the OpenAI Responses protocol — the agentic surface.
+
+        Local only for now. Drives your backend's /responses end to end (no
+        translation layer). The envelope is official Responses shape —
+        ``output`` carries the model-produced items and parses with the
+        openai SDK types — and the whole process transcript (including the
+        tool outputs the SDK executed) rides in the extra ``items`` field.
+        Append the returned ``items`` to your next call's ``input`` verbatim
+        to keep provider prompt-cache prefix continuity and the agent's
+        memory of what it already read.
+
+        Requires ``pageindex[openai]`` and a backend that supports the
+        Responses API; backends that only speak chat.completions should use
+        ``chat_completions()``. Provider-prefixed models (``anthropic/…``)
+        route through LiteLLM's chat.completions adapter and are therefore
+        refused here — use ``chat_completions()`` or ``messages()`` for
+        those.
+
+        Args:
+            input: A user message string, or a list of Responses input items
+                (round-trip prior ``items`` here).
+            model: Backend model name (defaults to ``retrieve_model``).
+            stream: Yield Responses stream events as dicts — one logical
+                response per call: per-turn backend lifecycle events are
+                collapsed, sequence numbers are reassigned monotonically,
+                and ``output_index`` is re-based onto the single logical
+                ``output``. The single final event is the terminal
+                ``response.*`` for the run's status; its ``response``
+                carries the tool outputs in ``items``.
+            doc_id: Document ID or list of IDs to scope the conversation.
+                Keep it identical across a conversation's calls — the
+                targeting block it adds is re-set each call and is part
+                of the cached prompt prefix.
+            instructions: Appended to the managed system prompt.
+            temperature / top_p: Passed through to the model.
+            max_turns: Cap on agent turns per call.
+        """
+        from .cloud_api import CloudAPI
+        if isinstance(self._api, CloudAPI):
+            raise PageIndexAPIError(
+                "responses is not available on PageIndex cloud yet — it is "
+                "a local-mode surface for now."
+            )
+        from .local_chat import run_responses
+        return run_responses(
+            self, input, model=model, stream=stream, doc_id=doc_id,
+            instructions=instructions, temperature=temperature, top_p=top_p,
+            max_turns=max_turns,
+        )
+
+    def messages(
+        self,
+        messages: Union[str, list[dict[str, Any]]],
+        model: str,
+        max_tokens: Optional[int] = None,
+        stream: bool = False,
+        doc_id: Optional[Union[str, list[str]]] = None,
+        system: Optional[Union[str, list[dict[str, Any]]]] = None,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
+        stop_sequences: Optional[list[str]] = None,
+        max_turns: Optional[int] = None,
+    ) -> Union[dict[str, Any], Iterator[Any]]:
+        """
+        Document QA over the Anthropic Messages protocol — Claude-native.
+
+        Local only for now. Drives Anthropic's /v1/messages via the
+        Anthropic SDK's own tool runner (requires ``pageindex[anthropic]``;
+        ANTHROPIC_API_KEY selects the backend). ``tool_use``/``tool_result``
+        round-trip is the format's native behavior: the response is the
+        final message envelope with cross-turn aggregated ``usage`` plus a
+        ``messages`` field — the full new turn sequence, valid for verbatim
+        append to your history. The managed system prompt carries a
+        ``cache_control`` breakpoint.
+
+        Args:
+            messages: Native Messages-format history (including prior
+                tool_use/tool_result blocks on round-trip), or a bare query
+                string (it becomes a single user message).
+            model: Required — there is no cross-vendor default to guess.
+            max_tokens: Per-turn output budget the Messages API requires on
+                the wire; the default is resolved per model (8192, or 4096
+                for the claude-3 generation whose ceiling is lower) so the
+                simple call needs only a question. Passed through.
+            stream: Yield the Anthropic SDK's event stream across turns
+                (its native event objects, including SDK-synthesized
+                convenience events), one message sequence per turn.
+            doc_id: Document ID or list of IDs to scope the conversation.
+                Keep it identical across a conversation's calls — the
+                targeting block it adds is re-set each call.
+            system: Appended after the managed system blocks.
+            temperature / top_p / top_k / stop_sequences: Passed through.
+            max_turns: Cap on agent turns per call (default 10, like the
+                OpenAI surfaces). A truncated run reports
+                ``stop_reason: "tool_use"`` and its ``messages`` remain
+                valid for continuation.
+        """
+        from .cloud_api import CloudAPI
+        if isinstance(self._api, CloudAPI):
+            raise PageIndexAPIError(
+                "messages is not available on PageIndex cloud yet — it is "
+                "a local-mode surface for now."
+            )
+        from .local_chat import run_messages
+        return run_messages(
+            self, messages, model=model, max_tokens=max_tokens,
+            stream=stream, doc_id=doc_id, system=system,
+            temperature=temperature, top_p=top_p, top_k=top_k,
+            stop_sequences=stop_sequences, max_turns=max_turns,
         )
 
     # ---------- DOCUMENT MANAGEMENT ----------
@@ -364,6 +597,332 @@ class PageIndexClient:
             dict: {'documents': [...], 'total', 'limit', 'offset'}.
         """
         return self._api.list_documents(limit=limit, offset=offset, folder_id=folder_id)
+
+    # ---------- AGENT INTEGRATION ----------
+
+    def agent_tools(self, include_management: bool = False) -> list[Callable[..., str]]:
+        """
+        Plain functions for any agent framework (LangChain, PydanticAI, ...).
+        For the OpenAI / Claude Agent SDKs, prefer ``as_openai_tools()`` /
+        ``as_claude_mcp()``.
+
+        Cloud: the full cloud tool set, discovered live from the PageIndex
+        MCP server when this method is called — one function per tool,
+        signature and docstring synthesized from the server's schemas, calls
+        executed from your process over MCP. Raises PageIndexAPIError if the
+        server cannot be reached. Local: the built-in tools over the local
+        store (``browse_documents``, ``get_document``,
+        ``get_document_structure``, ``get_page_content``).
+
+        Each function takes JSON-serializable arguments, returns a JSON
+        string, and reports failures inside that JSON instead of raising.
+
+        Args:
+            include_management (bool): Also expose tools that modify the
+                library. Local: adds ``remove_document``. Cloud: by default
+                only tools the server marks read-only are exposed; True
+                exposes the server's complete list (upload, delete, ...).
+        """
+        from .agent_tools import build_agent_tools
+        return build_agent_tools(self, include_management)
+
+    def as_openai_tools(self, include_management: bool = False,
+                        hosted: bool = False,
+                        doc_id: Optional[Union[str, list[str]]] = None) -> list:
+        """
+        Tools for the OpenAI Agents SDK — pass to ``Agent(tools=...)``
+        (or ``openai_agent_config()`` for all the Agent slots in one
+        call).
+
+        Cloud (default): the full live read tool set (search, folders,
+        images — as enabled for your key) as plain function tools,
+        discovered from the PageIndex MCP server and executed from your
+        process — works with any model backend. Binary tool results
+        (e.g. ``get_document_image``) arrive as text placeholder stubs
+        on this in-process path. Pass ``hosted=True`` to
+        hand the connection to OpenAI instead: one hosted MCP tool, tool
+        calls executed server-side (lowest latency; requires an
+        OpenAI-hosted model on the Responses API). The framework's own
+        ``MCPServerStreamableHttp`` — ``params={"url":
+        f"{BASE_URL}/mcp?tools=read", "headers": {"Authorization":
+        "Bearer <your PageIndex API key>"}}`` (drop ``?tools=read`` for
+        the full tool set) — is the async-native alternative for its
+        ``mcp_servers=`` slot.
+
+        Local: the in-process tools, any model backend; ``hosted`` does
+        not apply.
+
+        Requires ``openai-agents`` (``pip install 'pageindex[openai]'``),
+        imported only when this method is called.
+
+        Args:
+            include_management (bool): Also expose tools that modify the
+                library (delete, upload). Default off: the in-process
+                cloud default serves only server-annotated read-only
+                tools, and ``hosted=True`` connects OpenAI to the
+                read-only endpoint (``/mcp?tools=read``) instead.
+            hosted (bool): Cloud only — hand the MCP connection to OpenAI
+                for server-side tool execution (OpenAI models only).
+            doc_id: Local only — restrict the tools to this document ID
+                (or list of IDs), enforced at the tool layer: out-of-scope
+                lookups return NOT_FOUND. Raises on cloud, where scoping
+                is server-side.
+        """
+        from .integrations.openai_agents import build_openai_tools
+        return build_openai_tools(self, include_management, hosted,
+                                  doc_ids=doc_id)
+
+    def _local_doc_scope(self, doc_id):
+        """doc_id for the tool layer: passed through locally (structural
+        allowlist), dropped on cloud where scoping is server-side and the
+        config helpers keep prompt-level targeting."""
+        if not getattr(self, "api_key", None):
+            return doc_id
+        if doc_id is not None and not doc_id:
+            # Cloud has no tool-layer allowlist to make an empty scope mean
+            # "nothing"; dropping it would silently mean "everything".
+            raise PageIndexAPIError(
+                "doc_id is empty. Pass one or more document IDs, or omit "
+                "doc_id to give the agent the whole library.")
+        return None
+
+    def openai_agent_config(
+        self,
+        doc_id: Optional[Union[str, list[str]]] = None,
+        include_management: bool = False,
+        model: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """
+        Document QA ``Agent`` kwargs for the OpenAI Agents SDK in one
+        call::
+
+            agent = Agent(**client.openai_agent_config())
+
+        Sugar over the explicit form — ``agent_instructions`` (with
+        ``doc_id`` targeting) as the instructions and
+        ``as_openai_tools`` as the tools; local clients also carry their
+        configured ``retrieve_model`` (cloud omits ``model`` so the
+        framework default applies). To customize further, switch to
+        those methods directly.
+
+        Args:
+            doc_id: Document ID or list of IDs to target, as in
+                ``agent_instructions``. Local: also enforced at the tool
+                layer, not just prompted. Cloud: prompt-level targeting
+                (tool scoping is server-side).
+            include_management (bool): Also expose tools that modify the
+                library.
+            model: Backend model name; overrides the local default.
+        """
+        from .agent_tools import build_agent_instructions
+        scope = self._local_doc_scope(doc_id)
+        config: dict[str, Any] = {
+            "name": "PageIndex",
+            "instructions": build_agent_instructions(self, doc_id,
+                                                     scoped=scope is not None),
+            "tools": self.as_openai_tools(include_management, doc_id=scope),
+        }
+        model = model or getattr(self, "retrieve_model", None)
+        if model:
+            config["model"] = model
+        return config
+
+    def as_anthropic_tools(self, include_management: bool = False,
+                           asynchronous: bool = False,
+                           doc_id: Optional[Union[str, list[str]]] = None,
+                           ) -> list:
+        """
+        Runnable tools for the Anthropic SDK's tool runner — pass to
+        ``client.beta.messages.tool_runner(tools=...)`` (or
+        ``anthropic_runner_config()`` for the whole setup in one call).
+        The default flavor is for the sync ``Anthropic`` client; pass
+        ``asynchronous=True`` for ``AsyncAnthropic``. For a manual
+        ``messages.create`` loop, serialize with
+        ``[tool.to_dict() for tool in ...]``.
+
+        Cloud: the full live read tool set (search, folders, images — as
+        enabled for your key), discovered from the PageIndex MCP server
+        and executed from your process; the server's input schemas pass
+        through verbatim (MCP and the Messages API share the schema
+        shape), and binary tool results (e.g. ``get_document_image``)
+        arrive as text placeholder stubs on this in-process path. The
+        server-side alternative is the Messages API's beta
+        MCP connector — ``mcp_servers=[{"type": "url", "name":
+        "pageindex", "url": f"{BASE_URL}/mcp?tools=read",
+        "authorization_token": <your PageIndex API key>}]`` (drop
+        ``?tools=read`` for the full tool set) — with no client-side
+        tools involved. Local: the in-process tools — the same set
+        ``messages()`` runs internally.
+
+        Requires ``anthropic>=0.108.0``
+        (``pip install 'pageindex[anthropic]'``), imported only when this
+        method is called.
+
+        Args:
+            include_management (bool): Also expose tools that modify the
+                library. Local: adds ``remove_document``. Cloud: by default
+                only tools the server marks read-only are exposed; True
+                exposes the server's complete list (upload, delete, ...).
+            asynchronous (bool): Build ``beta_async_tool`` runnables for
+                ``AsyncAnthropic`` (each tool call runs in a worker
+                thread, keeping blocking I/O off your event loop). The
+                sync and async runners each accept only their own flavor.
+            doc_id: Local only — restrict the tools to this document ID
+                (or list of IDs), enforced at the tool layer: out-of-scope
+                lookups return NOT_FOUND. Raises on cloud, where scoping
+                is server-side.
+        """
+        from .integrations.anthropic_sdk import build_anthropic_tools
+        return build_anthropic_tools(self, include_management, asynchronous,
+                                     doc_ids=doc_id)
+
+    def anthropic_runner_config(
+        self,
+        model: str,
+        doc_id: Optional[Union[str, list[str]]] = None,
+        include_management: bool = False,
+        asynchronous: bool = False,
+        max_tokens: Optional[int] = None,
+        max_turns: Optional[int] = None,
+    ) -> dict[str, Any]:
+        """
+        Document QA ``tool_runner`` kwargs for the Anthropic SDK in one
+        call — only your ``messages`` remain::
+
+            runner = anthropic_client.beta.messages.tool_runner(
+                **client.anthropic_runner_config(model="claude-sonnet-4-5"),
+                messages=[{"role": "user", "content": "..."}],
+            )
+
+        Sugar over the explicit form — ``agent_instructions`` (with
+        ``doc_id`` targeting) as the system prompt and
+        ``as_anthropic_tools`` as the tools — plus the same defaults
+        ``messages()`` applies: a per-model ``max_tokens`` and a
+        ``max_iterations`` bound of 10. To customize further, switch to
+        those methods directly.
+
+        Args:
+            model: Backend model name (also resolves the ``max_tokens``
+                default).
+            doc_id: Document ID or list of IDs to target, as in
+                ``agent_instructions``. Local: also enforced at the tool
+                layer, not just prompted. Cloud: prompt-level targeting
+                (tool scoping is server-side).
+            include_management (bool): Also expose tools that modify the
+                library.
+            asynchronous (bool): Build async runnables for
+                ``AsyncAnthropic``.
+            max_tokens: Per-turn output budget; default resolved per
+                model.
+            max_turns: Agent-loop bound; default 10.
+        """
+        from .agent_tools import build_agent_instructions
+        from .local_chat import _default_max_tokens
+        scope = self._local_doc_scope(doc_id)
+        return {
+            "model": model,
+            "max_tokens": (max_tokens if max_tokens is not None
+                           else _default_max_tokens(model)),
+            "system": build_agent_instructions(self, doc_id,
+                                               scoped=scope is not None),
+            "tools": self.as_anthropic_tools(include_management, asynchronous,
+                                             doc_id=scope),
+            "max_iterations": max_turns if max_turns is not None else 10,
+        }
+
+    def as_claude_mcp(self, include_management: bool = False,
+                      doc_id: Optional[Union[str, list[str]]] = None):
+        """
+        ``mcp_servers`` entry for the Claude Agent SDK.
+
+        Cloud: returns the remote PageIndex MCP config.
+        ``include_management`` picks the endpoint, so the URL itself is
+        the gate — the default connects to the read-only endpoint
+        (``/mcp?tools=read``: the server registers only read-only tools),
+        ``True`` connects to the full tool set. Local: returns an
+        in-process SDK MCP server exposing the agent tools, gated the
+        same way at registration (requires ``claude-agent-sdk``;
+        ``pip install 'pageindex[claude]'``). ``doc_id`` (local only)
+        restricts those tools to that document ID (or list), enforced at
+        the tool layer; it raises on cloud, where scoping is server-side.
+
+        Cloud hosts that surface MCP server instructions receive the same
+        guidance ``agent_instructions()`` returns natively — passing both
+        duplicates the text (harmless). ``system_prompt`` stays the
+        recommended channel: it is guaranteed delivery, carries ``doc_id``
+        targeting, and is the only channel local mode has.
+
+        Usage (or ``claude_agent_config()`` for all three slots in one
+        call)::
+
+            options = ClaudeAgentOptions(
+                system_prompt=client.agent_instructions(),
+                mcp_servers={"pageindex": client.as_claude_mcp()},
+                # Pre-approval only — the server itself is already gated.
+                allowed_tools=["mcp__pageindex"],
+            )
+        """
+        from .integrations.claude_agent_sdk import build_claude_mcp
+        return build_claude_mcp(self, include_management, doc_ids=doc_id)
+
+    def claude_agent_config(
+        self,
+        doc_id: Optional[Union[str, list[str]]] = None,
+        include_management: bool = False,
+        server_name: str = "pageindex",
+    ) -> dict[str, Any]:
+        """
+        Document QA ``ClaudeAgentOptions`` kwargs in one call::
+
+            options = ClaudeAgentOptions(**client.claude_agent_config())
+
+        Sugar over the explicit form — the managed system prompt
+        (``agent_instructions``) and the server entry (``as_claude_mcp``,
+        itself the tool gate) with its ``allowed_tools`` pre-approval,
+        one ``include_management`` and ``server_name`` applied
+        everywhere. To customize (your own system prompt, extra
+        servers), switch to those methods directly.
+
+        Args:
+            doc_id: Document ID or list of IDs to target, as in
+                ``agent_instructions``. Local: also enforced at the tool
+                layer, not just prompted. Cloud: prompt-level targeting
+                (tool scoping is server-side).
+            include_management (bool): Also allow tools that modify the
+                library.
+            server_name (str): Key the server is registered under.
+        """
+        from .agent_tools import build_agent_instructions
+        scope = self._local_doc_scope(doc_id)
+        return {
+            "system_prompt": build_agent_instructions(self, doc_id,
+                                                      scoped=scope is not None),
+            "mcp_servers": {server_name: self.as_claude_mcp(
+                include_management, doc_id=scope)},
+            # Pre-approval only — the server itself is already gated (the
+            # read-only endpoint on cloud, the registered set locally).
+            "allowed_tools": [f"mcp__{server_name}"],
+        }
+
+    def agent_instructions(self, doc_id: Optional[Union[str, list[str]]] = None) -> str:
+        """
+        Orchestration guidance for document QA agents — pass as the agent's
+        system prompt (or append to your own).
+
+        Cloud: the live instructions the PageIndex MCP server serves for
+        your key's tool set, fetched over the same session as
+        ``agent_tools()`` — server-side guidance updates arrive without an
+        SDK release. Raises PageIndexAPIError if the server cannot be
+        reached. Local: the built-in guidance for the in-process tools.
+
+        With ``doc_id`` (str or list, same shape as ``chat_completions``),
+        appends the target documents' names and metadata and directs the
+        agent to work within them. Raises PageIndexAPIError if a doc_id does
+        not exist, or if its name is shadowed by a newer same-name document
+        (the name-addressed tools could not reach it).
+        """
+        from .agent_tools import build_agent_instructions
+        return build_agent_instructions(self, doc_id)
 
     # ---------- FOLDER MANAGEMENT ----------
 

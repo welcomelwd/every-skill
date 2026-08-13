@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "repository": "synthesisengineering/synthesis-skills",
+  "source_url": "https://github.com/synthesisengineering/synthesis-skills",
+  "ref": "main",
+  "resolved_commit": "b67ec2e11d2dea46162b4839c30d2e5e61115572",
+  "category": "skill",
+  "subcategory": "development",
+  "slug": "synthesis-skills",
+  "license": "Apache-2.0",
+  "source_date": null,
+  "imported_at": "2026-08-13T10:02:10+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 259,
+  "copied_bytes": 3270329,
+  "excluded_files": [],
+  "execution": "never run by this importer"
+}

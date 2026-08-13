@@ -1,0 +1,178 @@
+# Copyright (c) ModelScope Contributors. All rights reserved.
+import importlib.util
+import logging
+import os
+from contextlib import contextmanager
+from types import MethodType
+from typing import Optional
+
+init_loggers = {}
+
+logger_format = logging.Formatter('[%(levelname)s:%(name)s] %(message)s')
+
+info_set = set()
+warning_set = set()
+
+
+def info_once(self, msg, *args, **kwargs):
+    hash_id = kwargs.get('hash_id') or msg
+    if hash_id in info_set:
+        return
+    info_set.add(hash_id)
+    self.info(msg)
+
+
+def warning_once(self, msg, *args, **kwargs):
+    hash_id = kwargs.get('hash_id') or msg
+    if hash_id in warning_set:
+        return
+    warning_set.add(hash_id)
+    self.warning(msg)
+
+
+def _resolve_log_file(log_file: Optional[str]) -> Optional[str]:
+    """File logging is opt-in. Returns a path only when explicitly requested
+    (``log_file`` arg or ``MS_AGENT_LOG_FILE`` / ``LOG_FILE`` env); otherwise
+    ``None`` (console-only) so we never scatter ``ms_agent.log`` in the CWD.
+
+    A truthy-flag env value (``1``/``true``) routes to the global
+    ``~/.ms_agent/logs/ms_agent.log``; an explicit path is used as-is.
+    """
+    if log_file:
+        return log_file
+    env = os.environ.get('MS_AGENT_LOG_FILE') or os.environ.get('LOG_FILE')
+    if not env:
+        return None
+    if env.strip().lower() in ('1', 'true', 'yes', 'on'):
+        from ms_agent.project.paths import global_logs_dir
+        d = global_logs_dir()
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            return str(d / 'ms_agent.log')
+        except OSError:
+            # Never let logging setup crash the app; fall back to console-only.
+            return None
+    return env
+
+
+def get_logger(log_file: Optional[str] = None,
+               log_level: Optional[int] = None,
+               file_mode: str = 'w'):
+    """ Get logging logger
+
+    Args:
+        log_file: Log filename. File logging is opt-in: when omitted (and no
+            ``MS_AGENT_LOG_FILE``/``LOG_FILE`` env), logging is console-only.
+        log_level: Logging level.
+        file_mode: Specifies the mode to open the file, if filename is
+            specified (if filemode is unspecified, it defaults to 'w').
+    """
+    if log_level is None:
+        log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
+        log_level = getattr(logging, log_level, logging.INFO)
+
+    log_file = _resolve_log_file(log_file)
+    logger_name = __name__.split('.')[0]
+    logger = logging.getLogger(logger_name)
+    logger.propagate = False
+    if logger_name in init_loggers:
+        # Update log level dynamically to respect current LOG_LEVEL env var
+        logger.setLevel(log_level)
+        for handler in logger.handlers:
+            handler.setLevel(log_level)
+        add_file_handler_if_needed(logger, log_file, file_mode, log_level)
+        return logger
+
+    # handle duplicate logs to the console
+    # Starting in 1.8.0, PyTorch DDP attaches a StreamHandler <stderr> (NOTSET)
+    # to the root logger. As logger.propagate is True by default, this root
+    # level handler causes logging messages from rank>0 processes to
+    # unexpectedly show up on the console, creating much unwanted clutter.
+    # To fix this issue, we set the root logger's StreamHandler, if any, to log
+    # at the ERROR level.
+    for handler in logger.root.handlers:
+        if type(handler) is logging.StreamHandler:
+            handler.setLevel(logging.ERROR)
+
+    stream_handler = logging.StreamHandler()
+    handlers = [stream_handler]
+
+    # File handler only when opt-in (see _resolve_log_file); console otherwise.
+    if log_file:
+        handlers.append(logging.FileHandler(log_file, file_mode))
+
+    for handler in handlers:
+        handler.setFormatter(logger_format)
+        handler.setLevel(log_level)
+        logger.addHandler(handler)
+
+    logger.setLevel(log_level)
+    init_loggers[logger_name] = True
+    logger.info_once = MethodType(info_once, logger)
+    logger.warning_once = MethodType(warning_once, logger)
+    return logger
+
+
+logger = get_logger()
+# ms_logger = get_ms_logger()
+
+logger.handlers[0].setFormatter(logger_format)
+# ms_logger.handlers[0].setFormatter(logger_format)
+log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
+# ms_logger.setLevel(log_level)
+
+
+@contextmanager
+def ms_logger_ignore_error():
+    ms_logger = get_ms_logger()
+    origin_log_level = ms_logger.level
+    ms_logger.setLevel(logging.CRITICAL)
+    try:
+        yield
+    finally:
+        ms_logger.setLevel(origin_log_level)
+
+
+def add_file_handler_if_needed(logger, log_file, file_mode, log_level):
+    for handler in logger.handlers:
+        if isinstance(handler, logging.FileHandler):
+            return
+
+    if importlib.util.find_spec('torch') is not None:
+        is_worker0 = int(os.getenv('LOCAL_RANK', -1)) in {-1, 0}
+    else:
+        is_worker0 = True
+
+    if is_worker0:
+        # File logging is opt-in; no CWD default.
+        if log_file is None:
+            return
+        file_handler = logging.FileHandler(log_file, file_mode)
+        file_handler.setFormatter(logger_format)
+        file_handler.setLevel(log_level)
+        logger.addHandler(file_handler)
+
+
+def refresh_log_level(target_logger=None):
+    """
+    Refresh logger level from LOG_LEVEL environment variable.
+
+    This is useful when LOG_LEVEL is changed after the logger was initialized.
+
+    Args:
+        target_logger: Logger to refresh. If None, uses the default logger.
+
+    Returns:
+        The new log level (as int).
+    """
+    if target_logger is None:
+        target_logger = logger
+
+    log_level_str = os.getenv('LOG_LEVEL', 'INFO').upper()
+    log_level_int = getattr(logging, log_level_str, logging.INFO)
+
+    target_logger.setLevel(log_level_int)
+    for handler in target_logger.handlers:
+        handler.setLevel(log_level_int)
+
+    return log_level_int

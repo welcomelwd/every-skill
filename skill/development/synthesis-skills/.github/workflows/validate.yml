@@ -1,0 +1,33 @@
+name: Validate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pytest pyyaml
+      - run: python skills/synthesis-agent-conformance/scripts/conformance.py source
+      - run: python skills/synthesis-agent-conformance/scripts/conformance.py instructions --repo-root .
+      - run: python -m pytest skills/synthesis-agent-conformance/scripts/test_*.py -q
+      - run: python -m pytest skills/synthesis-project-management/scripts/test_coordination.py -q
+      - run: python -m pytest skills/synthesis-kb-edit/scripts/test_*.py skills/synthesis-okf/scripts/test_*.py -q
+      - run: python -m pytest skills/synthesis-daily-rituals/scripts/test_*.py skills/synthesis-message-guard/scripts/test_*.py skills/synthesis-git-hooks/scripts/test_*.py -q
+      - run: python -m pytest skills/synthesis-onboarding/scripts/test_onboard.py -q
+      # Standalone runner, not pytest: the file must stay executable from inside a
+      # deployed skill directory, where pytest is not guaranteed to be installed.
+      - run: python skills/synthesis-meeting-transcripts/test_verify_transcripts.py
+      - run: sh -n install.sh onboard.sh tests/test_installer.sh
+      - run: ./tests/test_installer.sh
+      - run: python -m compileall -q skills
+      - run: python skills/synthesis-inbox-cleanup/tests/run_poisoned.py
+      - run: python skills/synthesis-inbox-cleanup/tests/run_resolver.py
+      - run: sh skills/synthesis-inbox-cleanup/tests/test_runtime_installer.sh

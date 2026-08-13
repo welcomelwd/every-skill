@@ -1,0 +1,117 @@
+from __future__ import annotations
+
+# Copyright (c) ModelScope Contributors. All rights reserved.
+import os
+from abc import ABC, abstractmethod
+from omegaconf import DictConfig
+from typing import Any, AsyncGenerator, List, Optional, Tuple, Union
+
+from ms_agent.llm import Message
+from ms_agent.utils import read_history, save_history
+from ms_agent.utils.constants import DEFAULT_RETRY_COUNT
+from ms_agent.utils.workspace_context import resolve_workspace_root
+
+
+class Agent(ABC):
+    """
+    Base class for all agents. Make sure your custom agents are derived from this class.
+    Args:
+        config (DictConfig): Pre-loaded configuration object.
+    """
+
+    retry_count = int(os.environ.get('AGENT_RETRY_COUNT', DEFAULT_RETRY_COUNT))
+
+    def __init__(self,
+                 config: DictConfig,
+                 tag: str,
+                 trust_remote_code: bool = False,
+                 **kwargs):
+        """
+         Base class for all agents. Provides core functionality such as configuration loading,
+         lifecycle handling via external code, and defining the interface for agent execution.
+
+         The agent can be initialized either with a config object directly or by loading from a config directory or ID.
+         If external code (e.g., custom handlers) is involved, the agent must be explicitly trusted via
+         `trust_remote_code=True`.
+
+         Base class for all agents. Make sure your custom agents are derived from this class.
+         Args:
+             config (DictConfig): Pre-loaded configuration object.
+             tag (str): A custom tag for identifying this agent run.
+             trust_remote_code (bool): Whether to allow loading of external code (e.g., custom handler modules).
+         """
+        self.config = config
+        self.tag = tag
+        self.trust_remote_code = trust_remote_code
+        self.config.tag = tag
+        self.config.trust_remote_code = trust_remote_code
+        workspace_root = resolve_workspace_root(self.config)
+        self.output_dir = str(workspace_root)
+        try:
+            from omegaconf import open_dict
+            with open_dict(self.config):
+                self.config.output_dir = self.output_dir
+        except Exception:
+            pass
+        # Merge the work-dir project patch (e.g. a persisted /model override) so
+        # config overrides round-trip from <work_dir>/.ms_agent/config.yaml —
+        # anchored to the project (the work dir), not the config file's
+        # directory. This keeps running a shared/template config from picking up
+        # (or scattering) overrides in that config's folder.
+        # Skipped when ConfigResolver.resolve() already merged the patch (it
+        # marks the config): merging twice here re-applied the patch ON TOP of
+        # caller-side overrides, silently making the project patch the highest
+        # priority layer.
+        if not getattr(self.config, '_project_patch_applied', False):
+            try:
+                from omegaconf import OmegaConf
+
+                from ms_agent.config.resolver import ConfigResolver
+                patch = ConfigResolver()._load_project_patch(self.output_dir)
+                if patch is not None:
+                    self.config = OmegaConf.merge(self.config, patch)
+            except Exception:
+                pass
+
+    @abstractmethod
+    async def run(
+            self, inputs: Union[str, List[Message]], **kwargs
+    ) -> Union[List[Message], AsyncGenerator[List[Message], Any]]:
+        """
+        Main method to execute the agent.
+
+        This method should define the logic of how the agent processes input and generates output messages.
+
+        Args:
+            inputs (Union[str, List[Message]]): Input data for the agent. Can be a raw string prompt,
+                                                or a list of previous interaction messages.
+        Returns:
+            List[Message]: A list of message objects representing the agent's response or interaction history.
+
+        Raises:
+            NotImplementedError: Must be implemented by subclasses.
+        """
+        raise NotImplementedError()
+
+    def read_history(self, messages: Any,
+                     **kwargs) -> Tuple[DictConfig, List[Message]]:
+        return read_history(self.output_dir, self.tag)
+
+    def save_history(self, messages: Any, **kwargs):
+        if not getattr(self.config, 'save_history', True):
+            return
+        save_history(self.output_dir, self.tag, self.config, messages)
+
+    def list_snapshots(self) -> list:
+        """Return snapshots for this agent's output_dir, most recent first."""
+        from ms_agent.utils.snapshot import list_snapshots
+        return list_snapshots(self.output_dir)
+
+    def rollback(self,
+                 commit_hash: str) -> tuple[bool, Optional[List['Message']]]:
+        """Restore output_dir to a previous snapshot and truncate history."""
+        raise NotImplementedError()
+
+    def next_flow(self, idx: int) -> int:
+        """Used in workflow, decide which agent goes next."""
+        return idx + 1

@@ -1,0 +1,48 @@
+llm:
+  service: modelscope
+  model: Qwen/Qwen3-235B-A22B-Instruct-2507
+  modelscope_api_key:
+  modelscope_base_url: https://api-inference.modelscope.cn/v1
+
+generation_config:
+  temperature: 0.3
+  top_k: 20
+  stream: true
+  extra_body:
+    enable_thinking: false
+
+prompt:
+  # Unset -> built-in base prompt (prompting/builtin.py BASE_AGENT_PROMPT).
+  # A value replaces that layer only; SOUL/AGENTS/PROFILE.md still apply.
+  # Always present, so test the value, not `hasattr`.
+  system:
+
+personalization:
+  # Opt in to the user's workspace files (SOUL/AGENTS/PROFILE.md).
+  # Default is false, so self-contained yamls stay unaffected.
+  enabled: true
+
+max_chat_round: 9999
+
+callbacks:
+  - input_callback
+
+tools:
+  file_system:
+    mcp: false
+    include:
+      - write_file
+      - read_file
+      - edit_file
+      - grep
+      - glob
+  code_executor:
+    mcp: false
+    implementation: python_env
+    include:
+      - shell_executor
+      - python_executor
+      - notebook_executor
+
+help: |
+  A commonly use config, try whatever you want!

@@ -91,14 +91,6 @@ Include the ClawHub link for your skill (e.g. `https://clawhub.ai/steipete/slack
 
 ## OpenClaw Ecosystem Tools
 
-### 🔌 Connecting to External Services
-
-OpenClaw agents can interact with external services like GitHub, Slack, Gmail, and more. You can build integrations yourself with Skills or Plugins, or use a managed service to handle auth, token refresh, and permissions across all your connections.
-
-<a href="https://composio.dev/claw?utm_source=github&utm_campaign=volt-agent">
-<img src="https://cdn.voltagent.dev/awesome-repo/composio-img.png" alt="Composio"  />
-Managed OAuth, scoped permissions, and logged native toolcalls across 1000+ apps.
-</a>
 
 
 ### ☁️ Hosting & Deployment
@@ -438,6 +430,7 @@ Stop building from a blank page. [LaunchKit](https://launchkit.getdesign.md/) gi
 
 - [ai-video-remix](https://clawskills.sh/skills/abu-shotai-ai-video-remix) - AI-driven video remix from local library using ShotAI.
 - [modellix](https://clawhub.ai/modellix/modellix) - Unified API for AI image and video generation.
+- [riffkit](https://clawhub.ai/riffkit/riffkit) - Riff a winning TikTok into your own product video.
 > **[View all 170 skills in Image & Video Generation →](categories/image-and-video-generation.md)**
 </details>
 

@@ -151,6 +151,16 @@ def test_get_page_content(local_client, indexed_doc):
         local_client.get_page_content(indexed_doc, "abc")
 
 
+def test_get_page_content_span_bomb_rejected(local_client, indexed_doc):
+    """An absurd range must be rejected arithmetically, not expanded into
+    a billion integers in the caller's process (the tool layer already
+    refused; the public client method did not)."""
+    with pytest.raises(ValueError, match="spans more than 10000"):
+        local_client.get_page_content(indexed_doc, "1-1000001")
+    # At the bound itself the spec still parses.
+    assert local_client.get_page_content(indexed_doc, "5-10004") == []
+
+
 def test_submit_does_not_create_cwd_logs(local_client, sample_pdf, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     def fake_page_index_main(doc, opt=None, logger=None, page_list=None):
@@ -160,6 +170,49 @@ def test_submit_does_not_create_cwd_logs(local_client, sample_pdf, tmp_path, mon
     monkeypatch.setattr(page_index_module, "page_index_main", fake_page_index_main)
     local_client.submit_document(sample_pdf)
     assert not (tmp_path / "logs").exists()
+
+
+def test_submit_duplicate_name_gets_suffix(local_client, sample_pdf, monkeypatch):
+    """Mirror the cloud upload: a second submit of the same file name is
+    stored as name_1, not as a same-name duplicate."""
+    def fake_page_index_main(doc, opt=None, logger=None, page_list=None):
+        return {"doc_name": "sample.pdf", "doc_description": "d",
+                "structure": json.loads(json.dumps(STRUCTURE))}
+    monkeypatch.setattr(page_index_module, "page_index_main", fake_page_index_main)
+    first = local_client.submit_document(sample_pdf)
+    assert first["name"] == "sample.pdf"
+    with pytest.warns(UserWarning, match='stored as "sample_1.pdf"'):
+        second = local_client.submit_document(sample_pdf)
+    assert second["name"] == "sample_1.pdf"
+    names = {d["id"]: d["name"]
+             for d in local_client.list_documents()["documents"]}
+    assert names[first["doc_id"]] == "sample.pdf"
+    assert names[second["doc_id"]] == "sample_1.pdf"
+
+
+def test_submit_duplicate_name_exhaustion(local_client, monkeypatch):
+    api = local_client._api
+    metas = ([{"name": "x.pdf"}]
+             + [{"name": f"x_{num}.pdf"} for num in range(1, 100)])
+    monkeypatch.setattr(api._store, "list_metas", lambda: metas)
+    with pytest.raises(PageIndexAPIError, match="Too many files"):
+        api._unique_doc_name("x.pdf")
+
+
+def test_submit_name_exhaustion_rejects_before_indexing(
+    local_client, sample_pdf, monkeypatch,
+):
+    api = local_client._api
+    metas = ([{"name": "sample.pdf"}]
+             + [{"name": f"sample_{num}.pdf"} for num in range(1, 100)])
+    monkeypatch.setattr(api._store, "list_metas", lambda: metas)
+    monkeypatch.setattr(
+        page_index_module, "page_index_main",
+        lambda *args, **kwargs: pytest.fail(
+            "indexer ran despite name exhaustion"),
+    )
+    with pytest.raises(PageIndexAPIError, match="Too many files"):
+        local_client.submit_document(sample_pdf)
 
 
 def test_submit_flash(local_client, sample_pdf, monkeypatch):
@@ -432,7 +485,8 @@ def test_torn_delete_never_lists_ghost(local_client, indexed_doc, tmp_path):
 
 
 def test_corrupt_doc_json_is_contained(local_client, indexed_doc, sample_pdf, tmp_path):
-    second = local_client.submit_document(sample_pdf)["doc_id"]
+    with pytest.warns(UserWarning):  # same-name resubmit → stored as sample_1.pdf
+        second = local_client.submit_document(sample_pdf)["doc_id"]
     (tmp_path / "store" / "docs" / indexed_doc / "doc.json").write_text("{truncated")
 
     # manifest still holds a good copy of the meta — served consistently
@@ -599,8 +653,12 @@ def test_retrieval_endpoints_cloud_only(local_client):
         local_client.get_retrieval("any")
 
 
-def test_chat_completions_cloud_only(local_client):
-    with pytest.raises(PageIndexAPIError, match="not yet supported in local mode"):
+def test_chat_completions_local_needs_agents_extra(local_client, monkeypatch):
+    """Local chat is implemented (see test_local_chat.py); without the
+    openai-agents extra it raises the actionable install error."""
+    import sys
+    monkeypatch.setitem(sys.modules, "agents", None)
+    with pytest.raises(PageIndexAPIError, match="pageindex\\[openai\\]"):
         local_client.chat_completions(
             messages=[{"role": "user", "content": "q"}])
 
@@ -710,3 +768,21 @@ def test_cloud_chat_stream_parsing(cloud, monkeypatch):
         messages=[{"role": "user", "content": "q"}], stream=True,
         stream_metadata=True))
     assert {"object": "chat.completion.citations", "citations": []} in chunks
+
+
+def test_cloud_chat_accepts_query_string(cloud):
+    client, calls, fake = cloud
+    fake.payload = {"choices": [{"message": {"content": "ok"}}]}
+    client.chat_completions("What status?")
+    assert calls[-1]["json"]["messages"] == [
+        {"role": "user", "content": "What status?"}]
+    with pytest.raises(PageIndexAPIError, match="non-empty string"):
+        client.chat_completions("   ")
+
+
+def test_parse_pages_overlap_counts_union():
+    from pageindex.client import _parse_pages
+    pages = _parse_pages("1-5000,2000-9000")
+    assert len(pages) == 9000 and pages[0] == 1 and pages[-1] == 9000
+    with pytest.raises(ValueError, match="spans more than"):
+        _parse_pages("1-10001")
