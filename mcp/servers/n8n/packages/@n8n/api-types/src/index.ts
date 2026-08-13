@@ -1,10 +1,11 @@
-export { Z, type ZodClass } from './zod-class';
+export { Z, type ZodClass, type ZodArrayClass } from './zod-class';
 export type * from './datetime';
 export * from './dto';
 export type * from './push';
 export type * from './scaling';
 export * from './frontend-settings';
 export type * from './user';
+export type * from './consent';
 export type * from './api-keys';
 export type * from './community-node-types';
 export type * from './quick-connect';
@@ -343,6 +344,7 @@ export {
 	CANVAS_NODE_CONTEXT_FLAG,
 	domainAccessActionSchema,
 	domainAccessMetaSchema,
+	instanceAiApprovalResumeSchema,
 	webSearchMetaSchema,
 	credentialFlowSchema,
 	instanceAiCredentialHandoffContextSchema,
@@ -418,6 +420,7 @@ export type {
 	InstanceAiMcpConnectResume,
 	InstanceAiConfirmationRequestPayload,
 	InstanceAiConfirmationSeverity,
+	InstanceAiApprovalResumeData,
 	InstanceAiCredentialPlaceholderDef,
 	InstanceAiTargetApproval,
 	InstanceAiCredentialRequest,

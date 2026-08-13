@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "repository": "kepano/obsidian-skills",
+  "source_url": "https://github.com/kepano/obsidian-skills",
+  "ref": "main",
+  "resolved_commit": "a1dc48e68138490d522c04cbf5822214c6eb1202",
+  "category": "skill",
+  "subcategory": "development",
+  "slug": "obsidian-skills",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-13T23:07:06+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 14,
+  "copied_bytes": 51977,
+  "excluded_files": [],
+  "execution": "never run by this importer"
+}

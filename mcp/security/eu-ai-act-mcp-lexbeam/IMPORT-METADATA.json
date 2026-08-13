@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "repository": "lexbeam-software/eu-ai-act-mcp",
+  "source_url": "https://github.com/lexbeam-software/eu-ai-act-mcp",
+  "ref": "main",
+  "resolved_commit": "ab322f04e3ecdde51f8a46b5c5c85bc56986b925",
+  "category": "mcp",
+  "subcategory": "security",
+  "slug": "eu-ai-act-mcp-lexbeam",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-13T23:07:06+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 70,
+  "copied_bytes": 4722213,
+  "excluded_files": [],
+  "execution": "never run by this importer"
+}

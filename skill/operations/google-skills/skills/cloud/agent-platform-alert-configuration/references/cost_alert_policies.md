@@ -16,8 +16,8 @@ unusually high rate of tokens based on their historical metrics.
 
 ### Token Usage Workload Pattern
 
-It is required to resolve the workload token usage pattern (Seasonal, Steady, or
-Bursty), to configure policies monitoring token usage. If you have not done it
+It is required to resolve the workload token usage pattern (Seasonal / Cyclical, Steady / Consistent, or
+Bursty / Inconsistent), to configure policies monitoring token usage. If you have not done it
 already, you MUST run the `check_telemetry` tool with the flag
 `--query-monitoring-metadata` enabled to retrieve all namespaces available for
 the token usage metric and match the closest one to the target agent:
@@ -49,7 +49,7 @@ data:
 
 *   **Brand New Agents (No Token Usage History)**: When setting up alerts for a
     brand new agent, you MUST explicitly ask the user what token usage pattern
-    they expect (Steady, Seasonal, or Bursty) in your response. If immediate
+    they expect (Steady / Consistent, Seasonal / Cyclical, or Bursty / Inconsistent) in your response. If immediate
     setup is requested, ask the question but proceed using the default
     Steady/Consistent (Short-Window Z-Score) pattern. Follow
     [no_historical_traffic_data.md](no_historical_traffic_data.md).

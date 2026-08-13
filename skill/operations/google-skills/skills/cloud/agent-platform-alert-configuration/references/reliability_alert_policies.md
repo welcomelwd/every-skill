@@ -73,14 +73,14 @@ Alerting policies for agents MUST map to the correct algorithms
 to ensure statistical stability and prevent alert noise or blind spots based on
 data classes:
 
-*   **Latency**: Follows workload traffic pattern (Steady -> Z-Score; Seasonal
-    -> Seasonal Decomposition; Bursty -> Moving Averages).
+*   **Latency**: Follows workload traffic pattern (Steady / Consistent -> Z-Score; Seasonal / Cyclical
+    -> Seasonal Decomposition; Bursty / Inconsistent -> Moving Averages).
 *   **Error Rate**: ALWAYS use **Multi-Window Multi-Burn Rate SLOs** (or
     ratio-based static thresholds). Error rate is naturally sparse (`0`). If
     standard deviation is `0`, Z-scores are mathematically unstable
     (division-by-zero), causing false alerts.
 
-To resolve the workload traffic pattern (Seasonal, Steady, or Bursty), follow
+To resolve the workload traffic pattern (Seasonal / Cyclical, Steady / Consistent, or Bursty / Inconsistent), follow
 the instructions corresponding to the availability of historical metrics data:
 
 *   **Case 1: No historical metrics data available (for example, brand new agent)**:
@@ -94,7 +94,7 @@ the instructions corresponding to the availability of historical metrics data:
 
 *   **Brand New Agents (No Traffic History)**: When setting up alerts for a
     brand new agent, you MUST explicitly ask the user what traffic pattern they
-    expect (Steady, Seasonal, or Bursty) in your response. If immediate setup is
+    expect (Steady / Consistent, Seasonal / Cyclical, or Bursty / Inconsistent) in your response. If immediate setup is
     requested, ask the question but proceed using the default Steady/Consistent
     (Short-Window Z-Score) pattern. Follow
     [no_historical_traffic_data.md](no_historical_traffic_data.md).

@@ -26,11 +26,10 @@ func (s *service) artifactVerifier() verifier.Verifier {
 }
 
 // shouldVerifyInstall reports whether install-time signature verification
-// applies: project-scope installs with the lock file feature enabled. The
-// lock file is where trust decisions are recorded, so verification is
-// scoped to it.
+// applies: project-scope installs. The lock file is where trust decisions
+// are recorded, so verification is scoped to it.
 func shouldVerifyInstall(opts skills.InstallOptions, scope skills.Scope) bool {
-	return scope == skills.ScopeProject && opts.ProjectRoot != "" && skills.LockFileFeatureEnabled()
+	return scope == skills.ScopeProject && opts.ProjectRoot != ""
 }
 
 // provenanceDecision is the outcome of install-time verification: either a
@@ -278,11 +277,13 @@ func provenanceInfoFromLock(p *lockfile.Provenance) *skills.ProvenanceInfo {
 		return nil
 	}
 	return &skills.ProvenanceInfo{
-		SignerIdentity: p.SignerIdentity,
-		CertIssuer:     p.CertIssuer,
-		RepositoryURI:  p.RepositoryURI,
-		SigstoreURL:    p.SigstoreURL,
-		Provisional:    p.Provisional,
+		SignerIdentity:    p.SignerIdentity,
+		CertIssuer:        p.CertIssuer,
+		RepositoryURI:     p.RepositoryURI,
+		RepositoryRef:     p.RepositoryRef,
+		RunnerEnvironment: p.RunnerEnvironment,
+		SigstoreURL:       p.SigstoreURL,
+		Provisional:       p.Provisional,
 	}
 }
 
@@ -293,11 +294,13 @@ func provenanceInfoToLock(p *skills.ProvenanceInfo) *lockfile.Provenance {
 		return nil
 	}
 	return &lockfile.Provenance{
-		SignerIdentity: p.SignerIdentity,
-		CertIssuer:     p.CertIssuer,
-		RepositoryURI:  p.RepositoryURI,
-		SigstoreURL:    p.SigstoreURL,
-		Provisional:    p.Provisional,
+		SignerIdentity:    p.SignerIdentity,
+		CertIssuer:        p.CertIssuer,
+		RepositoryURI:     p.RepositoryURI,
+		RepositoryRef:     p.RepositoryRef,
+		RunnerEnvironment: p.RunnerEnvironment,
+		SigstoreURL:       p.SigstoreURL,
+		Provisional:       p.Provisional,
 	}
 }
 

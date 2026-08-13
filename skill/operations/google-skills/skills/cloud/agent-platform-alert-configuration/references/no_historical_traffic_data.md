@@ -52,8 +52,8 @@ the immediate actions taken at the start of your response:
 
 1.  Explain that since the agent has no historical data, you cannot
     automatically analyze the traffic pattern.
-2.  Ask the user directly what traffic pattern they expect (Steady, Seasonal, or
-    Bursty), detailing the mapping differences and the 1-week blind spot risk if
+2.  Ask the user directly what traffic pattern they expect (Steady / Consistent, Seasonal / Cyclical, or
+    Bursty / Inconsistent), detailing the mapping differences and the 1-week blind spot risk if
     they choose Seasonal.
 3.  Inform the user that the default is **Steady / Consistent** (Short-Window
     Z-Score algorithm for Latency) and you will proceed with this default if

@@ -70,6 +70,9 @@ GO_FRONTEND_AUTO_FALLBACK = "Go frontend AUTO: go not found; using tree-sitter o
 GO_FRONTEND_FACTS = (
     "Go go/types frontend facts: {calls} call site(s), {externals} external site(s)"
 )
+GO_FRONTEND_IMPLEMENTS_JOINED = (
+    "Go go/types frontend: {count} IMPLEMENTS edge(s) joined to Pass-2 type nodes"
+)
 GO_FRONTEND_BUILD_FAILED = (
     "Go frontend tool failed to build; using tree-sitter.\nstderr: {stderr}"
 )
@@ -832,6 +835,9 @@ PARSER_FINGERPRINT_MISMATCH = (
 REHYDRATE_QUERY_FAILED = (
     "Could not read persisted definitions from the graph; continuing with "
     "only this run's freshly parsed registry."
+)
+CSHARP_TYPE_LOCATIONS_REHYDRATED = (
+    "Rehydrated {count} C# type location(s) from the graph for the partial join"
 )
 INBOUND_CAPTURE_FAILED = (
     "Could not read inbound edges from the graph; this full rebuild "

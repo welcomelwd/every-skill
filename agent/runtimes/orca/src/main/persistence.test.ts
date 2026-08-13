@@ -685,6 +685,7 @@ describe('Store', () => {
     expect(settings.editorAutoSaveDelayMs).toBe(1000)
     expect(settings.terminalFontSize).toBe(14)
     expect(settings.terminalFontWeight).toBe(500)
+    expect(settings.terminalFontWeightBold).toBe(700)
     expect(settings.terminalScrollSensitivity).toBe(1.15)
     expect(settings.terminalFastScrollSensitivity).toBe(5)
     expect(settings.terminalTuiScrollSensitivity).toBe(1)
@@ -4739,7 +4740,7 @@ describe('Store', () => {
     expect(updated!.externalWorktreeVisibilityLegacy).toBe(true)
   })
 
-  it('persists agent worktree visibility independently from external visibility', async () => {
+  it('keeps rollback agent visibility writes authoritative for both built-in sources', async () => {
     const store = await createStore()
     store.addRepo(makeRepo({ externalWorktreeVisibility: 'hide' }))
 
@@ -4747,15 +4748,51 @@ describe('Store', () => {
 
     expect(updated).toMatchObject({
       externalWorktreeVisibility: 'hide',
-      agentWorktreeVisibility: 'show'
+      agentWorktreeVisibility: 'show',
+      worktreeVisibilitySourcePreferences: {
+        builtIn: { claude: 'show', gsd: 'show' }
+      }
     })
 
     store.flush()
     const reloaded = await createStore()
     expect(reloaded.getRepo('r1')).toMatchObject({
       externalWorktreeVisibility: 'hide',
-      agentWorktreeVisibility: 'show'
+      agentWorktreeVisibility: 'show',
+      worktreeVisibilitySourcePreferences: {
+        builtIn: { claude: 'show', gsd: 'show' }
+      }
     })
+  })
+
+  it('persists bounded custom worktree sources separately from their preferences', async () => {
+    const store = await createStore()
+    store.addRepo(makeRepo())
+
+    const updated = store.updateRepo('r1', {
+      customWorktreeVisibilitySources: [
+        { id: 'team', rootPath: ' /srv/team-worktrees ' },
+        { id: 'invalid', rootPath: '../relative' }
+      ],
+      worktreeVisibilitySourcePreferences: {
+        builtIn: { claude: 'show', gsd: 'hide' },
+        custom: { team: 'show' }
+      }
+    })
+
+    expect(updated).toMatchObject({
+      customWorktreeVisibilitySources: [{ id: 'team', rootPath: '/srv/team-worktrees' }],
+      worktreeVisibilitySourcePreferences: {
+        builtIn: { claude: 'show', gsd: 'hide' },
+        custom: { team: 'show' }
+      }
+    })
+
+    store.flush()
+    const reloaded = await createStore()
+    expect(reloaded.getRepo('r1')?.customWorktreeVisibilitySources).toEqual([
+      { id: 'team', rootPath: '/srv/team-worktrees' }
+    ])
   })
 
   it('updateRepo clears source-control AI overrides independently from other clearable fields', async () => {
@@ -5795,7 +5832,8 @@ describe('Store', () => {
       editorAutoSaveDelayMs: 1500,
       appFontFamily: 'Inter',
       terminalFontSize: 16,
-      terminalFontWeight: 600
+      terminalFontWeight: 600,
+      terminalFontWeightBold: 800
     })
     expect(updated.theme).toBe('dark')
     expect(updated.editorAutoSave).toBe(true)
@@ -5803,6 +5841,7 @@ describe('Store', () => {
     expect(updated.appFontFamily).toBe('Inter')
     expect(updated.terminalFontSize).toBe(16)
     expect(updated.terminalFontWeight).toBe(600)
+    expect(updated.terminalFontWeightBold).toBe(800)
     // Other fields preserved
     expect(updated.branchPrefix).toBe('git-username')
   })
@@ -9992,9 +10031,6 @@ describe('Store', () => {
       expect(store.getWorkspaceSession(hostId).terminalPtyIncarnationsByPaneKey?.[paneKey]).toBe(
         'inc-live'
       )
-      // Unchanged by STA-3077 step P. The fold moves an SSH pane's incarnation only when it moves
-      // the binding it fences, and this fixture's tab exists solely in the SSH partition — so
-      // there is no second home to disagree with, nothing folds, and both halves stay together.
       const reloaded = await createStore()
       expect(reloaded.getWorkspaceSession(hostId).terminalPtyIncarnationsByPaneKey?.[paneKey]).toBe(
         'inc-live'

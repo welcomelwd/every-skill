@@ -37,7 +37,7 @@ permissions:
 #    └─ typescript-changeset-check: PR validation (PRs only)
 #
 # 4. create-mcp-use-app Tests (runs if packages/create-mcp-use-app/** changed)
-#    ├─ create-mcp-use-app-build: Build and pack the CLI
+#    ├─ create-mcp-use-app-build: Build, unit test, and pack the CLI
 #    └─ create-app-tests: Matrix [3 OS × 3 PM × 3 templates × 2 flags]
 #       - Tests project creation across Ubuntu/macOS/Windows
 #       - Tests npm, yarn, pnpm package managers
@@ -700,7 +700,7 @@ jobs:
       - name: Run mcp-use Unit Tests
         env:
           MCP_USE_ANONYMIZED_TELEMETRY: false
-        run: pnpm --filter mcp-use --if-present test:unit
+        run: pnpm --filter mcp-use test:run
       - name: Run @mcp-use/agent Unit Tests
         env:
           MCP_USE_ANONYMIZED_TELEMETRY: false
@@ -776,7 +776,7 @@ jobs:
       - name: Run Inspector Tests
         env:
           MCP_USE_ANONYMIZED_TELEMETRY: false
-        run: pnpm --filter @mcp-use/inspector --if-present test
+        run: pnpm --filter @mcp-use/inspector test:unit
 
   typescript-test-cli:
     needs: typescript-lint
@@ -921,6 +921,9 @@ jobs:
       - name: Build All Packages
         working-directory: libraries/typescript
         run: pnpm build
+      - name: Run create-mcp-use-app Unit Tests
+        working-directory: libraries/typescript
+        run: pnpm --filter create-mcp-use-app test
       - name: Pack create-mcp-use-app
         working-directory: libraries/typescript/packages/create-mcp-use-app
         run: npm pack

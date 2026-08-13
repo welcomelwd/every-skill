@@ -1,0 +1,164 @@
+# EU AI Act MCP Server
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![npm version](https://img.shields.io/npm/v/@lexbeam-software/eu-ai-act-mcp)](https://www.npmjs.com/package/@lexbeam-software/eu-ai-act-mcp)
+[Smithery listing](https://smithery.ai/servers/lexbeam-software/eu-ai-act)
+[![Test](https://github.com/lexbeam-software/eu-ai-act-mcp/actions/workflows/test.yml/badge.svg)](https://github.com/lexbeam-software/eu-ai-act-mcp/actions/workflows/test.yml)
+
+An open-source [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that gives LLMs structured intelligence about the EU AI Act (Regulation (EU) 2024/1689, as amended by the Digital Omnibus, Regulation (EU) 2026/1744).
+
+Built by [Lexbeam Software](https://lexbeam.com) - an agentic AI implementation boutique for regulated workflows.
+
+## What's new in 1.4.5
+
+Version 1.4.5 is the npm follow-up to the 1.4.4 correctness release. It includes
+the complete 1.4.4 audit fixes and removes em dashes from documentation and served
+prose without changing legal rules, schemas, or tool behavior.
+
+- **Twenty correctness fixes** from a three-artifact audit with cross-model validation
+  (details in CHANGELOG): honest FAQ answers with `matched_question`, a reachable
+  `minimal` classification reconciled against the description text, a scoped
+  Annex III(1)(a) verification exclusion, GPAI abstention instead of false negatives,
+  penalty input guards plus the Art. 99(6a) SMC rule, and an article corpus current
+  with the amended act including the new Art. 4a.
+- **All citation links point at the consolidated text** (CELEX 02024R1689-20260727).
+- **A pinned legal corpus** (`law/`) and two new gates: a 66-check claim matrix
+  against the corpus and a 48-check post-serialization schema gate. The suite is
+  date- and timezone-stable through 2031.
+
+Full release history: [CHANGELOG.md](CHANGELOG.md).
+
+## Quick Start
+
+### npx (no install)
+
+```bash
+npx -y @lexbeam-software/eu-ai-act-mcp
+```
+
+### Claude Desktop
+
+Add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "eu-ai-act": {
+      "command": "npx",
+      "args": ["-y", "@lexbeam-software/eu-ai-act-mcp"]
+    }
+  }
+}
+```
+
+### Smithery
+
+```bash
+npx -y @smithery/cli@latest mcp add lexbeam-software/eu-ai-act
+```
+
+Direct MCP endpoint: `https://mcp.lexbeam.com/mcp` (health check at `/health`). Open, no auth required.
+
+The Smithery-hosted endpoint `https://eu-ai-act--lexbeam-software.run.tools` requires Smithery authentication and returns 401 without it.
+
+### From source
+
+```bash
+git clone https://github.com/lexbeam-software/eu-ai-act-mcp.git
+cd eu-ai-act-mcp
+npm install
+npm run build
+npm start        # stdio transport
+npm run start:http  # streamable HTTP (for Smithery/Railway)
+```
+
+## Tools
+
+| Tool | Description |
+|------|-------------|
+| `euaiact_classify_system` | Classify an AI system's risk level (prohibited / high-risk / limited / minimal) from free text **or** structured signals. Returns matched signals, missing signals, and follow-up questions. |
+| `euaiact_check_deadlines` | Implementation milestones with days remaining, `next_milestone` shortcut, `only_upcoming` filter, and the enacted Digital Omnibus (Regulation (EU) 2026/1744) status. |
+| `euaiact_get_obligations` | Specific compliance obligations by role (provider/deployer) and risk level, including GPAI (Art. 51-56) and universal AI literacy (Art. 4). |
+| `euaiact_answer_question` | Keyword FAQ search (lexical matching with stopword filtering, tie handling and abstention) across 24 curated EU AI Act questions; echoes your question and names the matched entry. |
+| `euaiact_calculate_penalty` | Calculate maximum fines by violation type, turnover, SME status (Art. 99(6)) and SMC status (Art. 99(6a), tiers 99(4)-(5) only), with a comparative non-SME vs SME block. |
+| `euaiact_get_article` | Retrieve an operational summary and EUR-Lex URL for a specific article. Covers 28 curated articles between Art. 3 and Art. 113 (including the new Art. 4a), not the full act. |
+| `euaiact_check_gpai_systemic_risk` | Check whether a GPAI model crosses the 10²⁵ FLOPs threshold and return Art. 53 + Art. 55 obligations plus the Art. 52 notification duty. |
+| `euaiact_assess_art6_3_exception` | Walk through the Art. 6(3) "no significant risk" exception with explicit profiling block and Art. 6(4) / Art. 49(2) reminders. |
+| `euaiact_annex_iv_checklist` | Return all nine Annex IV technical-documentation items, optionally as a markdown checklist. |
+
+## Resources
+
+| URI | Description |
+|-----|-------------|
+| `euaiact://timeline` | Key implementation milestones of the EU AI Act. |
+| `euaiact://risk-levels` | Overview of the four risk categories. |
+| `euaiact://annex/iii` | Full Annex III high-risk AI categories (1-8) with descriptions, examples, and article references. |
+| `euaiact://annex/iv` | Full Annex IV technical-documentation items (1-9). |
+| `euaiact://omnibus` | The Digital Omnibus on AI (Regulation (EU) 2026/1744) as enacted: amended dates, deltas, and source status per item. |
+
+## Prompts
+
+- `classify-my-system` - guided classification using `euaiact_classify_system` with signal inference
+- `compliance-checklist` - risk-level + role obligations checklist, including Annex IV for high-risk
+- `penalty-risk-assessment` - penalty calculation with SME comparative
+- `ground-citation` - retrieve article text + EUR-Lex URL for grounded citations
+
+## Knowledge Base
+
+Curated, structured data covering:
+
+- **8 Annex III high-risk categories** with keyword matching and examples
+- **10 prohibited AI practices**: Art. 5(1)(a)-(h), plus (ba) and (bb) applying from 2 December 2026
+- **Art. 6(3) exception conditions** with the profiling block rule
+- **Art. 50 transparency triggers** (chatbots, deepfakes, emotion recognition, machine-readable marking)
+- **8 implementation milestones** with dynamic days-remaining calculation
+- **Digital Omnibus (enacted)** status and impact assessment
+- **Provider obligations** (13 for high-risk, 8 for GPAI including Art. 53 + Art. 55)
+- **Deployer obligations** (9 for high-risk)
+- **Limited-risk transparency obligations** (4 under Art. 50)
+- **Universal AI literacy** (Art. 4)
+- **Penalty framework** with SME protection logic (Art. 99)
+- **24 FAQ entries** with article references and Lexbeam knowledge-base links
+- **28 article summaries** with EUR-Lex URLs to the consolidated text
+- **Annex IV (9 documentation items)** *(new in 1.1.0)*
+
+Load-bearing dates, thresholds, amounts and exceptions are checked on every build by a claim matrix (`test-claims.mjs`) against a pinned, hash-verified copy of the consolidated act (`law/`). Coverage is the matrix, not a blanket claim.
+
+## Regulatory Accuracy
+
+This server tracks the current state of the EU AI Act (Regulation 2024/1689) **as amended by the Digital Omnibus on AI**, Regulation (EU) 2026/1744, published in the Official Journal on 24 July 2026 and in force from 27 July 2026. The amended application dates are served as operative law. Article-level wording was verified against the enacted OJ text on 26 and 27 July 2026, delta by delta against the 43 numbered amendments in Article 1 of the amending act. No Omnibus delta was left unresolved in that reconciliation. The Art. 49 registration duty for self-assessed not-high-risk systems, previously carried as unresolved, SURVIVES: the enacted act does not amend Art. 49 and deletes only Annex VIII Section B points 7 and 9.
+
+Operative dates as amended:
+- **2 Feb 2025** - Prohibited practices (Art. 5) + AI literacy (Art. 4), in effect
+- **2 Aug 2025** - GPAI model obligations, in effect
+- **2 Aug 2026** - Art. 50 transparency, and Commission GPAI enforcement powers and fines. **Not deferred**
+- **2 Dec 2026** - The two new Art. 5 prohibitions (non-consensual intimate material, CSAM), and the Art. 111(4) deadline for synthetic-content systems already on the market to meet Art. 50(2)
+- **2 Aug 2027** - Legacy GPAI models (Art. 111(3)), unchanged
+- **2 Dec 2027** - High-risk Annex III obligations. Deferred from 2 Aug 2026
+- **2 Aug 2028** - High-risk Annex I regulated products. Deferred from 2 Aug 2027
+
+## Development
+
+```bash
+npm install
+npm run build        # typescript -> dist/
+node test.mjs         # full suite incl. ten agent journeys
+node test-claims.mjs  # claim matrix: pinned law corpus vs served facts
+node test-schemas.mjs # post-serialization output-schema gate
+npm run dev          # stdio dev server
+npm run dev:http     # HTTP dev server
+```
+
+## Disclaimer
+
+This MCP server is a structured information tool that returns references to and summaries of Regulation (EU) 2024/1689. It is **not Rechtsberatung im Sinne des § 2 RDG** and does not constitute legal advice in any jurisdiction. It cannot replace consultation with a qualified Rechtsanwalt or equivalent licensed professional. Use of this tool does not establish a lawyer-client relationship. For implementation support, visit [lexbeam.com/kontakt](https://lexbeam.com/kontakt).
+
+## License
+
+MIT. See [LICENSE](LICENSE). Regulation text summarised in `src/knowledge/articles.ts` and `src/knowledge/annex-iv.ts` is derived from Regulation (EU) 2024/1689 as amended; EUR-Lex content is reused under the conditions of Commission Decision 2011/833/EU (preserve attribution, do not distort the meaning of the source).
+
+## About Lexbeam
+
+[Lexbeam Software](https://lexbeam.com) builds agentic AI for compliance, legal operations, internal audit, and risk workflows.
+
+*Give us one ugly, regulation-heavy workflow. We'll turn it into a working AI system fast.*

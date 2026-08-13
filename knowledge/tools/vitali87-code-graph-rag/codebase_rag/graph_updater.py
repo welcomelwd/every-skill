@@ -490,11 +490,49 @@ class GraphUpdater:
         dp = self.factory.definition_processor
         dp.go_call_sites.clear()
         dp.go_external_sites.clear()
+        dp.go_implements.clear()
 
     def _apply_go_semantic_facts(self, facts: SemanticFacts) -> None:
         dp = self.factory.definition_processor
         dp.go_call_sites.update(facts.resolved_call_sites)
         dp.go_external_sites.update(facts.external_sites)
+        dp.go_implements.extend(facts.implements_pairs)
+
+    def _join_go_implements(self) -> None:
+        # go/types proved each implementer->interface pair structurally; both
+        # ends carry a declaring-identifier position that resolves to the Pass-2
+        # type node through go_type_locations. On a two-sided hit, emit the
+        # IMPLEMENTS edge and record the implementer so a call through the
+        # interface with a SOLE implementer also edges to the concrete method
+        # (resolver.interface_sole_impl_targets, no extra wiring). A miss on
+        # either end drops the pair rather than risk a dangling edge.
+        dp = self.factory.definition_processor
+        if not dp.go_implements:
+            return
+        emitted = 0
+        for pair in dp.go_implements:
+            impl = dp.go_type_locations.get(
+                (pair.impl_file, pair.impl_line, pair.impl_col)
+            )
+            iface = dp.go_type_locations.get(
+                (pair.iface_file, pair.iface_line, pair.iface_col)
+            )
+            if impl is None or iface is None:
+                continue
+            impl_qn, impl_label = impl
+            iface_qn, iface_label = iface
+            # Through _sink (the capture-filtering wrapper), not the raw
+            # ingestor, so a capture that disables IMPLEMENTS suppresses this
+            # edge too -- graph-element emission must honour the capture contract.
+            self._sink.ensure_relationship_batch(
+                (impl_label, cs.KEY_QUALIFIED_NAME, impl_qn),
+                cs.RelationshipType.IMPLEMENTS,
+                (iface_label, cs.KEY_QUALIFIED_NAME, iface_qn),
+            )
+            dp.interface_implementers.setdefault(iface_qn, set()).add(impl_qn)
+            emitted += 1
+        if emitted:
+            logger.info(ls.GO_FRONTEND_IMPLEMENTS_JOINED.format(count=emitted))
 
     def _join_csharp_partials(self) -> None:
         # Replace the directory-keyed syntactic partial grouping with the
@@ -551,7 +589,10 @@ class GraphUpdater:
             target = located(fact.target_file, fact.target_line, fact.target_col)
             if caller is None or target is None:
                 continue
-            self.ingestor.ensure_relationship_batch(
+            # Through _sink (the capture-filtering wrapper), not the raw
+            # ingestor, so a capture that disables CALLS suppresses these
+            # synthesized LINQ query-operator edges too (issue #1236).
+            self._sink.ensure_relationship_batch(
                 (caller.label, cs.KEY_QUALIFIED_NAME, caller.qualified_name),
                 cs.RelationshipType.CALLS,
                 (target.label, cs.KEY_QUALIFIED_NAME, target.qualified_name),
@@ -719,9 +760,22 @@ class GraphUpdater:
         logger.info(ls.PASS_2_FILES)
         self._process_files(force=force)
 
+        # Before the partial join on an incremental run: rebuild the type
+        # locations for unchanged .cs files so a partial part living in one
+        # still joins its group (issue #1229). Pass-2 entries for re-parsed
+        # files are already present and take precedence. A cacheless full build
+        # (force=False but _is_full_build) already re-parsed every file, so the
+        # project-wide query would be wasted work -- skip it.
+        if not force and not self._is_full_build:
+            self._rehydrate_csharp_type_locations()
+
         # Partial groups join AFTER Pass 2: the Roslyn declaration
         # locations resolve against the Class qns Pass 2 just registered.
         self._join_csharp_partials()
+
+        # Go IMPLEMENTS pairs join AFTER Pass 2 for the same reason: both ends
+        # resolve against the go_type_locations index Pass 2 just registered.
+        self._join_go_implements()
 
         # HYBRID must run after Pass 2: an incremental run deletes each
         # changed file's Module subtree before re-parsing it, so macro
@@ -1295,6 +1349,48 @@ class GraphUpdater:
             pairs.sort(key=lambda pair: (pair[0] is None, pair[0] or 0))
             result[child] = [base for _index, base in pairs]
         return result
+
+    def _rehydrate_csharp_type_locations(self) -> None:
+        # Incremental runs fill csharp_type_locations only from re-parsed files,
+        # but _join_csharp_partials resolves every partial-declaration location
+        # against it. Restore the (path, start_line) -> qn entries for types in
+        # UNCHANGED .cs files from the persisted graph so a partial part in an
+        # unchanged file still joins its group (issue #1229). A re-parsed file's
+        # fresh Pass-2 entry is kept (not overwritten); a stale rehydrated
+        # position for a type that moved is simply never queried by the join.
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        locations = self.factory.definition_processor.csharp_type_locations
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_ALL_CSHARP_TYPE_LOCATIONS,
+                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            )
+        except Exception:
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.REHYDRATE_QUERY_FAILED)
+            return
+        restored = 0
+        for row in rows:
+            path = row.get(cs.KEY_PATH)
+            start_line = row.get(cs.KEY_START_LINE)
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            if not (
+                isinstance(path, str)
+                and isinstance(start_line, int)
+                and not isinstance(start_line, bool)
+                and isinstance(qn, str)
+            ):
+                # bool is an int subclass; a stray True would key as line 1 and
+                # shadow a real line-1 type, so reject it explicitly.
+                continue
+            key = (path, start_line)
+            if key not in locations:
+                locations[key] = qn
+                restored += 1
+        if restored:
+            logger.info(ls.CSHARP_TYPE_LOCATIONS_REHYDRATED.format(count=restored))
 
     def _capture_inbound_edges(self, reindexed_keys: list[str]) -> list[ResultRow]:
         # Record the reference edges unchanged files point at the re-indexed

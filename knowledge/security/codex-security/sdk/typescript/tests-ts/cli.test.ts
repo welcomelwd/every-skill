@@ -16,6 +16,7 @@ import { Writable } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import { describe, expect, test } from "bun:test";
+import { parse as parseToml } from "smol-toml";
 import type {
   CodexSecurityConfig,
   JsonObject,
@@ -36,6 +37,7 @@ import {
 } from "../src/index.js";
 import { main, parseCodexOverrides, Progress } from "../src/cli.js";
 import { scanPreflightCodexConfig } from "../src/api.js";
+import { CODEX_EXECUTABLE_VERSION, CODEX_SDK_VERSION } from "../src/version.js";
 import {
   DEFAULT_CODEX_CONFIG,
   FIREWORKS_CODEX_PROVIDER,
@@ -349,18 +351,29 @@ describe("CLI", () => {
     const readme = await readFile(new URL("../README.md", import.meta.url), {
       encoding: "utf8",
     });
-    expect(readme).toContain(
-      `model = "${DEFAULT_SCAN_MODEL_CONFIGURATION.model}"`,
+    const documentedConfigs = [
+      ...readme.matchAll(/^```toml\s*\n([\s\S]*?)\n```\s*$/gmu),
+    ].map(([, config]) => parseToml(config!));
+    const documentedRuntime = documentedConfigs.find(
+      (config) => "cli_auth_credentials_store" in config,
     );
-    expect(readme).toContain(
-      `model_reasoning_effort = "${DEFAULT_SCAN_MODEL_CONFIGURATION.reasoningEffort}"`,
-    );
+    expect(documentedRuntime).toMatchObject({
+      cli_auth_credentials_store:
+        DEFAULT_CODEX_CONFIG["cli_auth_credentials_store"],
+      model: DEFAULT_SCAN_MODEL_CONFIGURATION.model,
+      model_reasoning_effort: DEFAULT_SCAN_MODEL_CONFIGURATION.reasoningEffort,
+    });
 
     const features = DEFAULT_CODEX_CONFIG["features"] as JsonObject;
     const multiAgent = features["multi_agent_v2"] as JsonObject;
-    expect(readme).toContain(
-      `max_concurrent_threads_per_session = ${String(multiAgent["max_concurrent_threads_per_session"])}`,
-    );
+    expect(documentedRuntime).toMatchObject({
+      features: {
+        multi_agent_v2: {
+          max_concurrent_threads_per_session:
+            multiAgent["max_concurrent_threads_per_session"],
+        },
+      },
+    });
 
     const python = Bun.which("python3") ?? Bun.which("python");
     expect(python).not.toBeNull();
@@ -398,19 +411,27 @@ describe("CLI", () => {
         workers: number;
         subagents: number;
         stopAfterNoNew: number;
+        stopAfterConsecutiveErrors: number;
         maxDiscoveryRuns: number;
         maxTimeHours: number;
       };
       expect(defaults.workers).toBe(6);
-      expect(readme).toContain('workers = "auto"');
-      expect(readme).toContain(`subagents = ${defaults.subagents}`);
-      expect(readme).toContain(
-        `stop_after_no_new = ${defaults.stopAfterNoNew}`,
+      const documentedDeepScan = documentedConfigs.find(
+        (config) =>
+          typeof config["deep_scan"] === "object" &&
+          config["deep_scan"] !== null &&
+          "stop_after_consecutive_errors" in config["deep_scan"],
       );
-      expect(readme).toContain(
-        `max_discovery_runs = ${defaults.maxDiscoveryRuns}`,
-      );
-      expect(readme).toContain(`max_time_hours = ${defaults.maxTimeHours}`);
+      expect(documentedDeepScan).toMatchObject({
+        deep_scan: {
+          workers: "auto",
+          subagents: defaults.subagents,
+          stop_after_no_new: defaults.stopAfterNoNew,
+          stop_after_consecutive_errors: defaults.stopAfterConsecutiveErrors,
+          max_discovery_runs: defaults.maxDiscoveryRuns,
+          max_time_hours: defaults.maxTimeHours,
+        },
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -1011,8 +1032,8 @@ describe("CLI", () => {
       bundledPluginVersion: BUNDLED_PLUGIN_VERSION,
       scanMcp: false,
       cliVersion: VERSION,
-      codexVersion: "0.144.6",
-      codexSdkVersion: "0.144.6",
+      codexVersion: CODEX_EXECUTABLE_VERSION,
+      codexSdkVersion: CODEX_SDK_VERSION,
       model: "gpt-5.6-sol",
       reasoningEffort: "xhigh",
       nextStep: "codex-security scan . --dry-run",

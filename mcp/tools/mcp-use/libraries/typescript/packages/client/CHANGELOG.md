@@ -1,5 +1,43 @@
 # @mcp-use/client
 
+## 2.1.4
+
+### Patch Changes
+
+- 6343150: Refresh persisted browser OAuth discovery whenever an MCP server sends a new protected-resource metadata challenge, including when the metadata URL is unchanged.
+- c9c944b: Recover browser OAuth discovery when a fresh MCP `resource_metadata` challenge conflicts with incomplete or stale persisted discovery state.
+
+## 2.1.4-canary.1
+
+### Patch Changes
+
+- 6343150: Refresh persisted browser OAuth discovery whenever an MCP server sends a new protected-resource metadata challenge, including when the metadata URL is unchanged.
+
+## 2.1.4-canary.0
+
+### Patch Changes
+
+- c9c944b: Recover browser OAuth discovery when a fresh MCP `resource_metadata` challenge conflicts with incomplete or stale persisted discovery state.
+
+## 2.1.3
+
+### Patch Changes
+
+- aba4346: Stop blocking legacy HTTP connection readiness for up to five seconds while the optional standalone SSE stream attaches. Notification and reverse-RPC handlers are now registered before the handshake so request/response operations can proceed immediately without racing inbound messages.
+- aba4346: Defer Node OAuth store creation and callback port persistence until an authorization flow actually begins.
+
+## 2.1.3-canary.1
+
+### Patch Changes
+
+- 0e65b00: Stop blocking legacy HTTP connection readiness for up to five seconds while the optional standalone SSE stream attaches. Notification and reverse-RPC handlers are now registered before the handshake so request/response operations can proceed immediately without racing inbound messages.
+
+## 2.1.3-canary.0
+
+### Patch Changes
+
+- 77ceb91: Defer Node OAuth store creation and callback port persistence until an authorization flow actually begins.
+
 ## 2.1.2
 
 ### Patch Changes
