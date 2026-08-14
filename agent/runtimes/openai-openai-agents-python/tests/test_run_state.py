@@ -6572,6 +6572,63 @@ class TestRunStateResumption:
 
         assert result2.final_output == "Second response"
 
+    @pytest.mark.parametrize("streamed", [False, True])
+    @pytest.mark.asyncio
+    async def test_result_to_state_detaches_tool_decision_ledgers(self, streamed: bool):
+        """States created from one result must not share approval decisions."""
+        model = ScriptedModel()
+        executions: list[str] = []
+
+        @function_tool(needs_approval=True)
+        async def approval_tool() -> str:
+            executions.append("executed")
+            return "approved"
+
+        agent = Agent(name="TestAgent", model=model, tools=[approval_tool])
+        model.enqueue([get_function_tool_call("approval_tool", "{}")])
+
+        if streamed:
+            result = Runner.run_streamed(agent, "First input")
+            async for _ in result.stream_events():
+                pass
+        else:
+            result = await Runner.run(agent, "First input")
+
+        decided = result.to_state()
+        untouched = result.to_state()
+        untouched_approvals_before = untouched.to_json()["context"]["approvals"]
+
+        decided.approve(decided.get_interruptions()[0])
+
+        assert decided._context is not untouched._context
+        assert decided._context is not None
+        assert untouched._context is not None
+        assert decided._context.context is untouched._context.context
+        assert decided._context._approvals is not untouched._context._approvals
+        assert decided._context._tool_invocations is not untouched._context._tool_invocations
+        assert untouched.to_json()["context"]["approvals"] == untouched_approvals_before
+
+        if streamed:
+            untouched_result = Runner.run_streamed(agent, untouched)
+            async for _ in untouched_result.stream_events():
+                pass
+        else:
+            untouched_result = await Runner.run(agent, untouched)
+
+        assert untouched_result.interruptions
+        assert executions == []
+
+    def test_nested_resume_checkpoint_to_state_keeps_its_owned_decision_ledger(self):
+        """A scoped nested checkpoint returns the state that resume will consume."""
+        from agents.agent_tool_state import _AgentToolResumeCheckpoint
+
+        agent = Agent(name="NestedAgent")
+        approval_item = make_tool_approval_item(agent, call_id="nested-call")
+        state = make_state_with_interruptions(agent, [approval_item])
+        checkpoint = _AgentToolResumeCheckpoint(state, frozenset())
+
+        assert checkpoint.to_state() is state
+
     @pytest.mark.asyncio
     async def test_resume_from_run_state_streamed(self):
         """Test resuming a run from a RunState using run_streamed."""
@@ -11405,6 +11462,91 @@ async def test_resume_nested_agent_as_tool_with_context_override() -> None:
     assert resumed.context_wrapper.usage.input_tokens == (
         usage_before_resume + nested_turn_usage.input_tokens
     )
+
+
+@pytest.mark.parametrize("nesting_edges", [2, 3])
+@pytest.mark.parametrize("approval_timing", ["live", "before_restore", "after_restore"])
+@pytest.mark.parametrize("approve", [True, False])
+@pytest.mark.parametrize("streamed", [False, True])
+@pytest.mark.asyncio
+async def test_resume_recursively_nested_agent_as_tool_decision(
+    streamed: bool,
+    approve: bool,
+    approval_timing: str,
+    nesting_edges: int,
+) -> None:
+    """Tool decisions reach a protected tool through nested agent tools."""
+    calls: list[str] = []
+
+    @function_tool(needs_approval=True)
+    async def protected(text: str) -> str:
+        calls.append(text)
+        return f"approved:{text}"
+
+    leaf_model = ScriptedModel()
+    leaf_model.extend(
+        [
+            [get_function_tool_call("protected", json.dumps({"text": "one"}), call_id="inner-1")],
+            [get_final_output_message("inner-done")],
+        ]
+    )
+    outer = Agent(name="inner", model=leaf_model, tools=[protected])
+    for edge in range(nesting_edges):
+        tool_name = f"agent_tool_{edge}"
+        model = ScriptedModel()
+        model.extend(
+            [
+                [
+                    get_function_tool_call(
+                        tool_name,
+                        json.dumps({"input": "go"}),
+                        call_id=f"agent-call-{edge}",
+                    )
+                ],
+                [get_final_output_message(f"done-{edge}")],
+            ]
+        )
+        outer = Agent(
+            name=f"agent-{edge}",
+            model=model,
+            tools=[outer.as_tool(tool_name=tool_name, tool_description="Run nested agent")],
+        )
+
+    if streamed:
+        first = Runner.run_streamed(outer, "start")
+        async for _ in first.stream_events():
+            pass
+    else:
+        first = await Runner.run(outer, "start")
+
+    state = first.to_state()
+    assert len(state.get_interruptions()) == 1
+
+    def apply_decision() -> None:
+        if approve:
+            state.approve(state.get_interruptions()[0])
+        else:
+            state.reject(state.get_interruptions()[0])
+
+    if approval_timing == "before_restore":
+        apply_decision()
+        state = await RunState.from_json(outer, state.to_json())
+    elif approval_timing == "after_restore":
+        state = await RunState.from_json(outer, state.to_json())
+        apply_decision()
+    else:
+        apply_decision()
+
+    if streamed:
+        resumed = Runner.run_streamed(outer, state)
+        async for _ in resumed.stream_events():
+            pass
+    else:
+        resumed = await Runner.run(outer, state)
+
+    assert resumed.final_output == f"done-{nesting_edges - 1}"
+    assert resumed.interruptions == []
+    assert calls == (["one"] if approve else [])
 
 
 @pytest.mark.asyncio

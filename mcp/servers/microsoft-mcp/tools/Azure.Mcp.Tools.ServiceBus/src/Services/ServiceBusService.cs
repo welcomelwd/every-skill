@@ -1,0 +1,182 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+using Azure.Core.Pipeline;
+using Azure.Mcp.Core.Services.Azure;
+using Azure.Mcp.Tools.ServiceBus.Models;
+using Azure.Messaging.ServiceBus;
+using Azure.Messaging.ServiceBus.Administration;
+using Microsoft.Mcp.Core.Helpers;
+using Microsoft.Mcp.Core.Options;
+
+namespace Azure.Mcp.Tools.ServiceBus.Services;
+
+public sealed class ServiceBusService(IAzureService azureService)
+    : BaseAzureService(azureService), IServiceBusService
+{
+    private void ValidateNamespace(string namespaceName)
+    {
+        // Reject any characters that would introduce scheme, path, query, fragment, or port components.
+        // A fully-qualified namespace must be a bare hostname (e.g. "mynamespace.servicebus.windows.net").
+        if (namespaceName.AsSpan().IndexOfAny("/:?#@") >= 0)
+        {
+            throw new ArgumentException(
+                $"Namespace name contains invalid characters. A fully-qualified namespace must be a bare hostname (e.g. 'mynamespace.servicebus.windows.net'). Received: '{namespaceName}'.",
+                nameof(namespaceName));
+        }
+
+        EndpointValidator.ValidateAzureServiceEndpoint(
+            $"https://{namespaceName}/",
+            "servicebus",
+            AzureService.CloudConfiguration.ArmEnvironment);
+    }
+
+    private async Task<ServiceBusAdministrationClient> CreateAdministrationClient(
+        string namespaceName,
+        string? tenantId = null,
+        RetryPolicyOptions? retryPolicy = null,
+        CancellationToken cancellationToken = default)
+    {
+        var credential = await GetCredential(tenantId, cancellationToken);
+        var options = ConfigureRetryPolicy(AddDefaultPolicies(new ServiceBusAdministrationClientOptions()), retryPolicy);
+        options.Transport = new HttpClientTransport(AzureService.GetClient());
+        return new ServiceBusAdministrationClient(namespaceName, credential, options);
+    }
+
+    public async Task<QueueDetails> GetQueueDetails(
+        string namespaceName,
+        string queueName,
+        string? tenantId = null,
+        RetryPolicyOptions? retryPolicy = null,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateNamespace(namespaceName);
+        var client = await CreateAdministrationClient(namespaceName, tenantId, retryPolicy, cancellationToken);
+        var runtimeProperties = (await client.GetQueueRuntimePropertiesAsync(queueName, cancellationToken)).Value;
+        var properties = (await client.GetQueueAsync(queueName, cancellationToken)).Value;
+
+        return new()
+        {
+            DefaultMessageTimeToLive = properties.DefaultMessageTimeToLive,
+            EnablePartitioning = properties.EnablePartitioning,
+            MaxMessageSizeInKilobytes = properties.MaxMessageSizeInKilobytes,
+            MaxSizeInMegabytes = properties.MaxSizeInMegabytes,
+            Name = properties.Name,
+            Status = properties.Status,
+
+            ActiveMessageCount = runtimeProperties.ActiveMessageCount,
+            DeadLetteringOnMessageExpiration = properties.DeadLetteringOnMessageExpiration,
+            DeadLetterMessageCount = runtimeProperties.DeadLetterMessageCount,
+            ForwardDeadLetteredMessagesTo = properties.ForwardDeadLetteredMessagesTo,
+            ForwardTo = properties.ForwardTo,
+            LockDuration = properties.LockDuration,
+            MaxDeliveryCount = properties.MaxDeliveryCount,
+            RequiresSession = properties.RequiresSession,
+            ScheduledMessageCount = runtimeProperties.ScheduledMessageCount,
+            SizeInBytes = runtimeProperties.SizeInBytes,
+            TotalMessageCount = runtimeProperties.TotalMessageCount,
+            TransferDeadLetterMessageCount = runtimeProperties.TransferDeadLetterMessageCount,
+            TransferMessageCount = runtimeProperties.TransferMessageCount,
+        };
+    }
+
+    public async Task<SubscriptionDetails> GetSubscriptionDetails(
+        string namespaceName,
+        string topicName,
+        string subscriptionName,
+        string? tenantId = null,
+        RetryPolicyOptions? retryPolicy = null,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateNamespace(namespaceName);
+        var client = await CreateAdministrationClient(namespaceName, tenantId, retryPolicy, cancellationToken);
+        var runtimeProperties = (await client.GetSubscriptionRuntimePropertiesAsync(topicName, subscriptionName, cancellationToken)).Value;
+        var properties = (await client.GetSubscriptionAsync(topicName, subscriptionName, cancellationToken)).Value;
+
+        return new()
+        {
+            ActiveMessageCount = runtimeProperties.ActiveMessageCount,
+            DeadLetteringOnMessageExpiration = properties.DeadLetteringOnMessageExpiration,
+            DeadLetterMessageCount = runtimeProperties.DeadLetterMessageCount,
+            EnableBatchedOperations = properties.EnableBatchedOperations,
+            ForwardDeadLetteredMessagesTo = properties.ForwardDeadLetteredMessagesTo,
+            ForwardTo = properties.ForwardTo,
+            LockDuration = properties.LockDuration,
+            MaxDeliveryCount = properties.MaxDeliveryCount,
+            RequiresSession = properties.RequiresSession,
+            TotalMessageCount = runtimeProperties.TotalMessageCount,
+            SubscriptionName = runtimeProperties.SubscriptionName,
+            TopicName = runtimeProperties.TopicName,
+            TransferMessageCount = runtimeProperties.TransferMessageCount,
+            TransferDeadLetterMessageCount = runtimeProperties.TransferDeadLetterMessageCount,
+        };
+    }
+
+    public async Task<TopicDetails> GetTopicDetails(
+        string namespaceName,
+        string topicName,
+        string? tenantId = null,
+        RetryPolicyOptions? retryPolicy = null,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateNamespace(namespaceName);
+        var client = await CreateAdministrationClient(namespaceName, tenantId, retryPolicy, cancellationToken);
+        var runtimeProperties = (await client.GetTopicRuntimePropertiesAsync(topicName, cancellationToken)).Value;
+        var properties = (await client.GetTopicAsync(topicName, cancellationToken)).Value;
+
+        return new()
+        {
+            DefaultMessageTimeToLive = properties.DefaultMessageTimeToLive,
+            EnablePartitioning = properties.EnablePartitioning,
+            MaxMessageSizeInKilobytes = properties.MaxMessageSizeInKilobytes,
+            MaxSizeInMegabytes = properties.MaxSizeInMegabytes,
+            Name = properties.Name,
+            Status = properties.Status,
+
+            SubscriptionCount = runtimeProperties.SubscriptionCount,
+            SizeInBytes = runtimeProperties.SizeInBytes,
+            ScheduledMessageCount = runtimeProperties.ScheduledMessageCount,
+        };
+    }
+
+    public async Task<List<ServiceBusReceivedMessage>> PeekQueueMessages(
+        string namespaceName,
+        string queueName,
+        int maxMessages,
+        string? tenantId = null,
+        RetryPolicyOptions? retryPolicy = null,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateNamespace(namespaceName);
+        var credential = await GetCredential(tenantId, cancellationToken);
+
+        await using (var client = new ServiceBusClient(namespaceName, credential))
+        await using (var receiver = client.CreateReceiver(queueName))
+        {
+            var messages = await receiver.PeekMessagesAsync(maxMessages, cancellationToken: cancellationToken);
+
+            return [.. messages];
+        }
+    }
+
+    public async Task<List<ServiceBusReceivedMessage>> PeekSubscriptionMessages(
+        string namespaceName,
+        string topicName,
+        string subscriptionName,
+        int maxMessages,
+        string? tenantId = null,
+        RetryPolicyOptions? retryPolicy = null,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateNamespace(namespaceName);
+        var credential = await GetCredential(tenantId, cancellationToken);
+
+        await using (var client = new ServiceBusClient(namespaceName, credential))
+        await using (var receiver = client.CreateReceiver(topicName, subscriptionName))
+        {
+            var messages = await receiver.PeekMessagesAsync(maxMessages, cancellationToken: cancellationToken);
+
+            return [.. messages];
+        }
+    }
+}

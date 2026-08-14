@@ -1,0 +1,87 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+using System.Net;
+using Fabric.Mcp.Tools.OneLake.Models;
+using Fabric.Mcp.Tools.OneLake.Options;
+using Fabric.Mcp.Tools.OneLake.Services;
+using Microsoft.Extensions.Logging;
+using Microsoft.Mcp.Core.Commands;
+using Microsoft.Mcp.Core.Models.Command;
+using Microsoft.Mcp.Core.Options;
+
+namespace Fabric.Mcp.Tools.OneLake.Commands.Item;
+
+/// <summary>
+/// Command to list OneLake items in a workspace using the OneLake data plane API.
+/// </summary>
+[CommandMetadata(
+    Id = "61eb86d8-3879-4d2d-969a-6c96f2e0ce0d",
+    Name = "list_items",
+    Title = "List OneLake Items",
+    Description = "Lists OneLake items in a Fabric workspace using the high-level OneLake API. Use this when the user needs to see what items exist in a workspace. Returns item names, types, and metadata.",
+    Destructive = false,
+    Idempotent = true,
+    LocalRequired = false,
+    OpenWorld = false,
+    ReadOnly = true,
+    Secret = false)]
+public sealed class OneLakeItemListCommand(ILogger<OneLakeItemListCommand> logger, IOneLakeService oneLakeService)
+    : AuthenticatedCommand<OneLakeItemListOptions, OneLakeItemListCommand.OneLakeItemListCommandResult>
+{
+    private readonly ILogger<OneLakeItemListCommand> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    private readonly IOneLakeService _oneLakeService = oneLakeService ?? throw new ArgumentNullException(nameof(oneLakeService));
+
+    public override void ValidateOptions(OneLakeItemListOptions options, ValidationResult validationResult)
+    {
+        base.ValidateOptions(options, validationResult);
+        if (string.IsNullOrWhiteSpace(options.WorkspaceId) && string.IsNullOrWhiteSpace(options.Workspace))
+        {
+            validationResult.Errors.Add("Workspace identifier is required. Provide --workspace or --workspace-id.");
+        }
+    }
+
+    public override async Task<CommandResponse> ExecuteAsync(CommandContext context, OneLakeItemListOptions options, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var workspaceIdentifier = !string.IsNullOrWhiteSpace(options.WorkspaceId)
+                ? options.WorkspaceId
+                : options.Workspace!;
+
+            var xmlResponse = await _oneLakeService.ListOneLakeItemsXmlAsync(
+                workspaceIdentifier,
+                continuationToken: options.ContinuationToken,
+                cancellationToken);
+
+            context.Response.Results = ResponseResult.Create(new(xmlResponse), OneLakeJsonContext.Default.OneLakeItemListCommandResult);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error listing OneLake items in workspace {WorkspaceId}.", options.WorkspaceId);
+            HandleException(context, ex);
+        }
+
+        return context.Response;
+    }
+
+    protected override string GetErrorMessage(Exception ex) =>
+        OneLakeCommandValidators.GetErrorMessage(ex, base.GetErrorMessage);
+
+    protected override HttpStatusCode GetStatusCode(Exception ex) =>
+        OneLakeCommandValidators.GetStatusCode(ex, base.GetStatusCode);
+
+    public sealed record OneLakeItemListCommandResult(string? XmlResponse);
+}
+
+public sealed class OneLakeItemListOptions
+{
+    [Option(Description = OneLakeOptionDescriptions.WorkspaceId)]
+    public string? WorkspaceId { get; set; }
+
+    [Option(Description = OneLakeOptionDescriptions.Workspace)]
+    public string? Workspace { get; set; }
+
+    [Option(Description = OneLakeOptionDescriptions.ContinuationToken)]
+    public string? ContinuationToken { get; set; }
+}

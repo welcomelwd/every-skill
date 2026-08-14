@@ -263,7 +263,7 @@ def test_chat_completions_stream_modes(client, store_path, fake_model):
 
 def test_chat_completions_missing_framework(client, monkeypatch):
     monkeypatch.setitem(sys.modules, "agents", None)
-    with pytest.raises(PageIndexAPIError, match="pageindex\\[openai\\]"):
+    with pytest.raises(PageIndexAPIError, match="pip install openai-agents"):
         client.chat_completions([{"role": "user", "content": "x"}])
 
 
@@ -278,6 +278,127 @@ def test_cloud_guards():
                                                 "cloud yet"):
         cloud.messages([{"role": "user", "content": "x"}], model="m",
                        max_tokens=10)
+
+
+@needs_agents
+def test_anthropic_routed_models_mark_managed_prefix_for_cache(
+        client, store_path, fake_model):
+    fake_model([[_msg_item("ok")]])
+    from pageindex.local_chat import _openai_agent
+    marked = {"cache_control_injection_points": [
+        {"location": "message", "role": "system"}]}
+    for name in ("anthropic/claude-x", "litellm/anthropic/claude-x",
+                 "bedrock/us.anthropic.claude-sonnet-5",
+                 "vertex_ai/claude-sonnet-4-5"):
+        agent = _openai_agent(client, "chat", name, "sys", None, None)
+        assert agent.model_settings.extra_args == marked
+    for name in ("gpt-5", "openai/Qwen/x", "litellm/groq/x",
+                 "bedrock/meta.llama3-70b-instruct-v1:0",
+                 "vertex_ai/gemini-2.5-pro"):
+        agent = _openai_agent(client, "chat", name, "sys", None, None)
+        assert agent.model_settings.extra_args is None
+
+
+@needs_agents
+def test_status_recorder_attaches_to_the_real_responses_model(monkeypatch):
+    # Guards the private-attribute chain the recorder rides
+    # (agent.model._client.responses.create): a vendor rename turns the
+    # recorder into a silent no-op and truncation reports as completion.
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    import openai
+    from agents.models.openai_responses import OpenAIResponsesModel
+    backend = openai.AsyncOpenAI()
+    model = OpenAIResponsesModel("gpt-test", openai_client=backend)
+    original = backend.responses.create
+    local_chat._record_response_status(types.SimpleNamespace(model=model), {})
+    assert backend.responses.create is not original
+    asyncio.run(backend.close())
+
+
+@needs_agents
+def test_cache_marker_reaches_the_anthropic_wire(client, store_path,
+                                                 monkeypatch):
+    # End-to-end guard for the injection flag: through the real
+    # LitellmModel and litellm's request build, the marker must appear in
+    # the HTTP body — a regression in either vendor hop silently reverts
+    # anthropic-routed calls to full price.
+    pytest.importorskip("litellm")
+    from litellm.llms.custom_httpx.http_handler import (AsyncHTTPHandler,
+                                                        HTTPHandler)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    captured = {}
+    reply = {"id": "msg_01", "type": "message", "role": "assistant",
+             "model": "claude-3-5-sonnet-20240620",
+             "content": [{"type": "text", "text": "ok"}],
+             "stop_reason": "end_turn", "stop_sequence": None,
+             "usage": {"input_tokens": 10, "output_tokens": 2}}
+
+    def _capture(url, kwargs):
+        body = kwargs.get("json")
+        if body is None and kwargs.get("data") is not None:
+            body = json.loads(kwargs["data"])
+        captured["url"] = str(url)
+        captured["body"] = body
+        return httpx.Response(200, json=reply,
+                              request=httpx.Request("POST", str(url)))
+
+    async def fake_apost(self, url=None, *args, **kwargs):
+        return _capture(url, kwargs)
+
+    def fake_post(self, url=None, *args, **kwargs):
+        return _capture(url, kwargs)
+
+    monkeypatch.setattr(AsyncHTTPHandler, "post", fake_apost)
+    monkeypatch.setattr(HTTPHandler, "post", fake_post)
+    result = client.chat_completions(
+        "hi", model="anthropic/claude-3-5-sonnet-20240620")
+    assert "/v1/messages" in captured["url"]
+    assert '"cache_control"' in json.dumps(captured["body"])
+    assert result["choices"][0]["message"]["content"] == "ok"
+
+
+# ── chat (front door) ──
+
+@needs_agents
+def test_chat_returns_answer_string(client, store_path, fake_model):
+    doc_id = seed_doc(store_path, "pi-a", "report.pdf")
+    fake = fake_model([
+        [_call_item("get_document", {"doc_name": "report.pdf"})],
+        [_msg_item("The answer")],
+    ])
+    assert client.chat("What status?", doc_id=doc_id) == "The answer"
+    first_item = fake.inputs[0][0]
+    assert "The user has specified document: report.pdf" in first_item["content"]
+
+
+@needs_agents
+def test_chat_stream_yields_text_chunks(client, store_path, fake_model):
+    fake_model([[_msg_item("The answer")]])
+    assert list(client.chat("q", stream=True)) == ["The ", "answer"]
+
+
+@needs_agents
+def test_chat_multi_turn_history(client, store_path, fake_model):
+    fake = fake_model([[_msg_item("Chapter 4 covers pears")]])
+    history = [
+        {"role": "user", "content": "What about chapter 3?"},
+        {"role": "assistant", "content": "Chapter 3 covers apples"},
+        {"role": "user", "content": "And chapter 4?"},
+    ]
+    assert client.chat(history) == "Chapter 4 covers pears"
+    assert fake.inputs[0][-3:] == history
+
+
+def test_chat_cloud_unwraps_envelope(monkeypatch):
+    cloud = PageIndexCloudClient(api_key="pi-test-key")
+
+    def fake_cc(**kwargs):
+        assert kwargs["messages"] == [{"role": "user", "content": "q"}]
+        return {"choices": [{"message": {"role": "assistant",
+                                        "content": "cloud answer"}}]}
+
+    monkeypatch.setattr(cloud._api, "chat_completions", fake_cc)
+    assert cloud.chat("q") == "cloud answer"
 
 
 # ── responses ──

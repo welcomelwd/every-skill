@@ -68,6 +68,7 @@ pub mod add_columns;
 mod add_data;
 pub mod branch_merge;
 pub mod checkpoint;
+pub mod computed_columns;
 mod create_index;
 pub mod datafusion;
 pub(crate) mod dataset;
@@ -77,6 +78,7 @@ pub mod merge;
 pub mod optimize;
 mod primary_key;
 pub mod query;
+pub mod refresh;
 pub mod schema_evolution;
 pub mod update;
 pub mod write_progress;
@@ -90,6 +92,9 @@ pub use branch_merge::{
     MergeBranchResult, MergeBranchStatus, MergePreview, RowCountSummary,
 };
 pub use chrono::Duration;
+pub use computed_columns::{
+    ComputedColumn, ComputedColumnKind, computed_column_from_field, computed_columns,
+};
 pub use delete::DeleteResult;
 use futures::future::join_all;
 pub use lance::dataset::refs::{BranchContents, Ref, TagContents, Tags as LanceTags};
@@ -97,6 +102,7 @@ pub use lance::dataset::scanner::DatasetRecordBatchStream;
 pub use lance_index::optimize::OptimizeOptions;
 pub use lsm_stats::{BucketStats, GenerationStats, LsmStats, MemtableStats};
 pub use optimize::{CompactionOptions, OptimizeAction, OptimizeStats};
+pub use refresh::RefreshColumnResult;
 pub use schema_evolution::{
     AddColumnsResult, AlterColumnsResult, DropColumnsResult, FieldMetadataUpdate,
     UpdateFieldMetadataResult,
@@ -637,6 +643,15 @@ pub trait BaseTable: std::fmt::Display + std::fmt::Debug + Send + Sync {
             message: "set_lsm_write_spec is not supported on this table type".into(),
         })
     }
+    /// Switch this table to required index catch-up, one way.
+    ///
+    /// The default implementation returns `NotSupported`. Implementations
+    /// that support the MemWAL LSM write path must override this.
+    async fn require_mem_wal_index_catchup(&self) -> Result<()> {
+        Err(Error::NotSupported {
+            message: "require_mem_wal_index_catchup is not supported on this table type".into(),
+        })
+    }
     /// Remove the [`LsmWriteSpec`] from this table.
     ///
     /// This is a no-op if no spec is currently set.
@@ -732,6 +747,30 @@ pub trait BaseTable: std::fmt::Display + std::fmt::Debug + Send + Sync {
         transforms: NewColumnTransform,
         read_columns: Option<Vec<String>>,
     ) -> Result<AddColumnsResult>;
+    /// Declare computed columns, each defined by a SQL expression.
+    async fn add_computed_columns(
+        &self,
+        _columns: &[(String, String)],
+    ) -> Result<AddColumnsResult> {
+        Err(Error::NotSupported {
+            message: "computed columns are not supported on this table type".into(),
+        })
+    }
+    /// Fill a computed column's unfilled rows.
+    ///
+    /// The default returns `NotSupported`; Lance-backed tables override it.
+    async fn refresh_column(&self, _column: &str) -> Result<RefreshColumnResult> {
+        Err(Error::NotSupported {
+            message: "computed columns are supported only on local tables".into(),
+        })
+    }
+    /// Fill a computed column's unfilled rows, returning a [`Job`] tracking
+    /// the operation.
+    async fn refresh_column_async(&self, _column: &str) -> Result<Job> {
+        Err(Error::NotSupported {
+            message: "computed columns are supported only on local tables".into(),
+        })
+    }
     /// Alter columns in the table.
     async fn alter_columns(&self, alterations: &[ColumnAlteration]) -> Result<AlterColumnsResult>;
     /// Drop columns from the table.
@@ -1624,6 +1663,51 @@ impl Table {
         AddColumnsBuilder::new(self.inner.clone())
     }
 
+    /// Fill the fragments of a computed column that hold no values yet.
+    ///
+    /// Declared with
+    /// [`AddColumnsBuilder::computed`](add_columns::AddColumnsBuilder::computed),
+    /// a column starts empty and gets its values here. Fragments appended
+    /// since the last refresh are filled by the next one; fragments already
+    /// filled are left as they are, so the call is idempotent and does not
+    /// observe a mutated input.
+    ///
+    /// Local tables only.
+    ///
+    /// ```
+    /// # use lancedb::Table;
+    /// # async fn refresh(table: &Table) -> Result<(), Box<dyn std::error::Error>> {
+    /// let result = table.refresh_column("doubled").await?;
+    /// println!("filled {} rows at version {}", result.rows_filled, result.version);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn refresh_column(&self, column: impl AsRef<str>) -> Result<RefreshColumnResult> {
+        self.inner.refresh_column(column.as_ref()).await
+    }
+
+    /// Like [`Table::refresh_column`], but returns a [`Job`] tracking the
+    /// operation instead of blocking until it completes.
+    ///
+    /// The job may already be complete when returned, and callers must not
+    /// assume the column is filled until [`Job::wait`] returns. Invalid input
+    /// -- an unknown column, or one that is not computed -- is reported by
+    /// this call rather than by the job. Local tables only: LanceDB Cloud and
+    /// Enterprise reject with `NotSupported`.
+    ///
+    /// ```
+    /// # use lancedb::Table;
+    /// # async fn refresh_in_background(table: &Table) -> Result<(), Box<dyn std::error::Error>> {
+    /// let job = table.refresh_column_async("doubled").await?;
+    /// println!("refresh running: {:?}", job.status().await?);
+    /// job.wait().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn refresh_column_async(&self, column: impl AsRef<str>) -> Result<Job> {
+        self.inner.refresh_column_async(column.as_ref()).await
+    }
+
     /// Change a column's name or nullability.
     pub async fn alter_columns(
         &self,
@@ -1691,6 +1775,20 @@ impl Table {
     /// ```
     pub async fn set_lsm_write_spec(&self, spec: LsmWriteSpec) -> Result<()> {
         self.inner.set_lsm_write_spec(spec).await
+    }
+
+    /// Switch this table to required index catch-up, one way.
+    ///
+    /// Separate from [`Self::set_lsm_write_spec`] on purpose: a table carrying
+    /// the bit retains its SSTables until an index records that it holds the
+    /// compacted rows, so turn it on only once something can repair coverage.
+    /// A writer that already holds the dataset can call the equivalent on
+    /// `DatasetMemWalExt` instead; this is the table-level entry point.
+    ///
+    /// Errors if no spec is set, or if the table already records SSTable
+    /// compaction progress from before this protocol.
+    pub async fn require_mem_wal_index_catchup(&self) -> Result<()> {
+        self.inner.require_mem_wal_index_catchup().await
     }
 
     /// Remove the [`LsmWriteSpec`] from this table, reverting to the standard
@@ -2605,6 +2703,7 @@ impl NativeTable {
         namespace_client: Option<Arc<dyn LanceNamespace>>,
         pushdown_operations: HashSet<NamespaceClientPushdownOperation>,
     ) -> Result<Self> {
+        computed_columns::ensure_no_foreign_declarations(batches.arrow_schema().fields())?;
         // Default params uses format v1.
         let params = params.unwrap_or(WriteParams {
             ..Default::default()
@@ -3053,6 +3152,13 @@ impl BaseTable for NativeTable {
         let ds = self.dataset.get().await?;
 
         let table_schema = Schema::from(&ds.schema().clone());
+        computed_columns::ensure_not_written(
+            &table_schema,
+            add.data.schema().fields().iter().map(|f| f.name().as_str()),
+        )?;
+        if matches!(add.mode, AddDataMode::Overwrite) {
+            computed_columns::ensure_no_foreign_declarations(add.data.schema().fields())?;
+        }
 
         let num_partitions = if let Some(parallelism) = add.write_parallelism {
             parallelism
@@ -3213,6 +3319,11 @@ impl BaseTable for NativeTable {
         params: MergeInsertBuilder,
         new_data: Box<dyn RecordBatchReader + Send>,
     ) -> Result<MergeResult> {
+        let source_schema = arrow_array::RecordBatchReader::schema(&new_data);
+        computed_columns::ensure_not_written(
+            &Schema::from(self.dataset.get().await?.schema()),
+            source_schema.fields().iter().map(|f| f.name().as_str()),
+        )?;
         let result = merge::execute_merge_insert(self, params, new_data).await?;
         self.bump_freshness();
         Ok(result)
@@ -3224,6 +3335,10 @@ impl BaseTable for NativeTable {
 
     async fn set_lsm_write_spec(&self, spec: LsmWriteSpec) -> Result<()> {
         merge::lsm::set_lsm_write_spec(self, spec).await
+    }
+
+    async fn require_mem_wal_index_catchup(&self) -> Result<()> {
+        merge::lsm::require_mem_wal_index_catchup(self).await
     }
 
     async fn unset_lsm_write_spec(&self) -> Result<()> {
@@ -3292,6 +3407,22 @@ impl BaseTable for NativeTable {
         let result = schema_evolution::execute_add_columns(self, transforms, read_columns).await?;
         self.bump_freshness();
         Ok(result)
+    }
+
+    async fn add_computed_columns(&self, columns: &[(String, String)]) -> Result<AddColumnsResult> {
+        let result = schema_evolution::execute_declare(self, columns).await?;
+        self.bump_freshness();
+        Ok(result)
+    }
+
+    async fn refresh_column(&self, column: &str) -> Result<RefreshColumnResult> {
+        let result = refresh::execute_refresh_column(self, column).await?;
+        self.bump_freshness();
+        Ok(result)
+    }
+
+    async fn refresh_column_async(&self, column: &str) -> Result<Job> {
+        refresh::execute_refresh_column_async(self, column).await
     }
 
     async fn alter_columns(&self, alterations: &[ColumnAlteration]) -> Result<AlterColumnsResult> {

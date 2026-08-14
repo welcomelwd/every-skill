@@ -1,0 +1,74 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+using System.Net;
+using Azure.Mcp.Core.Commands.Subscription;
+using Azure.Mcp.Core.Services.Azure.Subscription;
+using Azure.Mcp.Tools.Sql.Models;
+using Azure.Mcp.Tools.Sql.Options.ElasticPool;
+using Azure.Mcp.Tools.Sql.Services;
+using Microsoft.Extensions.Logging;
+using Microsoft.Mcp.Core.Commands;
+using Microsoft.Mcp.Core.Models.Command;
+
+namespace Azure.Mcp.Tools.Sql.Commands.ElasticPool;
+
+[CommandMetadata(
+    Id = "f980fda7-4bd6-4c24-b139-a091f088584f",
+    Name = "list",
+    Title = "List SQL Elastic Pools",
+    Description = """
+        Lists all SQL elastic pools in an Azure SQL Server with their SKU, capacity, state, and database limits.
+        Use when you need to: view elastic pool inventory, check pool utilization, compare pool configurations,
+        or find available pools for database placement.
+        Returns: JSON array of elastic pools with complete configuration details.
+        Equivalent to 'az sql elastic-pool list'.
+        """,
+    Destructive = false,
+    Idempotent = true,
+    OpenWorld = false,
+    ReadOnly = true,
+    Secret = false,
+    LocalRequired = false)]
+public sealed class ElasticPoolListCommand(ISqlService sqlService, ILogger<ElasticPoolListCommand> logger, ISubscriptionResolver subscriptionResolver)
+    : SubscriptionCommand<ElasticPoolListOptions, ElasticPoolListCommand.ElasticPoolListResult>(subscriptionResolver)
+{
+    private readonly ISqlService _sqlService = sqlService;
+    private readonly ILogger<ElasticPoolListCommand> _logger = logger;
+
+    public override async Task<CommandResponse> ExecuteAsync(CommandContext context, ElasticPoolListOptions options, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var elasticPools = await _sqlService.GetElasticPoolsAsync(
+                options.Server,
+                options.ResourceGroup,
+                options.Subscription!,
+                options.RetryPolicy,
+                cancellationToken);
+
+            context.Response.Results = ResponseResult.Create(new(elasticPools ?? []), SqlJsonContext.Default.ElasticPoolListResult);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Error listing SQL elastic pools. Server: {Server}, ResourceGroup: {ResourceGroup}.",
+                options.Server, options.ResourceGroup);
+            HandleException(context, ex);
+        }
+
+        return context.Response;
+    }
+
+    protected override string GetErrorMessage(Exception ex) => ex switch
+    {
+        RequestFailedException reqEx when reqEx.Status == (int)HttpStatusCode.NotFound =>
+            "SQL server not found. Verify the server name, resource group, and that you have access.",
+        RequestFailedException reqEx when reqEx.Status == (int)HttpStatusCode.Forbidden =>
+            $"Authorization failed accessing the SQL server. Verify you have appropriate permissions. Details: {reqEx.Message}",
+        RequestFailedException reqEx => reqEx.Message,
+        _ => base.GetErrorMessage(ex)
+    };
+
+    public sealed record ElasticPoolListResult(List<SqlElasticPool> ElasticPools);
+}

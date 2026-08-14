@@ -1,0 +1,235 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+using System.Diagnostics;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Microsoft.Mcp.Core.Areas.Server.Commands.ToolLoading;
+using Microsoft.Mcp.Core.Areas.Server.Options;
+using Microsoft.Mcp.Core.Commands;
+using Microsoft.Mcp.Core.Extensions;
+using Microsoft.Mcp.Core.Services.Telemetry;
+using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
+
+namespace Microsoft.Mcp.Core.Areas.Server.Commands.Runtime;
+
+/// <summary>
+/// Implementation of the MCP runtime that delegates tool discovery and invocation to a tool loader.
+/// Provides logging and configuration support for the MCP server.
+/// </summary>
+public sealed class McpRuntime : IMcpRuntime
+{
+    private readonly IToolLoader _toolLoader;
+    private readonly IOptions<ServerStartOptions> _options;
+    private readonly ILogger<McpRuntime> _logger;
+
+    private readonly ITelemetryService _telemetry;
+
+    /// <summary>
+    /// Initializes a new instance of the McpRuntime class.
+    /// </summary>
+    /// <param name="toolLoader">The tool loader responsible for discovering and loading tools.</param>
+    /// <param name="options">Configuration options for the MCP server.</param>
+    /// <param name="logger">Logger for runtime operations.</param>
+    /// <exception cref="ArgumentNullException">Thrown if any required dependencies are null.</exception>
+    public McpRuntime(
+        IToolLoader toolLoader,
+        IOptions<ServerStartOptions> options,
+        ITelemetryService telemetry,
+        ILogger<McpRuntime> logger)
+    {
+        _toolLoader = toolLoader ?? throw new ArgumentNullException(nameof(toolLoader));
+        _options = options ?? throw new ArgumentNullException(nameof(options));
+        _telemetry = telemetry ?? throw new ArgumentNullException(nameof(telemetry));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+
+        _logger.LogInformation("McpRuntime initialized with tool loader of type {ToolLoaderType}.", _toolLoader.GetType().Name);
+        _logger.LogInformation("ReadOnly mode is set to {ReadOnly}.", _options.Value.ReadOnly ?? false);
+        _logger.LogInformation("Namespace is set to {Namespace}.", string.Join(",", _options.Value.Namespace ?? []));
+    }
+
+    /// <summary>
+    /// Delegates tool invocation requests to the configured tool loader.
+    /// </summary>
+    /// <param name="request">The request context containing the tool name and parameters.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>A result containing the output of the tool invocation.</returns>
+    public async ValueTask<CallToolResult> CallToolHandler(RequestContext<CallToolRequestParams> request, CancellationToken cancellationToken)
+    {
+        using var activity = _telemetry.StartActivity(ActivityName.ToolExecuted, request.Server.ClientInfo, request.Params);
+        CaptureToolCallMeta(activity, request.Params?.Meta);
+
+        if (request.Params == null)
+        {
+            var content = new TextContentBlock
+            {
+                Text = "Cannot call tools with null parameters.",
+            };
+
+            activity?.SetStatus(ActivityStatusCode.Error)
+                ?.SetTag(TagName.ExceptionType, "InvalidParameters")
+                ?.SetTag(TagName.ExceptionMessage, content.Text);
+
+            return new()
+            {
+                Content = [content],
+                IsError = true,
+            };
+        }
+
+        activity?.AddTag(TagName.ToolName, request.Params.Name);
+
+        var subscriptionArgument = request.Params?.Arguments?
+            .Where(kvp => string.Equals(kvp.Key, "subscription", StringComparison.OrdinalIgnoreCase))
+            .Select(kvp => kvp.Value)
+            .FirstOrDefault();
+        if (subscriptionArgument != null
+            && subscriptionArgument.HasValue
+            && subscriptionArgument.Value.ValueKind == JsonValueKind.String)
+        {
+            var subscription = subscriptionArgument.Value.GetString();
+            if (subscription != null)
+            {
+                activity?.AddTag(AzureTagName.SubscriptionGuid, subscription);
+            }
+        }
+
+        try
+        {
+            CallToolResult callTool = await _toolLoader.CallToolHandler(request!, cancellationToken);
+
+            var isSuccessful = !callTool.IsError.HasValue || !callTool.IsError.Value;
+            if (isSuccessful)
+            {
+                activity?.SetStatus(ActivityStatusCode.Ok);
+                return callTool;
+            }
+
+            // TODO (alzimmer): Determine a way to safely capture error details from the CallToolResult without risking PII leakage.
+            // Given this is the egress point for tool calling, ExceptionType may have been set already, only set it if it wasn't
+            // already set.
+            activity?.SetStatus(ActivityStatusCode.Error)
+                ?.SetTagIfNotExists(TagName.ExceptionType, "ToolCallError");
+
+            return callTool;
+        }
+        // Catches scenarios where child MCP clients are unable to be created
+        // due to missing dependencies or misconfiguration.
+        catch (InvalidOperationException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, "Exception occurred calling tool handler")
+                ?.SetTagIfNotExists(TagName.ExceptionType, ex.GetType().ToString())
+                ?.SetTagIfNotExists(TagName.ExceptionStackTrace, ex.StackTrace);
+
+            return new()
+            {
+                Content = [new TextContentBlock
+                {
+                    Text = !string.IsNullOrWhiteSpace(ex.Message) ? ex.Message : "An unknown error occurred while trying to call the tool.",
+                }],
+                IsError = true,
+            };
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, "Exception occurred calling tool handler")
+                ?.SetTagIfNotExists(TagName.ExceptionType, ex.GetType().ToString())
+                ?.SetTagIfNotExists(TagName.ExceptionStackTrace, ex.StackTrace);
+            throw;
+        }
+    }
+
+    // W3C traceparent: version(2)-traceId(32)-parentId(16)-flags(2), all lowercase hex.
+    private static readonly Regex TraceParentFormat =
+        new(@"^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$", RegexOptions.Compiled);
+
+    // W3C tracestate is a comma-separated vendor list; cap at 512 chars per spec guidance.
+    private const int TraceStateMaxLength = 512;
+
+    private static void CaptureToolCallMeta(Activity? activity, JsonObject? meta)
+    {
+        TestHook_CaptureToolCallMeta(activity, meta);
+    }
+
+    // Internal for testing: exposes the W3C trace context extraction logic to unit tests
+    // without requiring a full McpRuntime instance.
+    internal static void TestHook_CaptureToolCallMeta(Activity? activity, JsonObject? meta)
+    {
+        if (activity != null && meta != null)
+        {
+            // Capture W3C trace context fields (Workstream H: observability and trace context).
+            // Validate both fields against W3C formats before recording to prevent untrusted
+            // client input from injecting arbitrary data into distributed traces.
+            var traceParentNode = meta["traceparent"];
+            if (traceParentNode != null && traceParentNode.GetValueKind() == JsonValueKind.String)
+            {
+                var traceParent = traceParentNode.GetValue<string>();
+                if (TraceParentFormat.IsMatch(traceParent))
+                {
+                    activity.AddTag(TagName.TraceParent, traceParent);
+                }
+            }
+            var traceStateNode = meta["tracestate"];
+            if (traceStateNode != null && traceStateNode.GetValueKind() == JsonValueKind.String)
+            {
+                var traceState = traceStateNode.GetValue<string>();
+                if (traceState.Length <= TraceStateMaxLength)
+                {
+                    activity.AddTag(TagName.TraceState, traceState);
+                }
+            }
+            // baggage is not recorded: it is an unbounded cross-service propagation bag and
+            // recording it verbatim would allow callers to write arbitrary data into telemetry.
+
+            // Capture VS Code specific metadata
+            var vsCodeConversationIdNode = meta["vscode.conversationId"];
+            if (vsCodeConversationIdNode != null && vsCodeConversationIdNode.GetValueKind() == JsonValueKind.String)
+            {
+                activity.AddTag(TagName.VSCodeConversationId, vsCodeConversationIdNode.GetValue<string>());
+            }
+            var vsCodeRequestIdNode = meta["vscode.requestId"];
+            if (vsCodeRequestIdNode != null && vsCodeRequestIdNode.GetValueKind() == JsonValueKind.String)
+            {
+                activity.AddTag(TagName.VSCodeRequestId, vsCodeRequestIdNode.GetValue<string>());
+            }
+        }
+    }
+
+    /// <summary>
+    /// Delegates tool discovery requests to the configured tool loader.
+    /// </summary>
+    /// <param name="request">The request context containing metadata and parameters.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>A result containing the list of available tools.</returns>
+    public async ValueTask<ListToolsResult> ListToolsHandler(RequestContext<ListToolsRequestParams> request, CancellationToken cancellationToken)
+    {
+        using var activity = _telemetry.StartActivity(ActivityName.ListToolsHandler, request.Server.ClientInfo, request.Params);
+        CaptureToolCallMeta(activity, request.Params?.Meta);
+
+        try
+        {
+            var result = await _toolLoader.ListToolsHandler(request, cancellationToken);
+            result.CacheScope = CacheScope.Public; // ListTools results are safe to cache publicly, as they contain no sensitive information.
+            result.TimeToLive = TimeSpan.FromHours(1); // Cache ListTools results for 1 hour to reduce load on the tool loader.
+            activity?.SetStatus(ActivityStatusCode.Ok);
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, "Exception occurred calling list tools handler")
+                ?.SetTagIfNotExists(TagName.ExceptionType, ex.GetType().ToString())
+                ?.SetTagIfNotExists(TagName.ExceptionStackTrace, ex.StackTrace);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Disposes the tool loader and releases associated resources.
+    /// </summary>
+    public async ValueTask DisposeAsync() => await _toolLoader.DisposeAsync();
+}

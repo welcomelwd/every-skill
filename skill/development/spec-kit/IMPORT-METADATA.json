@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "repository": "github/spec-kit",
+  "source_url": "https://github.com/github/spec-kit",
+  "ref": "main",
+  "resolved_commit": "bf88c9f9a82fa370c7a7257aa2b3cf10b457b65c",
+  "category": "skill",
+  "subcategory": "development",
+  "slug": "spec-kit",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-14T23:11:55+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 534,
+  "copied_bytes": 9064363,
+  "excluded_files": [
+    "media/bootstrap-claude-code.gif: binary content",
+    "media/logo_large.webp: binary content",
+    "media/logo_small.webp: binary content",
+    "media/spec-kit-video-header.jpg: binary, archive, media, or generated artifact",
+    "media/specify_cli.gif: binary content"
+  ],
+  "execution": "never run by this importer"
+}

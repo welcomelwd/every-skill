@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import time
 import warnings
-from typing import Any, Callable, Iterator, Optional, Union
+from typing import Any, Callable, Iterator, Optional, Union, cast
 
 from .errors import PageIndexAPIError
 
@@ -345,7 +345,44 @@ class PageIndexClient:
             "favor of chat completions; use chat_completions instead."
         ).get_retrieval(retrieval_id=retrieval_id)
 
-    # ---------- CHAT COMPLETIONS ----------
+    # ---------- CHAT ----------
+
+    def chat(
+        self,
+        messages: Union[str, list[dict[str, str]]],
+        doc_id: Optional[Union[str, list[str]]] = None,
+        stream: bool = False,
+        model: Optional[str] = None,
+    ) -> Union[str, Iterator[str]]:
+        """
+        Ask a question about your documents, get the answer.
+
+        Thin sugar over ``chat_completions()`` in both modes — same
+        engine, same wire, minus the envelope. Multi-turn: keep your own
+        role/content list of the visible conversation (append each answer
+        as an assistant message) and pass it back. For usage accounting,
+        streaming metadata, or the tool-use process, use the protocol
+        surfaces: ``chat_completions()``, ``responses()``, ``messages()``.
+
+        Args:
+            messages: A question string, or role/content conversation
+                history.
+            doc_id: Document ID or list of IDs to scope the conversation.
+                Keep it identical across a conversation's calls.
+            stream: Yield the answer as text chunks as it is produced.
+            model: Local only — backend model name (defaults to
+                ``retrieve_model``).
+
+        Returns:
+            - stream=False: the answer string
+            - stream=True: iterator of text chunks
+        """
+        result = self.chat_completions(messages, stream=stream,
+                                       doc_id=doc_id, model=model)
+        if stream:
+            return cast(Iterator[str], result)
+        envelope = cast(dict[str, Any], result)
+        return envelope["choices"][0]["message"]["content"] or ""
 
     def chat_completions(
         self,
@@ -363,12 +400,14 @@ class PageIndexClient:
 
         Cloud: the hosted chat endpoint. Local: a managed document-QA agent
         run over the local tools against your own LLM backend's
-        /chat/completions (requires ``pageindex[openai]``; the OpenAI SDK's
+        /chat/completions (the OpenAI SDK's
         usual env config — OPENAI_API_KEY, OPENAI_BASE_URL — selects the
         backend, so any OpenAI-compatible server works; a ``/`` in the
         model name means LiteLLM provider routing, so prefix ``openai/``
         when the backend itself serves slashed ids, e.g.
-        ``openai/Qwen/...`` on vLLM). The non-stream
+        ``openai/Qwen/...`` on vLLM; LiteLLM-routed Claude models —
+        Anthropic direct, Bedrock, Vertex — get the managed prompt
+        prefix cache-marked automatically). The non-stream
         response carries the final answer only; streaming yields the
         agent's visible text as it is produced, including narration before
         tool calls. ``finish_reason`` reports loop completion ("stop") —
@@ -380,7 +419,10 @@ class PageIndexClient:
             messages: Conversation messages with 'role' and 'content' keys,
                 or a bare query string (it becomes a single user message).
                 Local also accepts system/developer messages — their content
-                is appended to the managed system prompt.
+                is appended to the managed system prompt. Local takes text
+                history only: tool-role turns are rejected (the cloud
+                endpoint forwards them verbatim), and message fields beyond
+                role/content are dropped.
             stream: Enable streaming responses.
             doc_id: Document ID or list of IDs to scope the conversation.
                 Keep it identical across a conversation's calls — the
@@ -450,7 +492,7 @@ class PageIndexClient:
         to keep provider prompt-cache prefix continuity and the agent's
         memory of what it already read.
 
-        Requires ``pageindex[openai]`` and a backend that supports the
+        Requires a backend that supports the
         Responses API; backends that only speak chat.completions should use
         ``chat_completions()``. Provider-prefixed models (``anthropic/…``)
         route through LiteLLM's chat.completions adapter and are therefore
@@ -652,8 +694,7 @@ class PageIndexClient:
         Local: the in-process tools, any model backend; ``hosted`` does
         not apply.
 
-        Requires ``openai-agents`` (``pip install 'pageindex[openai]'``),
-        imported only when this method is called.
+        ``openai-agents`` is imported only when this method is called.
 
         Args:
             include_management (bool): Also expose tools that modify the

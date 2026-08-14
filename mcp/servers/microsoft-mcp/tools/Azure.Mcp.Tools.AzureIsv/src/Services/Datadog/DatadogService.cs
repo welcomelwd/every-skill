@@ -1,0 +1,33 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+using Azure.Core;
+using Azure.Mcp.Core.Services.Azure;
+using Azure.ResourceManager.Datadog;
+
+namespace Azure.Mcp.Tools.AzureIsv.Services.Datadog;
+
+public partial class DatadogService(IAzureService azureService)
+    : BaseAzureService(azureService), IDatadogService
+{
+    public async Task<List<string>> ListMonitoredResources(string resourceGroup, string subscription, string datadogResource, CancellationToken cancellationToken = default)
+    {
+        var armClient = await CreateArmClientAsync(tenantIdOrName: null, retryPolicy: null, armClientOptions: null, cancellationToken);
+
+        var resourceId = $"/subscriptions/{subscription}/resourceGroups/{resourceGroup}/providers/Microsoft.Datadog/monitors/{datadogResource}";
+
+        ResourceIdentifier id = new(resourceId);
+        var datadogMonitorResource = armClient.GetDatadogMonitorResource(id);
+        var monitoredResources = datadogMonitorResource.GetMonitoredResources(cancellationToken);
+
+        var resourceList = new List<string>();
+        foreach (var resource in monitoredResources)
+        {
+            var resourceIdSegments = resource.Id.ToString().Split('/');
+            var lastSegment = resourceIdSegments[^1];
+            resourceList.Add(lastSegment);
+        }
+
+        return resourceList;
+    }
+}

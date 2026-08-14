@@ -1,0 +1,62 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+using Azure.Mcp.Core.Commands.Subscription;
+using Azure.Mcp.Core.Services.Azure.Subscription;
+using Azure.Mcp.Tools.Grafana.Models;
+using Azure.Mcp.Tools.Grafana.Options.Workspace;
+using Azure.Mcp.Tools.Grafana.Services;
+using Microsoft.Extensions.Logging;
+using Microsoft.Mcp.Core.Commands;
+using Microsoft.Mcp.Core.Models.Command;
+
+namespace Azure.Mcp.Tools.Grafana.Commands.Workspace;
+
+/// <summary>
+/// Lists Azure Managed Grafana workspaces in the specified subscription.
+/// </summary>
+[CommandMetadata(
+    Id = "7a47b562-f219-47de-80f6-12e19367b61d",
+    Name = "list",
+    Title = "List Grafana Workspaces",
+    Description = """
+        List all Grafana workspace resources in a specified subscription. Returns an array of Grafana workspace details.
+        Use this command to explore which Grafana workspace resources are available in your subscription.
+        """,
+    Destructive = false,
+    Idempotent = true,
+    OpenWorld = false,
+    ReadOnly = true,
+    Secret = false,
+    LocalRequired = false)]
+public sealed class WorkspaceListCommand(IGrafanaService grafanaService, ILogger<WorkspaceListCommand> logger, ISubscriptionResolver subscriptionResolver)
+    : SubscriptionCommand<WorkspaceListOptions, WorkspaceListCommand.WorkspaceListCommandResult>(subscriptionResolver)
+{
+    private readonly IGrafanaService _grafanaService = grafanaService;
+    private readonly ILogger<WorkspaceListCommand> _logger = logger;
+
+    public override async Task<CommandResponse> ExecuteAsync(CommandContext context, WorkspaceListOptions options, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var workspaces = await _grafanaService.ListWorkspacesAsync(
+                options.Subscription!,
+                options.ResourceGroup,
+                options.Tenant,
+                options.RetryPolicy,
+                cancellationToken);
+
+            context.Response.Results = ResponseResult.Create(new(workspaces?.Results ?? [], workspaces?.AreResultsTruncated ?? false), GrafanaJsonContext.Default.WorkspaceListCommandResult);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to list Grafana workspaces");
+
+            HandleException(context, ex);
+        }
+
+        return context.Response;
+    }
+
+    public sealed record WorkspaceListCommandResult(IEnumerable<GrafanaWorkspace> Workspaces, bool AreResultsTruncated);
+}

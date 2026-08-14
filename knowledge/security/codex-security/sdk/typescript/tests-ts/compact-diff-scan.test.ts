@@ -244,7 +244,7 @@ describe("compact diff scan", () => {
     ]);
   });
 
-  test("includes staged, unstaged, and untracked working-tree changes", () => {
+  test("keeps staged, unstaged, and untracked working-tree inputs aligned", () => {
     const { root, repository } = createRepository();
     writeSource(repository, "src/handler.py", "value = 1\n");
     git(repository, "add", ".");
@@ -276,16 +276,46 @@ describe("compact diff scan", () => {
       "src/staged.py",
       "src/untracked.py",
     ]);
+
+    const reviewOutput = join(root, "rank-input.jsonl");
+    const review = python(
+      "generate_rank_input.py",
+      "make-diff-rank-input",
+      "--repo",
+      repository,
+      "--base",
+      "HEAD",
+      "--mode",
+      "local-patch",
+      "--out",
+      reviewOutput,
+    );
+    expect(review.status, review.stderr).toBe(0);
+    expect(
+      readFileSync(reviewOutput, "utf8")
+        .trim()
+        .split("\n")
+        .map((row) => (JSON.parse(row) as { path: string }).path),
+    ).toEqual(["src/handler.py", "src/staged.py", "src/untracked.py"]);
   });
 
   test("keeps deleted inventory paths without accepting unsafe candidates", () => {
     const { root, repository } = createRepository();
     writeSource(repository, "src/handler.py", "value = 1\n");
+    writeSource(repository, "src/second.py", "value = 2\n");
     const inventory = join(root, "in-scope.txt");
     const input = join(root, "candidates.jsonl");
     const output = join(root, "normalized.jsonl");
-    writeFileSync(inventory, "src/deleted.py\nsrc/handler.py\n");
-    writeFileSync(input, `${JSON.stringify(candidate("src/handler.py"))}\n`);
+    writeFileSync(inventory, "src/deleted.py\nsrc/handler.py\nsrc/second.py\n");
+    writeFileSync(
+      input,
+      [
+        candidate("src/handler.py"),
+        { ...candidate("src/second.py"), summary: "Résumé: missing guard" },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n") + "\n",
+    );
     const args = [
       "--input",
       input,
@@ -304,10 +334,16 @@ describe("compact diff scan", () => {
       "--allow-missing-in-scope",
     );
     expect(accepted.status, accepted.stderr).toBe(0);
-    const normalized = JSON.parse(readFileSync(output, "utf8")) as {
-      locations: { path: string }[];
-    };
-    expect(normalized.locations[0]?.path).toBe("src/handler.py");
+    const contents = readFileSync(output, "utf8");
+    expect(contents).toContain("Résumé: missing guard");
+    const normalized = contents
+      .trimEnd()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { locations: { path: string }[] });
+    expect(normalized.map((entry) => entry.locations[0]?.path).sort()).toEqual([
+      "src/handler.py",
+      "src/second.py",
+    ]);
 
     writeFileSync(inventory, "../escaped.py\nsrc/handler.py\n");
     const escaped = python(

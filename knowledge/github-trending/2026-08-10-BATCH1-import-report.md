@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | `affaan-m/ECC` | up-to-date | `skill/development/ecc @ c9de8f5b2b3a225bca9befa2b7700aa5e3a4d1b8` |
 | `ComposioHQ/awesome-claude-skills` | up-to-date | `skill/development/awesome-claude-skills @ be2a406907dbc61b73e6827ded415c96139d13a2` |
-| `hesreallyhim/awesome-claude-code` | updated | `skill/development/awesome-claude-code @ 1138935ba82f4e46eee83f947fd95970c1d7a39c (55 files, 1241916 bytes); excluded 1 files` |
+| `hesreallyhim/awesome-claude-code` | updated | `skill/development/awesome-claude-code @ 10c7db8c94f215031a61d888675a1c1faebb60fb (55 files, 1241933 bytes); excluded 1 files` |
 | `VoltAgent/awesome-openclaw-skills` | up-to-date | `skill/development/awesome-openclaw-skills @ 9f93edd90ddfdc464c612583afa91aeaffb19f96` |
 | `wshobson/agents` | up-to-date | `skill/development/wshobson-agents @ c4b82b0ad771190355eb8e204b1329732a18449a` |
 | `yusufkaraaslan/Skill_Seekers` | up-to-date | `skill/development/skill-seekers @ f3972efa33fa79634b96936acf1fac321cdcf7c1` |
@@ -14,34 +14,34 @@
 | `utkusen/sast-skills` | up-to-date | `skill/security/sast-skills @ db52227eab1043bf122cbff7206fac6708b4d6c9` |
 | `mukul975/Anthropic-Cybersecurity-Skills` | up-to-date | `skill/security/anthropic-cybersecurity-skills @ 4c0b700ac5d280ba46695062077f0fe922ce3602` |
 | `dair-ai/Prompt-Engineering-Guide` | up-to-date | `skill/research/prompt-engineering-guide @ 57673726396dd94acb23bdb1e67f27c78ee85a8e` |
-| `ChromeDevTools/chrome-devtools-mcp` | updated | `mcp/servers/chrome-devtools-mcp @ ec014d178f5731bea3bc412848945df8c636b558 (282 files, 6002703 bytes); excluded 5 files` |
-| `DeusData/codebase-memory-mcp` | updated | `mcp/servers/codebase-memory-mcp @ c0bd4bbf8dace58cffdb24fad86d95e325df99f4 (662 files, 26214376 bytes); excluded 1379 files` |
+| `ChromeDevTools/chrome-devtools-mcp` | updated | `mcp/servers/chrome-devtools-mcp @ 5d0283969c34f26faf9ef4c34be437d1343cd930 (282 files, 6001492 bytes); excluded 5 files` |
+| `DeusData/codebase-memory-mcp` | updated | `mcp/servers/codebase-memory-mcp @ 7cd262b95e9a5e2039a6f9395d2d53f78f99a840 (665 files, 26214354 bytes); excluded 1377 files` |
 | `mrexodia/ida-pro-mcp` | up-to-date | `mcp/servers/ida-pro-mcp @ 0b5f7ae4026d3c770b190ca93c0692d1b0ceab22` |
 | `0x4m4/hexstrike-ai` | up-to-date | `mcp/servers/hexstrike-ai @ d689933ff579d839c676c82b231f8e98326c5f04` |
 | `firecrawl/firecrawl-mcp-server` | up-to-date | `mcp/servers/firecrawl-mcp-server @ 2ca018dcf85356f5299959eebd184baabb1f40c0` |
-| `IBM/mcp-context-forge` | up-to-date | `mcp/servers/mcp-context-forge @ 28806e19e30c253a298354ed20cb28338808ee9f` |
+| `IBM/mcp-context-forge` | updated | `mcp/servers/mcp-context-forge @ 6004d236479c12ed2571d9bf9dc5cc20bf3aead7 (1349 files, 26214400 bytes); excluded 1438 files` |
 | `makenotion/notion-mcp-server` | up-to-date | `mcp/servers/notion-mcp-server @ 1d38420769c8a1fe2d583ff1e7d2d108d4eb0b30` |
-| `upstash/context7` | up-to-date | `mcp/tools/context7 @ 7274d720fbc4c0fe95a270f3f3bb77685b1f88c2` |
-| `oraios/serena` | up-to-date | `mcp/tools/serena @ 27644053ada77f3492be845c85f287dc26052694` |
-| `mcp-use/mcp-use` | updated | `mcp/tools/mcp-use @ 9afeeb6d3e0f42c8adb5cd49d182f65f91949820 (1992 files, 12528588 bytes); excluded 102 files` |
-| `stacklok/toolhive` | updated | `mcp/tools/toolhive @ d0579299936a6ae16afa9a0f5d456928d54f9c6f (2188 files, 26214368 bytes); excluded 458 files` |
+| `upstash/context7` | updated | `mcp/tools/context7 @ 0e3298e6435f2506e26477d0798441b7ff4d1014 (307 files, 1737063 bytes); excluded 91 files` |
+| `oraios/serena` | updated | `mcp/tools/serena @ 93ec043105f5ee4f5ff64ea0158041500d2cdc65 (1028 files, 6751738 bytes); excluded 22 files` |
+| `mcp-use/mcp-use` | up-to-date | `mcp/tools/mcp-use @ 9afeeb6d3e0f42c8adb5cd49d182f65f91949820` |
+| `stacklok/toolhive` | updated | `mcp/tools/toolhive @ 8343851e8a58086ff0768cd35856e14b11d273fd (2178 files, 26214393 bytes); excluded 470 files` |
 | `qdrant/mcp-server-qdrant` | up-to-date | `mcp/resources/mcp-server-qdrant @ c56ae5adf62bb78d852bf7bbcbc5d7b75e2bbe41` |
-| `langchain-ai/langchain` | up-to-date | `agent/frameworks/langchain @ f9ee55d94c8c2e61b14391d4f4f5dfd491bbd2f5` |
-| `crewAIInc/crewAI` | updated | `agent/frameworks/crewai @ 754d7323beb2fd042e33444a115ea2d5a47193f0 (3036 files, 26214400 bytes); excluded 23333 files` |
+| `langchain-ai/langchain` | updated | `agent/frameworks/langchain @ 9a5810712658bdb9ad91925d3242032822f54a5e (2856 files, 26214358 bytes); excluded 178 files` |
+| `crewAIInc/crewAI` | up-to-date | `agent/frameworks/crewai @ 754d7323beb2fd042e33444a115ea2d5a47193f0` |
 | `agno-agi/agno` | up-to-date | `agent/frameworks/agno @ b8894410bc40f94c82377b5e7f2eb59a6528fdac` |
 | `browser-use/browser-use` | up-to-date | `agent/workflows/browser-use @ 6c73fced2f6d45a11d88622fe56365a5fe18f28b` |
-| `NousResearch/hermes-agent` | updated | `agent/workflows/hermes-agent @ 56a41715dc3b8bf6f50a740ff9416c4036ef4259 (2583 files, 26214392 bytes); excluded 6401 files` |
-| `aaif-goose/goose` | updated | `agent/workflows/goose @ 433d1b3c8fde932a6d1a94fa36c9daa696ce0a67 (1957 files, 22782039 bytes); excluded 411 files` |
+| `NousResearch/hermes-agent` | updated | `agent/workflows/hermes-agent @ 452465bf78c187c091e41103db869d13d2bb6968 (2601 files, 26214397 bytes); excluded 6437 files` |
+| `aaif-goose/goose` | updated | `agent/workflows/goose @ 3810898a7447ec3299be72e223d3570a7aabf0ab (1957 files, 22859999 bytes); excluded 411 files` |
 | `SWE-agent/SWE-agent` | up-to-date | `agent/workflows/swe-agent @ 3ea751c087f32b16e039a2233dd6eefecef325d5` |
 | `google-gemini/gemini-cli` | up-to-date | `agent/runtimes/gemini-cli @ c0d192452b4e2df7efb6d62a60385f475bfd6779` |
-| `ComposioHQ/composio` | up-to-date | `agent/runtimes/composio @ b80808606a9917e7f3147a05970ef8c11d5486a6` |
+| `ComposioHQ/composio` | updated | `agent/runtimes/composio @ b297a6ed5eb15c1507e3fa052f3156fd0c3acc2c (2615 files, 21820701 bytes); excluded 102 files` |
 | `Aider-AI/aider` | up-to-date | `agent/runtimes/aider @ 5dc9490bb35f9729ef2c95d00a19ccd30c26339c` |
-| `code-yeongyu/oh-my-openagent` | updated | `agent/runtimes/oh-my-openagent @ 038ed0cbbefe2b40677b63867aeea0d16bc303e0 (2839 files, 26214400 bytes); excluded 5177 files` |
-| `infiniflow/ragflow` | updated | `knowledge/rag/ragflow @ 2c775d0549985e1c9278d831f0f5c48f181be4c4 (2263 files, 26214390 bytes); excluded 3240 files` |
-| `run-llama/llama_index` | up-to-date | `knowledge/rag/llama-index @ eb8cf2c0b35f095bb3af3438aa51dec3a1c2903d` |
-| `deepset-ai/haystack` | updated | `knowledge/rag/haystack @ 683b7994e8a553d12561fab8797f781546154257 (1946 files, 26214400 bytes); excluded 8115 files` |
+| `code-yeongyu/oh-my-openagent` | up-to-date | `agent/runtimes/oh-my-openagent @ 038ed0cbbefe2b40677b63867aeea0d16bc303e0` |
+| `infiniflow/ragflow` | updated | `knowledge/rag/ragflow @ 554fb1133ac3861732235ad9c377eb5e0a770665 (2264 files, 26214394 bytes); excluded 3244 files` |
+| `run-llama/llama_index` | updated | `knowledge/rag/llama-index @ afd0fef371831f9bda13e5af7167cf4e981278ab (1941 files, 26214397 bytes); excluded 8086 files` |
+| `deepset-ai/haystack` | updated | `knowledge/rag/haystack @ 5ede1e4303e46a937d65540d0e7c7413f65111d0 (1957 files, 26214378 bytes); excluded 8119 files` |
 | `HKUDS/LightRAG` | up-to-date | `knowledge/rag/lightrag @ 3cb207cde3f0d282d1259102b3c2c5995ce89e23` |
-| `VectifyAI/PageIndex` | up-to-date | `knowledge/rag/pageindex @ 7c6e3c1c8fb7c5a774967f7be98a0d910113fdab` |
-| `vllm-project/vllm` | updated | `knowledge/tools/vllm @ aa3100357322995b201d5348c5490596a7bd70a9 (2780 files, 26214380 bytes); excluded 3787 files` |
-| `ggml-org/llama.cpp` | updated | `knowledge/tools/llama-cpp @ 885c5bbe8e04dc78db25beb911a2715312ad7b54 (1602 files, 26214399 bytes); excluded 1817 files` |
-| `langfuse/langfuse` | updated | `knowledge/evaluations/langfuse @ 9ce4e3ca2f2c3a1f93fc3a502fb2072bbcbe95dd (3618 files, 26214393 bytes); excluded 1182 files` |
+| `VectifyAI/PageIndex` | updated | `knowledge/rag/pageindex @ 08a912c69ce7d3f39541df7f360648f94ce6e234 (146 files, 2526760 bytes); excluded 10 files` |
+| `vllm-project/vllm` | updated | `knowledge/tools/vllm @ bb4b448f9896cf3f5607bd5ed4b35b29cd866a6b (2794 files, 26214399 bytes); excluded 3782 files` |
+| `ggml-org/llama.cpp` | updated | `knowledge/tools/llama-cpp @ 9d57ce456c94d241dde672b2db9cf18879766568 (1599 files, 26214398 bytes); excluded 1822 files` |
+| `langfuse/langfuse` | updated | `knowledge/evaluations/langfuse @ ab58010c81339ffb3e19fc491d71733cf4f10f6a (3611 files, 26214390 bytes); excluded 1207 files` |

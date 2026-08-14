@@ -1,0 +1,42 @@
+jobs:
+- job: Analyze
+  condition: and(succeededOrFailed(), ne(variables['Skip.Analyze'], 'true'))
+  timeoutInMinutes: 120
+  dependsOn: []
+  steps:
+  - checkout: self
+    fetchDepth: 0
+
+  - template: /eng/pipelines/templates/steps/install-dotnet.yml
+
+  - template: /eng/common/pipelines/templates/steps/eng-common-workflow-enforcer.yml
+
+  - template: /eng/common/pipelines/templates/steps/create-authenticated-npmrc.yml
+
+  - task: UseNode@1
+    displayName: 'Install Node.js 24'
+    inputs:
+      version: '24.x'
+  
+  - task: Powershell@2
+    displayName: "Run source analysis"
+    inputs:
+      pwsh: true
+      filePath: $(Build.SourcesDirectory)/eng/scripts/Analyze-Code.ps1
+    env:
+      AZURE_MCP_COLLECT_TELEMETRY: 'false'
+
+  # Run AOT analysis only on Linux x64
+  - template: /eng/pipelines/templates/steps/analyze-aot-compact.yml
+    parameters:
+      runtime: 'linux-x64'
+      sourceDirectory: $(Build.SourcesDirectory)
+
+  - pwsh: |
+      # Verify that the package README.md files do not contain invalid headers or comment annotations
+      $hasFailures = & "$(Build.SourcesDirectory)/eng/scripts/Process-PackageReadMe.ps1" -Command "validate-all"
+      if ($hasFailures) {
+        exit 1
+      }
+    displayName: 'Validate Package README.md files'
+    condition: succeededOrFailed()

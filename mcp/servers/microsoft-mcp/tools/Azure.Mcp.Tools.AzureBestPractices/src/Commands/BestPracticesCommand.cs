@@ -1,0 +1,162 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+using System.Collections.Concurrent;
+using System.Net;
+using System.Reflection;
+using System.Text;
+using Azure.Mcp.Tools.AzureBestPractices.Options;
+using Microsoft.Extensions.Logging;
+using Microsoft.Mcp.Core.Commands;
+using Microsoft.Mcp.Core.Helpers;
+using Microsoft.Mcp.Core.Models.Command;
+
+namespace Azure.Mcp.Tools.AzureBestPractices.Commands;
+
+[CommandMetadata(
+    Id = "ff12e8fb-f7ce-446a-884b-996dac118b83",
+    Name = "get",
+    Title = "Get Azure Best Practices",
+    Description = """
+        This tool returns a list of best practices for code generation, operations and deployment
+        when working with Azure services. It should be called for any code generation, deployment or
+        operations involving Azure, Azure Functions, Azure Kubernetes Service (AKS), Azure Container
+        Apps (ACA), Bicep, Terraform, Azure Cache, Redis, CosmosDB, Entra, Azure Active Directory,
+        Azure App Services, or any other Azure technology or programming language. Only call this function
+        when you are confident the user is discussing Azure. If this tool needs to be categorized,
+        it belongs to the Azure Best Practices category.
+        """,
+    Destructive = false,
+    Idempotent = true,
+    OpenWorld = false,
+    ReadOnly = true,
+    Secret = false,
+    LocalRequired = false)]
+public sealed class BestPracticesCommand(ILogger<BestPracticesCommand> logger) : BaseCommand<BestPracticesOptions, List<string>>
+{
+    private readonly ILogger<BestPracticesCommand> _logger = logger;
+    private static readonly ConcurrentDictionary<string, string> s_bestPracticesCache = [];
+
+    public override void ValidateOptions(BestPracticesOptions options, ValidationResult validationResult)
+    {
+        base.ValidateOptions(options, validationResult);
+
+        if (string.IsNullOrWhiteSpace(options.Resource) || string.IsNullOrWhiteSpace(options.Action))
+        {
+            validationResult.Errors.Add("Both resource and action parameters are required.");
+        }
+        else
+        {
+            bool validResource = options.Resource == "general" || options.Resource == "azurefunctions" || options.Resource == "static-web-app" || options.Resource == "coding-agent";
+            bool validAction = options.Action == "all" || options.Action == "code-generation" || options.Action == "deployment";
+
+            if (!validResource)
+            {
+                validationResult.Errors.Add("Invalid resource. Must be 'general', 'azurefunctions', 'static-web-app', or 'coding-agent'.");
+            }
+            if (!validAction)
+            {
+                validationResult.Errors.Add("Invalid action. Must be 'all', 'code-generation' or 'deployment'.");
+            }
+            if (options.Resource == "static-web-app" && options.Action != "all")
+            {
+                validationResult.Errors.Add("The 'static-web-app' resource only supports 'all' action.");
+            }
+            if (options.Resource == "coding-agent" && options.Action != "all")
+            {
+                validationResult.Errors.Add("The 'coding-agent' resource only supports 'all' action.");
+            }
+        }
+    }
+
+    public override Task<CommandResponse> ExecuteAsync(CommandContext context, BestPracticesOptions options, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var resourceFileName = GetResourceFileName(options.Resource, options.Action);
+            var bestPractices = GetBestPracticesText(resourceFileName);
+
+            context.Response.Status = HttpStatusCode.OK;
+            context.Response.Results = ResponseResult.Create([bestPractices], AzureBestPracticesJsonContext.Default.ListString);
+            context.Response.Message = string.Empty;
+
+            context.Activity?.AddTag("BestPractices_Resource", options.Resource);
+            context.Activity?.AddTag("BestPractices_Action", options.Action);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting best practices for Resource: {Resource}, Action: {Action}",
+                options.Resource, options.Action);
+            HandleException(context, ex);
+        }
+
+        return Task.FromResult(context.Response);
+    }
+
+    private static string GetResourceFileName(string resource, string action)
+    {
+        return (resource, action) switch
+        {
+            ("general", "code-generation") => "azure-general-codegen-best-practices.txt",
+            ("general", "deployment") => "azure-general-deployment-best-practices.txt",
+            ("general", "all") => "azure-general-codegen-best-practices.txt,azure-general-deployment-best-practices.txt",
+            ("azurefunctions", "code-generation") => "azure-functions-codegen-best-practices.txt",
+            ("azurefunctions", "deployment") => "azure-functions-deployment-best-practices.txt",
+            ("azurefunctions", "all") => "azure-functions-codegen-best-practices.txt,azure-functions-deployment-best-practices.txt",
+            ("static-web-app", "all") => "azure-swa-best-practices.txt",
+            ("coding-agent", "all") => "azure-coding-agent-best-practices.txt",
+            _ => throw new ArgumentException($"Invalid combination of resource '{resource}' and action '{action}'")
+        };
+    }
+
+    private static string GetBestPracticesText(string resourceFileName)
+    {
+        if (string.IsNullOrEmpty(resourceFileName))
+        {
+            throw new ArgumentException("Resource file name cannot be null or empty.", nameof(resourceFileName));
+        }
+
+        if (!s_bestPracticesCache.TryGetValue(resourceFileName, out string? bestPractices))
+        {
+            bestPractices = LoadBestPracticesText(resourceFileName);
+            s_bestPracticesCache[resourceFileName] = bestPractices;
+        }
+        return bestPractices;
+    }
+
+    private static string LoadBestPracticesText(string resourceFileName)
+    {
+        Assembly assembly = typeof(BestPracticesCommand).Assembly;
+
+        // Handle multiple files separated by comma
+        if (resourceFileName.Contains(','))
+        {
+            var fileNames = resourceFileName.Split(',');
+            var combinedContent = new StringBuilder();
+
+            foreach (var fileName in fileNames)
+            {
+                if (string.IsNullOrEmpty(fileName))
+                {
+                    throw new ArgumentException("File name cannot be null or empty.", nameof(fileName));
+                }
+
+                string resourceName = EmbeddedResourceHelper.FindEmbeddedResource(assembly, fileName.Trim());
+                string content = EmbeddedResourceHelper.ReadEmbeddedResource(assembly, resourceName);
+
+                if (combinedContent.Length > 0)
+                {
+                    combinedContent.Append("\n\n");
+                }
+                combinedContent.Append(content);
+            }
+
+            return combinedContent.ToString();
+        }
+        else
+        {
+            string resourceName = EmbeddedResourceHelper.FindEmbeddedResource(assembly, resourceFileName);
+            return EmbeddedResourceHelper.ReadEmbeddedResource(assembly, resourceName);
+        }
+    }
+}

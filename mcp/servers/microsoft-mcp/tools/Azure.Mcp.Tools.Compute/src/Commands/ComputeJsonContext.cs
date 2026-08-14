@@ -1,0 +1,42 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+using System.Text.Json.Serialization;
+using Azure.Mcp.Tools.Compute.Commands.Disk;
+using Azure.Mcp.Tools.Compute.Commands.Vm;
+using Azure.Mcp.Tools.Compute.Commands.Vmss;
+using Azure.Mcp.Tools.Compute.Models;
+
+namespace Azure.Mcp.Tools.Compute.Commands;
+
+/// <summary>
+/// JSON serialization context for Compute commands.
+/// </summary>
+[JsonSerializable(typeof(DiskCreateCommand.DiskCreateCommandResult))]
+[JsonSerializable(typeof(DiskDeleteCommand.DiskDeleteCommandResult))]
+[JsonSerializable(typeof(DiskGetCommand.DiskGetCommandResult))]
+[JsonSerializable(typeof(DiskUpdateCommand.DiskUpdateCommandResult))]
+[JsonSerializable(typeof(DiskInfo))]
+[JsonSerializable(typeof(List<DiskInfo>))]
+[JsonSerializable(typeof(VmCreateCommand.VmCreateCommandResult))]
+[JsonSerializable(typeof(VmCreateResult))]
+[JsonSerializable(typeof(VmUpdateCommand.VmUpdateCommandResult))]
+[JsonSerializable(typeof(VmUpdateResult))]
+[JsonSerializable(typeof(VmGetCommand.VmGetResult))]
+[JsonSerializable(typeof(VmssGetCommand.VmssGetResult))]
+[JsonSerializable(typeof(VmssCreateCommand.VmssCreateCommandResult))]
+[JsonSerializable(typeof(VmssCreateResult))]
+[JsonSerializable(typeof(VmDeleteCommand.VmDeleteCommandResult))]
+[JsonSerializable(typeof(VmPowerStateCommand.VmPowerStateCommandResult))]
+[JsonSerializable(typeof(VmssDeleteCommand.VmssDeleteCommandResult))]
+[JsonSerializable(typeof(VmssUpdateCommand.VmssUpdateCommandResult))]
+[JsonSerializable(typeof(VmssUpdateResult))]
+[JsonSerializable(typeof(VmInfo))]
+[JsonSerializable(typeof(VmInstanceView))]
+[JsonSerializable(typeof(VmPowerStateResult))]
+[JsonSerializable(typeof(VmssInfo))]
+[JsonSerializable(typeof(VmssVmInfo))]
+[JsonSerializable(typeof(List<VmInfo>))]
+[JsonSerializable(typeof(List<VmssInfo>))]
+[JsonSerializable(typeof(List<VmssVmInfo>))]
+internal sealed partial class ComputeJsonContext : JsonSerializerContext;

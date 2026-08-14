@@ -1,0 +1,66 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+using Fabric.Mcp.Tools.OneLake.Models;
+using Fabric.Mcp.Tools.OneLake.Options;
+using Fabric.Mcp.Tools.OneLake.Services;
+using Microsoft.Extensions.Logging;
+using Microsoft.Mcp.Core.Commands;
+using Microsoft.Mcp.Core.Models.Command;
+
+namespace Fabric.Mcp.Tools.OneLake.Commands.Workspace;
+
+[CommandMetadata(
+    Id = "5f005a27-9838-4c09-9785-55ce49963c97",
+    Name = "list_workspaces",
+    Title = "List OneLake Workspaces",
+    Description = "Lists all Fabric workspaces accessible via OneLake data plane API. Use this when the user needs to view available workspaces or select a workspace for data operations. Returns workspace names and IDs.",
+    Destructive = false,
+    Idempotent = true,
+    OpenWorld = false,
+    ReadOnly = true,
+    Secret = false,
+    LocalRequired = false)]
+public sealed class OneLakeWorkspaceListCommand(ILogger<OneLakeWorkspaceListCommand> logger, IOneLakeService oneLakeService)
+    : AuthenticatedCommand<WorkspaceListOptions, OneLakeWorkspaceListCommand.OneLakeWorkspaceListCommandResult>
+{
+    private readonly ILogger<OneLakeWorkspaceListCommand> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    private readonly IOneLakeService _oneLakeService = oneLakeService ?? throw new ArgumentNullException(nameof(oneLakeService));
+
+    public override async Task<CommandResponse> ExecuteAsync(CommandContext context, WorkspaceListOptions options, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (options.Format?.ToLowerInvariant() == "xml")
+            {
+                var xmlResponse = await _oneLakeService.ListOneLakeWorkspacesXmlAsync(
+                    options.ContinuationToken,
+                    cancellationToken);
+
+                _logger.LogInformation("Retrieved OneLake workspaces XML response with length: {Length}", xmlResponse.Length);
+
+                context.Response.Results = ResponseResult.Create(new(null, xmlResponse), OneLakeJsonContext.Default.OneLakeWorkspaceListCommandResult);
+            }
+            else
+            {
+                var workspaces = await _oneLakeService.ListOneLakeWorkspacesAsync(
+                    options.ContinuationToken,
+                    cancellationToken);
+
+                var workspaceList = workspaces.ToList();
+                _logger.LogInformation("Retrieved {Count} OneLake workspaces", workspaceList.Count);
+
+                context.Response.Results = ResponseResult.Create(new(workspaceList, null), OneLakeJsonContext.Default.OneLakeWorkspaceListCommandResult);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error listing OneLake workspaces.");
+            HandleException(context, ex);
+        }
+
+        return context.Response;
+    }
+
+    public sealed record OneLakeWorkspaceListCommandResult(List<Models.Workspace>? Workspaces, string? XmlResponse);
+}

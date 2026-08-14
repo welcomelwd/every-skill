@@ -69,14 +69,33 @@ abstract addColumns(newColumnTransforms): Promise<AddColumnsResult>
 
 Add new columns with defined values.
 
+The `{ computed }` form stores the expression rather than evaluating it
+now: the column is committed with no values, and rows get them from
+[Table#refreshColumn](Table.md#refreshcolumn). Declaring one therefore costs the same on a
+large table as on an empty one.
+
+A refresh does not revisit rows it has already filled, so mutating an
+input leaves the value computed at fill time; recomputing means dropping
+the column and declaring it again. While a declaration reads a column,
+that column cannot be renamed, retyped or dropped.
+
+Computed columns are local-only: LanceDB Cloud and Enterprise reject a
+declaration.
+
 #### Parameters
 
-* **newColumnTransforms**: `Field`&lt;`any`&gt; \| `Field`&lt;`any`&gt;[] \| `Schema`&lt;`any`&gt; \| [`AddColumnsSql`](../interfaces/AddColumnsSql.md)[]
+* **newColumnTransforms**:
+    \| `Field`&lt;`any`&gt;
+    \| `Field`&lt;`any`&gt;[]
+    \| `Schema`&lt;`any`&gt;
+    \| [`AddColumnsSql`](../interfaces/AddColumnsSql.md)[]
+    \| `object`
     Either:
     - An array of objects with column names and SQL expressions to calculate values
     - A single Arrow Field defining one column with its data type (column will be initialized with null values)
     - An array of Arrow Fields defining columns with their data types (columns will be initialized with null values)
     - An Arrow Schema defining columns with their data types (columns will be initialized with null values)
+    - `{ computed }`, declaring columns defined by a SQL expression whose type and inputs are derived from it
 
 #### Returns
 
@@ -84,6 +103,13 @@ Add new columns with defined values.
 
 A promise that resolves to an object
 containing the new version number of the table after adding the columns.
+
+#### Example
+
+```ts
+await table.addColumns({ computed: [{ name: "doubled", valueSql: "x * 2" }] });
+const { rowsFilled } = await table.refreshColumn("doubled");
+```
 
 ***
 
@@ -714,6 +740,65 @@ for await (const batch of table
 for await (const batch of table.query()) {
   console.log(batch);
 }
+```
+
+***
+
+### refreshColumn()
+
+```ts
+abstract refreshColumn(column): Promise<RefreshColumnResult>
+```
+
+Fill the rows of a computed column that hold no value yet.
+
+Rows appended since the last refresh are filled by the next one; rows
+already filled are left as they are, so the call is idempotent and does
+not observe a mutated input. Local tables only.
+
+#### Parameters
+
+* **column**: `string`
+    The name of the computed column to fill.
+
+#### Returns
+
+`Promise`&lt;[`RefreshColumnResult`](../interfaces/RefreshColumnResult.md)&gt;
+
+A promise that resolves to the
+number of rows filled and the new version number of the table.
+
+***
+
+### refreshColumnAsync()
+
+```ts
+abstract refreshColumnAsync(column): Promise<Job>
+```
+
+Like [Table#refreshColumn](Table.md#refreshcolumn), but returns a handle to the refresh
+job instead of blocking until it completes.
+
+The job may already be complete when returned; callers must not assume
+the column is filled until [Job.wait](Job.md#wait) resolves. Invalid input --
+an unknown column, or one that is not computed -- rejects here rather
+than failing the job. Local tables only.
+
+#### Parameters
+
+* **column**: `string`
+    The name of the computed column to fill.
+
+#### Returns
+
+`Promise`&lt;[`Job`](Job.md)&gt;
+
+#### Example
+
+```ts
+const job = await table.refreshColumnAsync("doubled");
+await job.wait();
+console.log(await job.status()); // "finished"
 ```
 
 ***

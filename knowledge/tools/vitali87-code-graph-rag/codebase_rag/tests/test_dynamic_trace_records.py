@@ -95,8 +95,9 @@ def test_empty_file_is_rejected(tmp_path):
     ],
 )
 def test_malformed_header_is_rejected(tmp_path, first_line):
+    trace_path = _write_raw(tmp_path, first_line)
     with pytest.raises(TraceFormatError):
-        read_trace_file(_write_raw(tmp_path, first_line))
+        read_trace_file(trace_path)
 
 
 def test_unsupported_version_is_rejected(tmp_path):
@@ -110,10 +111,9 @@ def test_unsupported_version_is_rejected(tmp_path):
 
 
 def test_non_string_header_field_is_rejected(tmp_path):
+    trace_path = _write_raw(tmp_path, _header_line(**{cs.TRACE_KEY_LANGUAGE: 7}))
     with pytest.raises(TraceFormatError):
-        read_trace_file(
-            _write_raw(tmp_path, _header_line(**{cs.TRACE_KEY_LANGUAGE: 7}))
-        )
+        read_trace_file(trace_path)
 
 
 @pytest.mark.parametrize("record_line", ["{broken", "42", json.dumps({"kind": "call"})])
@@ -133,3 +133,18 @@ def test_blank_lines_are_skipped(tmp_path):
     _header, records = read_trace_file(trace_path)
 
     assert list(records) == []
+
+
+def test_lua_language_tag_constant():
+    # The Lua tracer's subprocess tests skip without an interpreter, and a
+    # module-level constant only executes at import (before this test runs), so
+    # reload the module here to record the definition line under coverage.
+    import importlib
+
+    from codebase_rag.constants import trace as trace_constants
+
+    importlib.reload(trace_constants)
+    assert trace_constants.TRACE_LANGUAGE_LUA == "lua"
+    assert trace_constants.TRACE_LANGUAGE_GO == "go"
+    assert trace_constants.TRACE_LANGUAGE_DART == "dart"
+    assert trace_constants.TRACE_LANGUAGE_CPP == "cpp"

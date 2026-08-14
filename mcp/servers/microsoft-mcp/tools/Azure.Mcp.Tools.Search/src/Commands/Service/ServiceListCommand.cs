@@ -1,0 +1,54 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+using Azure.Mcp.Core.Commands.Subscription;
+using Azure.Mcp.Core.Services.Azure.Subscription;
+using Azure.Mcp.Tools.Search.Options.Service;
+using Azure.Mcp.Tools.Search.Services;
+using Microsoft.Extensions.Logging;
+using Microsoft.Mcp.Core.Commands;
+using Microsoft.Mcp.Core.Models.Command;
+
+namespace Azure.Mcp.Tools.Search.Commands.Service;
+
+[CommandMetadata(
+    Id = "b0684f8c-20de-4bc0-bbc3-982575c8441f",
+    Name = "list",
+    Title = "List Azure AI Search (formerly known as \"Azure Cognitive Search\") Services",
+    Description = "List/show Azure AI Search services in a subscription, returning details about each service.",
+    Destructive = false,
+    Idempotent = true,
+    OpenWorld = false,
+    ReadOnly = true,
+    Secret = false,
+    LocalRequired = false)]
+public sealed class ServiceListCommand(ILogger<ServiceListCommand> logger, ISearchService searchService, ISubscriptionResolver subscriptionResolver)
+    : SubscriptionCommand<ServiceListOptions, ServiceListCommand.ServiceListCommandResult>(subscriptionResolver)
+{
+    private readonly ILogger<ServiceListCommand> _logger = logger;
+    private readonly ISearchService _searchService = searchService;
+
+    public override async Task<CommandResponse> ExecuteAsync(CommandContext context, ServiceListOptions options, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var services = await _searchService.ListServices(
+                options.Subscription!,
+                options.ResourceGroup,
+                options.Tenant,
+                options.RetryPolicy,
+                cancellationToken);
+
+            context.Response.Results = ResponseResult.Create(new(services ?? []), SearchJsonContext.Default.ServiceListCommandResult);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error listing search services");
+            HandleException(context, ex);
+        }
+
+        return context.Response;
+    }
+
+    public sealed record ServiceListCommandResult(List<string> Services);
+}

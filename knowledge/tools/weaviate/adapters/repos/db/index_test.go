@@ -335,10 +335,10 @@ func TestIndex_ShardHasMultipleReplicasWrite_RoutesThroughReplicatorDuringMoveme
 			// test — proving the call short-circuited before consulting the router.
 
 			idx := &Index{
-				Config:               IndexConfig{ClassName: schema.ClassName(className), ReplicationFactor: tt.replicationF},
-				replicationFSMReader: fsm,
-				router:               mockRouter,
+				Config: IndexConfig{ClassName: schema.ClassName(className), ReplicationFactor: tt.replicationF},
+				router: mockRouter,
 			}
+			idx.SetReplicationFSMReader(fsm)
 
 			got := idx.shardHasMultipleReplicasWrite(tenant, shardName)
 			require.Equal(t, tt.want, got)
@@ -456,8 +456,8 @@ func TestPropertyWorkPinsShardAgainstTeardown(t *testing.T) {
 		{
 			name: "updateProperty",
 			expect: func(shard *MockShardLike, schedule func(*enterrors.ErrorGroupWrapper)) {
-				shard.EXPECT().updatePropertyBuckets(mock.Anything, mock.Anything, mock.Anything).
-					Run(func(_ context.Context, eg *enterrors.ErrorGroupWrapper, _ *models.Property) {
+				shard.EXPECT().updatePropertyBuckets(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+					Run(func(_ context.Context, eg *enterrors.ErrorGroupWrapper, _ *models.Property, _ *atomic.Int64) {
 						schedule(eg)
 					})
 			},

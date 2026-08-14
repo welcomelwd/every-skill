@@ -20,11 +20,51 @@ from .. import constants as cs
 from ..cypher_queries import CYPHER_TRACE_CALLABLES, CYPHER_TRACE_EXISTING_CALLS
 from ..services import IngestorProtocol, QueryProtocol
 from .records import read_trace_file
-from .resolution import CallableNode, FrameResolver, ResolutionStats
+from .resolution import (
+    CallableNode,
+    DotnetFrameResolver,
+    FrameResolver,
+    JsFrameResolver,
+    JvmFrameResolver,
+    PhpFrameResolver,
+    ResolutionStats,
+)
 
 if TYPE_CHECKING:
     from ..types_defs import PropertyValue, ResultRow
+    from .records import FramePoint, TraceHeader
     from .resolution import ResolvedFrame
+
+
+class FrameResolverProtocol(Protocol):
+    """Language-specific mapping of runtime frames to graph nodes."""
+
+    def resolve(
+        self, frame: FramePoint, stats: ResolutionStats
+    ) -> ResolvedFrame | None: ...
+
+
+def _resolver_for(
+    header: TraceHeader, repo_root: Path, nodes: list[CallableNode]
+) -> FrameResolverProtocol:
+    if header.language == cs.TRACE_LANGUAGE_JVM:
+        return JvmFrameResolver(nodes)
+    if header.language in (
+        cs.TRACE_LANGUAGE_JS,
+        cs.TRACE_LANGUAGE_LUA,
+        cs.TRACE_LANGUAGE_DART,
+        cs.TRACE_LANGUAGE_GO,
+        cs.TRACE_LANGUAGE_CPP,
+    ):
+        # Lua-agent and Dart-collector frames share V8's shape: repo paths,
+        # bare runtime names, 1-based definition lines, <module>/<anonymous>
+        # markers.
+        return JsFrameResolver(repo_root, nodes)
+    if header.language == cs.TRACE_LANGUAGE_DOTNET:
+        return DotnetFrameResolver(nodes)
+    if header.language == cs.TRACE_LANGUAGE_PHP:
+        return PhpFrameResolver(repo_root, nodes)
+    return FrameResolver(repo_root, nodes)
 
 
 class TraceGraphProtocol(IngestorProtocol, QueryProtocol, Protocol):
@@ -125,7 +165,7 @@ def ingest_trace(
 
     nodes = _load_callables(ingestor, project_prefix)
     existing = _load_existing_calls(ingestor, project_prefix)
-    resolver = FrameResolver(repo_root, nodes)
+    resolver = _resolver_for(header, repo_root, nodes)
 
     summary = TraceIngestSummary()
     resolved_frames: dict[tuple[ResolvedFrame, ResolvedFrame], _EdgeStats] = {}

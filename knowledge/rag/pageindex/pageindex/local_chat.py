@@ -206,7 +206,8 @@ def _require_openai_agents(method: str) -> None:
     except ImportError as exc:
         raise PageIndexAPIError(
             f"{method} in local mode requires the OpenAI Agents SDK — "
-            "pip install openai-agents (or pip install 'pageindex[openai]')."
+            "pip install openai-agents. "
+            "messages() runs on the anthropic extra instead."
         ) from exc
 
 
@@ -271,6 +272,29 @@ def _reported_model(model_name: str) -> str:
     return model_name.removeprefix("litellm/").removeprefix("openai/")
 
 
+def _cache_extra_args(model_name: str) -> Optional[dict]:
+    """Claude's prompt caching is opt-in per request: on Claude models
+    routed through LiteLLM (Anthropic direct, Bedrock, Vertex — each
+    channel live-verified), mark the managed system prefix via LiteLLM's
+    injection param so the loop's later turns and a conversation's next
+    calls read it instead of repaying full price. Provider resolution is
+    LiteLLM's own, so this predicate can never disagree with where the
+    request actually routes."""
+    if "/" not in model_name or model_name.startswith("openai/"):
+        return None
+    try:
+        from litellm import get_llm_provider
+        model, provider, _, _ = get_llm_provider(
+            model=model_name.removeprefix("litellm/"))
+    except Exception:
+        return None
+    if provider == "anthropic" or (provider in ("bedrock", "vertex_ai")
+                                   and "claude" in model.lower()):
+        return {"cache_control_injection_points": [
+            {"location": "message", "role": "system"}]}
+    return None
+
+
 def _openai_agent(client, protocol: str, model_name: str, instructions: str,
                   temperature, top_p, doc_ids=None):
     from agents import Agent, ModelSettings
@@ -280,7 +304,8 @@ def _openai_agent(client, protocol: str, model_name: str, instructions: str,
         instructions=instructions,
         tools=build_openai_tools(client, doc_ids=doc_ids),
         model=_openai_model(protocol, model_name),
-        model_settings=ModelSettings(temperature=temperature, top_p=top_p),
+        model_settings=ModelSettings(temperature=temperature, top_p=top_p,
+                                     extra_args=_cache_extra_args(model_name)),
     )
 
 
