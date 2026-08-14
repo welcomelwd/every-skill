@@ -1,5 +1,18 @@
 # @mcp-use/inspector
 
+## 20.2.3
+
+### Patch Changes
+
+- a7447ef: Surface protocol version selection in the connect form and connection settings, and make the configuration options easier to find.
+
+## 20.2.3-canary.0
+
+### Patch Changes
+
+- a8adb05: Surface protocol version selection in the connect form and connection settings, and make the configuration options easier to find.
+  - mcp-use@2.2.3-canary.0
+
 ## 20.2.2
 
 ## 20.2.2-canary.0

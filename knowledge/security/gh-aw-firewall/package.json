@@ -1,0 +1,104 @@
+{
+  "name": "@github/agentic-workflow-firewall",
+  "version": "0.23.1",
+  "description": "Network firewall for agentic workflows with domain whitelisting",
+  "main": "dist/cli.js",
+  "bin": {
+    "awf": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "type-check": "tsc --noEmit -p tsconfig.check.json",
+    "test": "jest",
+    "test:unit": "jest --config jest.config.js",
+    "test:integration": "jest --config tests/setup/jest.integration.config.js",
+    "test:all": "npm run test:unit && npm run test:integration",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "test:lint-rules": "node eslint-rules/no-unsafe-execa.test.js",
+    "lint": "eslint src",
+    "lint:md": "markdownlint-cli2 '**/*.md' '#node_modules' '#docs-site/node_modules' '#.specify' '#.claude'",
+    "clean": "rm -rf dist",
+    "prepare": "husky",
+    "docs:dev": "cd docs-site && npm run dev",
+    "docs:build": "cd docs-site && npm run build",
+    "docs:preview": "cd docs-site && npm run preview",
+    "benchmark": "npx tsx scripts/ci/benchmark-performance.ts",
+    "benchmark:trend": "npx tsx scripts/ci/benchmark-trend.ts",
+    "build:bundle": "npm run build && node scripts/build-bundle.mjs",
+    "generate:schema": "node scripts/generate-schema.mjs"
+  },
+  "keywords": [
+    "agentic-workflows",
+    "firewall",
+    "network-restrictions",
+    "ai-agents",
+    "coding-agents",
+    "security",
+    "domain-whitelisting",
+    "proxy",
+    "squid",
+    "agent",
+    "mcp",
+    "egress-control"
+  ],
+  "author": "GitHub",
+  "license": "MIT",
+  "dependencies": {
+    "ajv": "8.20.0",
+    "chalk": "^4.1.2",
+    "commander": "^12.1.0",
+    "execa": "^5.1.1",
+    "js-yaml": "^5.2.3"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.29.7",
+    "@babel/preset-env": "^7.29.7",
+    "@commitlint/cli": "^20.5.3",
+    "@commitlint/config-conventional": "^20.5.3",
+    "@eslint/compat": "^2.1.0",
+    "@eslint/js": "^10.0.1",
+    "@types/glob": "^9.0.0",
+    "@types/jest": "^30.0.0",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^25.9.5",
+    "@typescript-eslint/eslint-plugin": "^8.66.0",
+    "@typescript-eslint/parser": "^8.66.0",
+    "babel-jest": "^30.2.0",
+    "esbuild": "^0.28.1",
+    "eslint": "^10.8.0",
+    "eslint-plugin-security": "^3.0.1",
+    "glob": "^13.0.6",
+    "globals": "^17.9.0",
+    "husky": "^9.1.7",
+    "jest": "^30.4.2",
+    "markdownlint-cli2": "^0.23.2",
+    "ts-jest": "^29.4.12",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.66.0"
+  },
+  "overrides": {
+    "test-exclude": "^7.0.1",
+    "minimatch": ">=10.2.1",
+    "brace-expansion": ">=5.0.7",
+    "js-yaml": "$js-yaml"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "pkg": {
+    "scripts": "dist/**/*.js",
+    "assets": [
+      "node_modules/chalk/**/*",
+      "containers/agent/seccomp-profile.json",
+      "dist/awf-config-schema.json"
+    ],
+    "targets": [
+      "node18-linux-x64",
+      "node18-linux-arm64",
+      "node18-macos-x64",
+      "node18-macos-arm64"
+    ]
+  }
+}

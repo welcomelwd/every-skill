@@ -1,0 +1,181 @@
+/**
+ * SSL Bump utilities for HTTPS content inspection
+ *
+ * This module provides functionality to generate per-session CA certificates
+ * for Squid SSL Bump mode, which enables URL path filtering for HTTPS traffic.
+ *
+ * Security considerations:
+ * - CA key is stored in tmpfs (memory-only) when possible, never hitting disk
+ * - Keys are securely wiped (overwritten with random data) before deletion
+ * - Certificate is valid for 1 day only
+ * - Private key is never logged
+ * - CA is unique per session
+ */
+
+import * as fs from 'fs';
+import * as path from 'path';
+import execa from 'execa';
+import { logger } from './logger';
+import { chownRecursive, mountSslTmpfs } from './ssl-key-storage';
+
+// Re-export key-storage utilities so existing callers don't break
+export { unmountSslTmpfs, cleanupSslKeyMaterial } from './ssl-key-storage';
+
+/**
+ * Result of CA generation containing paths to certificate files
+ */
+export interface CaFiles {
+  /** Path to CA certificate (PEM format) */
+  certPath: string;
+  /** Path to CA private key (PEM format) */
+  keyPath: string;
+  /** DER format certificate for easy import */
+  derPath: string;
+}
+
+/**
+ * Generates a self-signed CA certificate for SSL Bump
+ *
+ * The CA certificate is used by Squid to generate per-host certificates
+ * on-the-fly, allowing it to inspect HTTPS traffic for URL filtering.
+ *
+ * @param config - SSL Bump configuration
+ * @returns Paths to generated CA files
+ * @throws Error if OpenSSL commands fail
+ */
+export async function generateSessionCa(config: { workDir: string; commonName?: string; validityDays?: number }): Promise<CaFiles> {
+  const { workDir, commonName = 'AWF Session CA', validityDays = 1 } = config;
+
+  // Create ssl directory in workDir, backed by tmpfs when possible
+  // Use recursive:true which is a no-op if the directory already exists (avoids TOCTOU)
+  const sslDir = path.join(workDir, 'ssl');
+  fs.mkdirSync(sslDir, { recursive: true, mode: 0o700 });
+
+  // Attempt to mount tmpfs so keys never touch disk
+  const usingTmpfs = await mountSslTmpfs(sslDir);
+  if (usingTmpfs) {
+    logger.info('SSL keys stored in memory-only filesystem (tmpfs)');
+  } else {
+    logger.debug('SSL keys stored on disk (tmpfs mount not available)');
+  }
+
+  const certPath = path.join(sslDir, 'ca-cert.pem');
+  const keyPath = path.join(sslDir, 'ca-key.pem');
+  const derPath = path.join(sslDir, 'ca-cert.der');
+
+  logger.debug(`Generating SSL Bump CA certificate in ${sslDir}`);
+
+  try {
+    // Generate RSA private key and self-signed certificate in one command
+    // Using -batch to avoid interactive prompts
+    // Security: commonName defaults to 'AWF Session CA' and is only configurable
+    // via SslBumpConfig interface (not direct user input). The value is used in
+    // the certificate subject which is not shell-interpreted by OpenSSL.
+    await execa('openssl', [
+      'req',
+      '-new',
+      '-newkey', 'rsa:2048',
+      '-days', validityDays.toString(),
+      '-nodes', // No password on private key
+      '-x509',
+      // eslint-disable-next-line local/no-unsafe-execa
+      '-subj', `/CN=${commonName}`,
+      '-keyout', keyPath,
+      '-out', certPath,
+      '-batch',
+    ]);
+
+    // Set restrictive permissions on private key
+    fs.chmodSync(keyPath, 0o600);
+    fs.chmodSync(certPath, 0o644);
+
+    logger.debug(`CA certificate generated: ${certPath}`);
+    logger.debug(`CA private key generated: ${keyPath}`);
+
+    // Generate DER format for easier import into trust stores
+    await execa('openssl', [
+      'x509',
+      '-in', certPath,
+      '-outform', 'DER',
+      '-out', derPath,
+    ]);
+
+    fs.chmodSync(derPath, 0o644);
+    logger.debug(`CA certificate (DER) generated: ${derPath}`);
+
+    return { certPath, keyPath, derPath };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to generate SSL Bump CA: ${message}`);
+  }
+}
+
+/**
+ * Initializes Squid's SSL certificate database
+ *
+ * Squid requires a certificate database to store dynamically generated
+ * certificates for SSL Bump mode. The database structure expected by Squid is:
+ * - ssl_db/certs/ - Directory for storing generated certificates
+ * - ssl_db/index.txt - Index file for certificate lookups
+ * - ssl_db/size - File tracking current database size
+ *
+ * NOTE: We create this structure on the host because security_file_certgen
+ * (Squid's DB initialization tool) requires the directory to NOT exist when
+ * it runs. Since Docker volume mounts create the directory, we need to
+ * pre-populate the structure ourselves.
+ *
+ * @param workDir - Working directory
+ * @returns Path to the SSL database directory
+ */
+export async function initSslDb(workDir: string): Promise<string> {
+  const sslDbPath = path.join(workDir, 'ssl_db');
+  const certsPath = path.join(sslDbPath, 'certs');
+  const indexPath = path.join(sslDbPath, 'index.txt');
+  const sizePath = path.join(sslDbPath, 'size');
+
+  // Create the database structure (recursive:true is a no-op if dir exists, avoids TOCTOU)
+  fs.mkdirSync(sslDbPath, { recursive: true, mode: 0o700 });
+
+  // Create certs subdirectory
+  fs.mkdirSync(certsPath, { recursive: true, mode: 0o700 });
+
+  // Create index.txt atomically — 'wx' flag (O_WRONLY|O_CREAT|O_EXCL) fails if file exists
+  try {
+    fs.writeFileSync(indexPath, '', { mode: 0o600, flag: 'wx' });
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+  }
+
+  // Create size file atomically
+  try {
+    fs.writeFileSync(sizePath, '0\n', { mode: 0o600, flag: 'wx' });
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+  }
+
+  // Chown to proxy user (uid=13, gid=13) so the non-root Squid container can access it
+  // Gracefully skip if not running as root (e.g., in unit tests)
+  try {
+    chownRecursive(sslDbPath, 13, 13);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== 'EPERM') throw err;
+    logger.debug('Skipping SSL db chown (not running as root)');
+  }
+
+  logger.debug(`SSL certificate database initialized at: ${sslDbPath}`);
+  return sslDbPath;
+}
+
+/**
+ * Validates that OpenSSL is available
+ *
+ * @returns true if OpenSSL is available, false otherwise
+ */
+export async function isOpenSslAvailable(): Promise<boolean> {
+  try {
+    await execa('openssl', ['version']);
+    return true;
+  } catch {
+    return false;
+  }
+}

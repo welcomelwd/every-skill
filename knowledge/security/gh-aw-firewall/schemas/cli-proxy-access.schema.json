@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/github/gh-aw-firewall/main/schemas/cli-proxy-access.schema.json",
+  "title": "AWF CLI Proxy Access Log Record",
+  "description": "A single CLI proxy access record emitted to access.jsonl by the AWF cli-proxy sidecar.",
+  "type": "object",
+  "required": ["_schema", "timestamp", "event"],
+  "additionalProperties": true,
+  "properties": {
+    "_schema": {
+      "type": "string",
+      "pattern": "^cli-proxy-access/v\\d+\\.\\d+\\.\\d+(-\\w+)?$",
+      "description": "Schema identifier and version for this record (e.g. \"cli-proxy-access/v0.26.0\"). Dev builds use \"cli-proxy-access/v0.0.0-dev\"."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "description": "ISO 8601 UTC timestamp with millisecond precision."
+    },
+    "event": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:_[a-z0-9]+)*$",
+      "description": "Stable snake_case event discriminator (e.g. exec_start, exec_done)."
+    }
+  }
+}

@@ -1,0 +1,93 @@
+name: Dependency Vulnerability Audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - '.github/workflows/release.yml'
+  schedule:
+    # Run weekly on Mondays at 00:00 UTC
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  audit-main:
+    name: Audit Main Package
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run npm audit (JSON output for SARIF)
+        run: npm audit --json > npm-audit-main.json || true
+
+      - name: Convert npm audit to SARIF
+        if: always()
+        run: npx tsx scripts/ci/npm-audit-to-sarif.ts npm-audit-main.json npm-audit-main.sarif
+
+      - name: Upload npm audit SARIF to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@f68537f3d8a6955880f700730943f8a754454193 # v4
+        with:
+          sarif_file: npm-audit-main.sarif
+          category: npm-audit-main
+
+      - name: Run npm audit (fail on high/critical)
+        run: npm audit --audit-level=high
+
+  audit-docs:
+    name: Audit Docs Site Package
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: docs-site/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: docs-site
+
+      - name: Run npm audit (JSON output for SARIF)
+        run: npm audit --json > npm-audit-docs.json || true
+        working-directory: docs-site
+
+      - name: Convert npm audit to SARIF
+        if: always()
+        run: npx tsx scripts/ci/npm-audit-to-sarif.ts docs-site/npm-audit-docs.json npm-audit-docs.sarif
+
+      - name: Upload npm audit SARIF to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@f68537f3d8a6955880f700730943f8a754454193 # v4
+        with:
+          sarif_file: npm-audit-docs.sarif
+          category: npm-audit-docs
+
+      - name: Run npm audit (fail on high/critical)
+        run: npm audit --audit-level=high
+        working-directory: docs-site

@@ -1,0 +1,321 @@
+/**
+ * Shared proxy utilities — pure functions with no provider-specific logic.
+ * Used by both server.js (core) and provider adapters.
+ *
+ * Note: the provider adapter factory functions (createBaseAdapterConfig,
+ * createAdapterMethods) live in adapter-factory.js.
+ */
+
+'use strict';
+
+const { URL } = require('url');
+
+/**
+ * Normalizes an API target value to a bare hostname.
+ * Accepts either a hostname or a full URL and extracts only the hostname,
+ * discarding any scheme, path, query, fragment, credentials, or port.
+ * Path configuration must be provided separately via the existing
+ * *_API_BASE_PATH environment variables.
+ *
+ * @param {string|undefined} value - Raw env var value
+ * @returns {string|undefined} Bare hostname, the original falsy value if input is falsy (e.g. '' stays ''), or undefined if parsing fails
+ */
+function normalizeApiTarget(value) {
+  if (!value) return value;
+
+  const parsed = parseApiTargetUrl(value);
+  if (parsed.kind === 'empty') return undefined;
+  if (parsed.kind === 'invalid') {
+    console.warn(`Invalid API target ${parsed.safe}; expected a hostname (e.g. 'api.example.com') or URL`);
+    return undefined;
+  }
+
+  if (parsed.kind === 'ok') {
+    if (parsed.pathname !== '/' || parsed.search || parsed.hash || parsed.username || parsed.password || parsed.port) {
+      console.warn(
+        `Ignoring unsupported API target URL components in ${parsed.safe}; ` +
+        'configure path prefixes via the corresponding *_API_BASE_PATH environment variable.'
+      );
+    }
+
+    return parsed.hostname || undefined;
+  }
+
+  return undefined;
+}
+
+/**
+ * Parse a target URL/hostname into hostname + normalized pathname.
+ * Intended for BYOK-style base URLs where path components are expected and valid.
+ *
+ * @param {string|undefined} value - Raw env var value
+ * @returns {{ target: string|undefined, basePath: string }} Parsed hostname and normalized base path
+ */
+function parseApiTargetAndBasePath(value) {
+  if (!value) return { target: undefined, basePath: '' };
+
+  const parsed = parseApiTargetUrl(value);
+  if (parsed.kind !== 'ok') return { target: undefined, basePath: '' };
+
+  return {
+    target: parsed.hostname || undefined,
+    basePath: normalizeBasePath(parsed.pathname),
+  };
+}
+
+function parseApiTargetUrl(value) {
+  const trimmed = value.trim();
+  if (!trimmed) return { kind: 'empty' };
+
+  const candidate = /^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`;
+  const safe = trimmed.replace(/[\x00-\x1f\x7f]/g, '?');
+
+  try {
+    const parsed = new URL(candidate);
+    return {
+      kind: 'ok',
+      safe,
+      hostname: parsed.hostname,
+      pathname: parsed.pathname,
+      search: parsed.search,
+      hash: parsed.hash,
+      username: parsed.username,
+      password: parsed.password,
+      port: parsed.port,
+    };
+  } catch {
+    return { kind: 'invalid', safe };
+  }
+}
+
+/**
+ * Normalizes a base path for use as a URL path prefix.
+ * Ensures the path starts with '/' (if non-empty) and has no trailing '/'.
+ * Returns '' for empty, null, or undefined inputs.
+ *
+ * @param {string|undefined|null} rawPath - The raw path value from env or config
+ * @returns {string} Normalized path prefix (e.g. '/serving-endpoints') or ''
+ */
+function normalizeBasePath(rawPath) {
+  if (!rawPath) return '';
+  let p = rawPath.trim();
+  if (!p) return '';
+  if (!p.startsWith('/')) {
+    p = '/' + p;
+  }
+  if (p !== '/' && p.endsWith('/')) {
+    p = p.slice(0, -1);
+  }
+  return p;
+}
+
+/**
+ * Build the full upstream path by joining basePath, reqUrl's pathname, and query string.
+ * Applies provider-safe defaults and avoids duplicate prefixing when the incoming
+ * path already includes the configured base path.
+ *
+ * Examples:
+ *   buildUpstreamPath('/v1/chat/completions', 'api.openai.com', '/v1')
+ *     → '/v1/chat/completions'  (no double-prefix)
+ *   buildUpstreamPath('/chat/completions', 'api.openai.com', '/v1')
+ *     → '/v1/chat/completions'
+ *   buildUpstreamPath('/v1/messages?stream=true', 'host.com', '/anthropic')
+ *     → '/anthropic/v1/messages?stream=true'
+ *
+ * @param {string} reqUrl - The incoming request URL (must start with '/' and not '//')
+ * @param {string} targetHost - The upstream hostname (used only to parse the URL)
+ * @param {string} basePath - Normalized base path prefix (e.g. '/v1' or '')
+ * @returns {string} Full upstream path including query string
+ */
+function buildUpstreamPath(reqUrl, targetHost, basePath) {
+  if (typeof reqUrl !== 'string' || !reqUrl.startsWith('/') || reqUrl.startsWith('//')) {
+    throw new Error('URL must be a relative origin-form path');
+  }
+
+  const targetUrl = new URL(reqUrl, `https://${targetHost}`);
+  const pathname = targetUrl.pathname;
+  const prefix = basePath === '/' ? '' : basePath;
+
+  if (prefix && (pathname === prefix || pathname.startsWith(`${prefix}/`))) {
+    return pathname + targetUrl.search;
+  }
+
+  return prefix + pathname + targetUrl.search;
+}
+
+/**
+ * Strip all known Gemini API-key query parameters from a request URL.
+ *
+ * The @google/genai SDK (and older Gemini SDK versions) may append auth params
+ * (`?key=`, `?apiKey=`, or `?api_key=`) to every request URL in addition to
+ * setting the `x-goog-api-key` header.  The proxy injects the real key via the
+ * header, so any placeholder param must be removed before forwarding to Google
+ * to prevent API_KEY_INVALID errors.
+ *
+ * @param {string} reqUrl - The incoming request URL (must start with exactly one '/')
+ * @returns {string} URL with all Gemini auth query parameters removed
+ */
+function stripGeminiKeyParam(reqUrl) {
+  if (typeof reqUrl !== 'string' || !reqUrl.startsWith('/') || reqUrl.startsWith('//')) {
+    return reqUrl;
+  }
+  const parsed = new URL(reqUrl, 'http://localhost');
+  parsed.searchParams.delete('key');
+  parsed.searchParams.delete('apiKey');
+  parsed.searchParams.delete('api_key');
+  return parsed.pathname + parsed.search;
+}
+
+/**
+ * Headers that must never be forwarded from the client.
+ * The proxy controls authentication — client-supplied auth/proxy headers are stripped.
+ */
+const STRIPPED_HEADERS = new Set([
+  'host',
+  'authorization',
+  'proxy-authorization',
+  'x-api-key',
+  'x-goog-api-key',
+  'forwarded',
+  'via',
+]);
+
+/** Returns true if the header name should be stripped (case-insensitive). */
+function shouldStripHeader(name) {
+  const lower = name.toLowerCase();
+  return STRIPPED_HEADERS.has(lower) || lower.startsWith('x-forwarded-');
+}
+
+/**
+ * Compose two body-transform functions into a single transform.
+ * Each transform accepts a Buffer and returns a Buffer (modified) or null (no change).
+ *
+ * Chain semantics:
+ *   - If first returns null (no change), pass the original buffer to second.
+ *   - If second returns null, return whatever first returned.
+ *   - If both return null, return null.
+ *
+ * @param {((body: Buffer) => (Buffer | null | Promise<Buffer | null>)) | null} first
+ * @param {((body: Buffer) => (Buffer | null | Promise<Buffer | null>)) | null} second
+ * @returns {((body: Buffer) => (Buffer | null | Promise<Buffer | null>)) | null}
+ */
+function composeBodyTransforms(first, second) {
+  if (!first && !second) return null;
+  if (!first) return second;
+  if (!second) return first;
+  const isPromise = (v) => v && typeof v.then === 'function';
+  return (body) => {
+    const a = first(body);
+    if (isPromise(a)) {
+      return Promise.resolve(a).then((aResolved) => {
+        const b = second(aResolved !== null ? aResolved : body);
+        if (isPromise(b)) {
+          return Promise.resolve(b).then((bResolved) => {
+            if (bResolved !== null) return bResolved;
+            if (aResolved !== null) return aResolved;
+            return null;
+          });
+        }
+        if (b !== null) return b;
+        if (aResolved !== null) return aResolved;
+        return null;
+      });
+    }
+
+    const b = second(a !== null ? a : body);
+    if (isPromise(b)) {
+      return Promise.resolve(b).then((bResolved) => {
+        if (bResolved !== null) return bResolved;
+        if (a !== null) return a;
+        return null;
+      });
+    }
+    if (b !== null) return b;
+    if (a !== null) return a;
+    return null;
+  };
+}
+
+/**
+ * Build a standard provider-not-configured proxy response payload.
+ *
+ * Missing credentials are a **terminal** run-level misconfiguration: the slot
+ * cannot become configured mid-run, so every retry is guaranteed to fail again.
+ * A 503 invites LLM SDK clients to retry with backoff, which has produced
+ * multi-minute non-terminating retry loops. Such responses therefore use HTTP
+ * `403` and carry `retryable: false` so clients fast-fail. Genuinely transient
+ * states (e.g. an OIDC token that is not minted yet) pass `retryable: true` and
+ * keep the retry-friendly `503`.
+ *
+ * @param {string} provider
+ * @param {number} port
+ * @param {string} message
+ * @param {{ retryable?: boolean }} [opts]
+ * @returns {{ statusCode: number, body: { error: { message: string, type: string, provider: string, port: number, retryable: boolean } } }}
+ */
+function makeProviderNotConfiguredResponse(provider, port, message, opts = {}) {
+  const retryable = opts.retryable === true;
+  return {
+    statusCode: retryable ? 503 : 403,
+    body: {
+      error: {
+        message,
+        type: 'provider_not_configured',
+        provider,
+        port,
+        retryable,
+      },
+    },
+  };
+}
+
+/**
+ * Build the standard health-endpoint response for an unconfigured provider.
+ * @param {string} service - Service identifier (e.g. 'awf-api-proxy-anthropic')
+ * @param {string} error - Human-readable error message
+ * @param {string} [status='not_configured'] - Status string ('not_configured' or 'unavailable')
+ */
+function makeUnconfiguredHealthResponse(service, error, status = 'not_configured') {
+  return { statusCode: 503, body: { status, service, error } };
+}
+
+/**
+ * Encodings that the token tracker can decompress for response inspection.
+ * If the upstream responds with an encoding not in this set, the tracker
+ * receives raw compressed bytes and fails to extract usage data.
+ */
+const SUPPORTED_ENCODINGS = new Set(['gzip', 'deflate', 'br', 'identity']);
+
+/**
+ * Sanitize Accept-Encoding to only include encodings the token tracker can
+ * decompress. This prevents upstream APIs from responding with unsupported
+ * encodings (e.g. zstd) that the tracker cannot parse.
+ *
+ * @param {string|undefined} value - Original Accept-Encoding header value
+ * @returns {string} Filtered Accept-Encoding value
+ */
+function sanitizeAcceptEncoding(value) {
+  if (!value) return 'gzip, deflate, br';
+  const parts = value.split(',').map(p => p.trim()).filter(Boolean);
+  const supported = parts.filter(p => {
+    // Extract encoding name (strip quality value like ";q=0.5")
+    const encoding = p.split(';')[0].trim().toLowerCase();
+    return SUPPORTED_ENCODINGS.has(encoding);
+  });
+  return supported.length > 0 ? supported.join(', ') : 'identity';
+}
+
+module.exports = {
+  normalizeApiTarget,
+  parseApiTargetAndBasePath,
+  normalizeBasePath,
+  buildUpstreamPath,
+  stripGeminiKeyParam,
+  shouldStripHeader,
+  composeBodyTransforms,
+  makeProviderNotConfiguredResponse,
+  makeUnconfiguredHealthResponse,
+  sanitizeAcceptEncoding,
+};

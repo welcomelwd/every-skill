@@ -1,0 +1,576 @@
+'use strict';
+
+const { buildProviderAdapter } = require('./adapter-factory');
+
+describe('buildProviderAdapter', () => {
+  function makeAdapterMethods(overrides = {}) {
+    return {
+      getTargetHost() { return 'api.example.com'; },
+      getBasePath() { return ''; },
+      participatesInValidation: true,
+      getValidationProbe() { return null; },
+      getModelsFetchConfig() { return null; },
+      getReflectionInfo() { return { provider: 'test', port: 10099 }; },
+      ...overrides,
+    };
+  }
+
+  describe('required fields', () => {
+    it('sets name, port, isManagementPort, alwaysBind from opts', () => {
+      const adapter = buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        isManagementPort: true,
+        alwaysBind: false,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+        isEnabled() { return true; },
+      });
+      expect(adapter.name).toBe('test');
+      expect(adapter.port).toBe(10099);
+      expect(adapter.isManagementPort).toBe(true);
+      expect(adapter.alwaysBind).toBe(false);
+    });
+
+    it('defaults isManagementPort to false and alwaysBind to true', () => {
+      const adapter = buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+        isEnabled() { return true; },
+      });
+      expect(adapter.isManagementPort).toBe(false);
+      expect(adapter.alwaysBind).toBe(true);
+    });
+
+    it('includes getAuthHeaders from opts', () => {
+      const getAuthHeaders = () => ({ 'x-test-key': 'val' });
+      const adapter = buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders,
+        isEnabled() { return true; },
+      });
+      expect(adapter.getAuthHeaders).toBe(getAuthHeaders);
+      expect(adapter.getAuthHeaders()).toEqual({ 'x-test-key': 'val' });
+    });
+
+    it('spreads all adapterMethods into the returned object', () => {
+      const adapterMethods = makeAdapterMethods({ participatesInValidation: false });
+      const adapter = buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods,
+        getAuthHeaders() { return {}; },
+        isEnabled() { return true; },
+      });
+      expect(adapter.getTargetHost).toBe(adapterMethods.getTargetHost);
+      expect(adapter.getBasePath).toBe(adapterMethods.getBasePath);
+      expect(adapter.participatesInValidation).toBe(false);
+      expect(adapter.getValidationProbe).toBe(adapterMethods.getValidationProbe);
+      expect(adapter.getModelsFetchConfig).toBe(adapterMethods.getModelsFetchConfig);
+      expect(adapter.getReflectionInfo).toBe(adapterMethods.getReflectionInfo);
+    });
+  });
+
+  describe('getBodyTransform', () => {
+    it('wraps bodyTransform in getBodyTransform()', () => {
+      const transform = (body) => body;
+      const adapter = buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+        isEnabled() { return true; },
+        bodyTransform: transform,
+      });
+      expect(adapter.getBodyTransform()).toBe(transform);
+    });
+
+    it('defaults bodyTransform to null', () => {
+      const adapter = buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+        isEnabled() { return true; },
+      });
+      expect(adapter.getBodyTransform()).toBeNull();
+    });
+  });
+
+  describe('optional methods', () => {
+    it('throws when isEnabled is not provided', () => {
+      expect(() => buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+      })).toThrow('must define an isEnabled() function');
+    });
+
+    it('includes isEnabled when provided', () => {
+      const isEnabled = () => true;
+      const adapter = buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+        isEnabled,
+      });
+      expect(adapter.isEnabled).toBe(isEnabled);
+      expect(adapter.isEnabled()).toBe(true);
+    });
+
+    it('accepts isEnabled provided via extra', () => {
+      const adapter = buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+        extra: {
+          isEnabled() { return true; },
+        },
+      });
+      expect(adapter.isEnabled()).toBe(true);
+    });
+
+    it('omits transformRequestUrl when not provided', () => {
+      const adapter = buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+        isEnabled() { return true; },
+      });
+      expect('transformRequestUrl' in adapter).toBe(false);
+    });
+
+    it('includes transformRequestUrl when provided', () => {
+      const transformRequestUrl = (url) => url + '?transformed=1';
+      const adapter = buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+        isEnabled() { return true; },
+        transformRequestUrl,
+      });
+      expect(adapter.transformRequestUrl).toBe(transformRequestUrl);
+    });
+
+    it('omits getUnconfiguredResponse when not provided', () => {
+      const adapter = buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+        isEnabled() { return true; },
+      });
+      expect('getUnconfiguredResponse' in adapter).toBe(false);
+    });
+
+    it('includes getUnconfiguredResponse when provided', () => {
+      const getUnconfiguredResponse = () => ({ statusCode: 503, body: { error: 'not configured' } });
+      const adapter = buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+        isEnabled() { return true; },
+        getUnconfiguredResponse,
+      });
+      expect(adapter.getUnconfiguredResponse).toBe(getUnconfiguredResponse);
+    });
+
+    it('auto-generates getUnconfiguredResponse from missingCredentialResponse metadata', () => {
+      const adapter = buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+        isEnabled() { return false; },
+        missingCredentialResponse: {
+          kind: 'provider_not_configured',
+          message: 'TEST_API_KEY not configured',
+        },
+      });
+
+      expect(adapter.getUnconfiguredResponse()).toEqual({
+        statusCode: 403,
+        body: {
+          error: {
+            message: 'TEST_API_KEY not configured',
+            type: 'provider_not_configured',
+            provider: 'test',
+            port: 10099,
+            retryable: false,
+          },
+        },
+      });
+    });
+
+    it('auto-generated getUnconfiguredResponse uses unconfiguredResponseWhen override when present', () => {
+      const adapter = buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+        isEnabled() { return false; },
+        missingCredentialResponse: {
+          kind: 'provider_not_configured',
+          message: 'TEST_API_KEY not configured',
+        },
+        unconfiguredResponseWhen: () => ({
+          kind: 'plain_error',
+          statusCode: 503,
+          message: 'OIDC token unavailable; retry shortly',
+        }),
+      });
+
+      expect(adapter.getUnconfiguredResponse()).toEqual({
+        statusCode: 503,
+        body: { error: 'OIDC token unavailable; retry shortly' },
+      });
+    });
+
+    it('throws when declarative request metadata is partially specified', () => {
+      expect(() => buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+        isEnabled() { return false; },
+        unconfiguredResponseWhen: () => ({
+          kind: 'plain_error',
+          statusCode: 503,
+          message: 'OIDC token unavailable; retry shortly',
+        }),
+      })).toThrow('declarative request metadata requires missingCredentialResponse');
+    });
+
+    it('omits getUnconfiguredHealthResponse when not provided', () => {
+      const adapter = buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+        isEnabled() { return true; },
+      });
+      expect('getUnconfiguredHealthResponse' in adapter).toBe(false);
+    });
+
+    it('includes getUnconfiguredHealthResponse when provided', () => {
+      const getUnconfiguredHealthResponse = () => ({ statusCode: 503, body: { status: 'down' } });
+      const adapter = buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+        isEnabled() { return true; },
+        getUnconfiguredHealthResponse,
+      });
+      expect(adapter.getUnconfiguredHealthResponse).toBe(getUnconfiguredHealthResponse);
+    });
+
+    it('auto-generates getUnconfiguredHealthResponse from healthServiceName and missingCredentialMessage', () => {
+      const adapter = buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+        isEnabled() { return false; },
+        healthServiceName: 'awf-api-proxy-test',
+        missingCredentialMessage: 'TEST_API_KEY not configured in api-proxy sidecar',
+      });
+      expect(typeof adapter.getUnconfiguredHealthResponse).toBe('function');
+      const response = adapter.getUnconfiguredHealthResponse();
+      expect(response.statusCode).toBe(503);
+      expect(response.body.status).toBe('not_configured');
+      expect(response.body.service).toBe('awf-api-proxy-test');
+      expect(response.body.error).toBe('TEST_API_KEY not configured in api-proxy sidecar');
+    });
+
+    it('throws when declarative health metadata is partially specified', () => {
+      expect(() => buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+        isEnabled() { return false; },
+        healthServiceName: 'awf-api-proxy-test',
+      })).toThrow('declarative health metadata requires both healthServiceName and missingCredentialMessage');
+
+      expect(() => buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+        isEnabled() { return false; },
+        missingCredentialMessage: 'TEST_API_KEY not configured in api-proxy sidecar',
+      })).toThrow('declarative health metadata requires both healthServiceName and missingCredentialMessage');
+
+      expect(() => buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+        isEnabled() { return false; },
+        unavailableWhen: () => ({ message: 'OIDC token unavailable' }),
+      })).toThrow('declarative health metadata requires both healthServiceName and missingCredentialMessage');
+    });
+
+    it('auto-generated getUnconfiguredHealthResponse uses unavailableWhen override when it returns truthy', () => {
+      const adapter = buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+        isEnabled() { return false; },
+        healthServiceName: 'awf-api-proxy-test',
+        missingCredentialMessage: 'TEST_API_KEY not configured in api-proxy sidecar',
+        unavailableWhen: () => ({ message: 'OIDC token unavailable', status: 'unavailable' }),
+      });
+      const response = adapter.getUnconfiguredHealthResponse();
+      expect(response.statusCode).toBe(503);
+      expect(response.body.status).toBe('unavailable');
+      expect(response.body.service).toBe('awf-api-proxy-test');
+      expect(response.body.error).toBe('OIDC token unavailable');
+    });
+
+    it('auto-generated getUnconfiguredHealthResponse falls back to missingCredentialMessage when unavailableWhen returns null', () => {
+      const adapter = buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+        isEnabled() { return false; },
+        healthServiceName: 'awf-api-proxy-test',
+        missingCredentialMessage: 'TEST_API_KEY not configured in api-proxy sidecar',
+        unavailableWhen: () => null,
+      });
+      const response = adapter.getUnconfiguredHealthResponse();
+      expect(response.body.status).toBe('not_configured');
+      expect(response.body.error).toBe('TEST_API_KEY not configured in api-proxy sidecar');
+    });
+
+    it('explicit getUnconfiguredHealthResponse takes precedence over declarative metadata', () => {
+      const explicitFn = () => ({ statusCode: 503, body: { status: 'custom' } });
+      const adapter = buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+        isEnabled() { return false; },
+        getUnconfiguredHealthResponse: explicitFn,
+        healthServiceName: 'awf-api-proxy-test',
+        missingCredentialMessage: 'TEST_API_KEY not configured',
+      });
+      expect(adapter.getUnconfiguredHealthResponse).toBe(explicitFn);
+    });
+  });
+
+  describe('extra fields', () => {
+    it('spreads extra fields into the returned object after adapterMethods', () => {
+      const adapter = buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods({ participatesInValidation: false }),
+        getAuthHeaders() { return {}; },
+        isEnabled() { return true; },
+        extra: {
+          participatesInValidation: true,  // override from adapterMethods
+          _customField: 'hello',
+          getOidcProvider() { return null; },
+        },
+      });
+      expect(adapter.participatesInValidation).toBe(true);
+      expect(adapter._customField).toBe('hello');
+      expect(adapter.getOidcProvider()).toBeNull();
+    });
+
+    it('defaults extra to empty object when not provided', () => {
+      expect(() => buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods: makeAdapterMethods(),
+        getAuthHeaders() { return {}; },
+        isEnabled() { return true; },
+      })).not.toThrow();
+    });
+  });
+
+  describe('integration with createAdapterMethods', () => {
+    it('correctly wires up a complete minimal adapter', () => {
+      const { createBaseAdapterConfig, createAdapterMethods } = require('./adapter-factory');
+      const env = { MY_API_KEY: 'test-key' };
+      const { apiKey, rawTarget, basePath } = createBaseAdapterConfig(env, {
+        keyEnvVar: 'MY_API_KEY',
+        targetEnvVar: 'MY_API_TARGET',
+        basePathEnvVar: 'MY_API_BASE_PATH',
+        defaultTarget: 'api.example.com',
+      });
+      const adapterMethods = createAdapterMethods({
+        apiKey,
+        rawTarget,
+        basePath,
+        provider: 'test',
+        port: 10099,
+        modelsPath: '/v1/models',
+        validationPath: '/v1/models',
+        validationHeaders: () => ({ 'Authorization': '******' }),
+      });
+
+      const adapter = buildProviderAdapter({
+        name: 'test',
+        port: 10099,
+        adapterMethods,
+        getAuthHeaders() { return { 'Authorization': '******' }; },
+        isEnabled() { return !!apiKey; },
+        getUnconfiguredResponse() {
+          return { statusCode: 503, body: { error: 'not configured' } };
+        },
+      });
+
+      expect(adapter.name).toBe('test');
+      expect(adapter.port).toBe(10099);
+      expect(adapter.isManagementPort).toBe(false);
+      expect(adapter.alwaysBind).toBe(true);
+      expect(adapter.isEnabled()).toBe(true);
+      expect(adapter.getAuthHeaders()).toEqual({ 'Authorization': '******' });
+      expect(adapter.getBodyTransform()).toBeNull();
+      expect(adapter.getTargetHost()).toBe('api.example.com');
+      expect(adapter.getBasePath()).toBe('');
+      expect(adapter.getUnconfiguredResponse()).toEqual({ statusCode: 503, body: { error: 'not configured' } });
+    });
+  });
+});
+
+describe('createProviderAuthScaffold', () => {
+  const { createProviderAuthScaffold } = require('./adapter-factory');
+  const envVars = {
+    keyEnvVar: 'MY_API_KEY',
+    targetEnvVar: 'MY_API_TARGET',
+    basePathEnvVar: 'MY_API_BASE_PATH',
+    defaultTarget: 'api.example.com',
+  };
+
+  it('reads apiKey, rawTarget, basePath from env using the given env-var names', () => {
+    const env = { MY_API_KEY: 'secret-key', MY_API_TARGET: 'custom.example.com', MY_API_BASE_PATH: '/v2' };
+    const result = createProviderAuthScaffold(env, {}, envVars);
+    expect(result.apiKey).toBe('secret-key');
+    expect(result.rawTarget).toBe('custom.example.com');
+    expect(result.basePath).toBe('/v2');
+  });
+
+  it('returns undefined apiKey when the key env var is absent', () => {
+    const result = createProviderAuthScaffold({}, {}, envVars);
+    expect(result.apiKey).toBeUndefined();
+  });
+
+  it('falls back to defaultTarget when the target env var is absent', () => {
+    const result = createProviderAuthScaffold({}, {}, envVars);
+    expect(result.rawTarget).toBe('api.example.com');
+  });
+
+  it('returns the deps bodyTransform when provided', () => {
+    const transform = (body) => body;
+    const result = createProviderAuthScaffold({}, { bodyTransform: transform }, envVars);
+    expect(result.bodyTransform).toBe(transform);
+  });
+
+  it('returns null bodyTransform when deps is empty', () => {
+    const result = createProviderAuthScaffold({}, {}, envVars);
+    expect(result.bodyTransform).toBeNull();
+  });
+
+  it('returns null bodyTransform when deps.bodyTransform is null', () => {
+    const result = createProviderAuthScaffold({}, { bodyTransform: null }, envVars);
+    expect(result.bodyTransform).toBeNull();
+  });
+
+  it('returns null bodyTransform when deps is omitted', () => {
+    const result = createProviderAuthScaffold({}, undefined, envVars);
+    expect(result.bodyTransform).toBeNull();
+  });
+
+  it('trims whitespace from apiKey and treats blank string as undefined', () => {
+    const result = createProviderAuthScaffold({ MY_API_KEY: '   ' }, {}, envVars);
+    expect(result.apiKey).toBeUndefined();
+  });
+
+  it('strips https:// protocol prefix from rawTarget', () => {
+    const result = createProviderAuthScaffold({ MY_API_TARGET: 'https://custom.example.com' }, {}, envVars);
+    expect(result.rawTarget).toBe('custom.example.com');
+  });
+});
+
+describe('createOidcAwareProviderAdapter', () => {
+  const { createOidcAwareProviderAdapter } = require('./adapter-factory');
+
+  it('wires static auth headers and runtime methods into a provider adapter', () => {
+    const adapter = createOidcAwareProviderAdapter({
+      env: {},
+      oidcAuthOptions: { staticAuthToken: 'static-key' },
+      buildOidcHeaders: (token) => ({ Authorization: ['Bearer', token].join(' ') }),
+      buildStaticHeaders: () => ({ 'x-api-key': 'static-key' }),
+      createAdapterMethodsOptions: ({ validationSkip, skipModelsFetch }) => ({
+        apiKey: 'static-key',
+        rawTarget: 'api.example.com',
+        basePath: '',
+        provider: 'test',
+        port: 10099,
+        modelsPath: '/v1/models',
+        validationPath: '/v1/models',
+        validationHeaders: () => ({ 'x-api-key': 'static-key' }),
+        validationSkip,
+        skipModelsFetch,
+      }),
+      buildAdapterOptions: {
+        name: 'test',
+        port: 10099,
+        isManagementPort: false,
+      },
+    });
+
+    expect(adapter.isEnabled()).toBe(true);
+    expect(adapter.getAuthHeaders()).toEqual({ 'x-api-key': 'static-key' });
+    expect(adapter.getTargetHost()).toBe('api.example.com');
+  });
+
+  it('uses custom getAuthHeaders and exposes OIDC runtime methods when configured', () => {
+    const adapter = createOidcAwareProviderAdapter({
+      env: {},
+      oidcAuthOptions: {
+        oidcProviderFactory: () => ({ isReady: () => true, getToken: () => 'oidc-token' }),
+      },
+      buildOidcHeaders: (token) => ({ Authorization: ['Bearer', token].join(' ') }),
+      buildStaticHeaders: () => ({ 'x-api-key': 'static-key' }),
+      createAdapterMethodsOptions: ({ oidcConfigured }) => ({
+        apiKey: undefined,
+        rawTarget: 'api.example.com',
+        basePath: '',
+        provider: 'test',
+        port: 10099,
+        modelsPath: '/v1/models',
+        reflectionConfigured: oidcConfigured,
+      }),
+      buildAdapterOptions: {
+        name: 'test',
+        port: 10099,
+        isManagementPort: false,
+      },
+      getAuthHeaders: ({ resolveHeaders }) => ({
+        ...resolveHeaders(),
+        'x-extra': '1',
+      }),
+    });
+
+    expect(adapter.isEnabled()).toBe(true);
+    const headers = adapter.getAuthHeaders();
+    expect(headers['x-extra']).toBe('1');
+    expect(typeof headers.Authorization).toBe('string');
+  });
+});

@@ -1,0 +1,102 @@
+import * as fs from 'fs';
+import * as path from 'path';
+
+const workflowsDir = path.resolve(__dirname, '../../.github/workflows');
+const sourcePath = path.join(workflowsDir, 'test-coverage-reporter.md');
+const lockPath = path.join(workflowsDir, 'test-coverage-reporter.lock.yml');
+
+describe('test coverage reporter workflow token optimization config', () => {
+  it('removes unused tool injection and trims precomputed coverage context in source workflow', () => {
+    const source = fs.readFileSync(sourcePath, 'utf-8');
+
+    expect(source).toContain('github: false');
+    expect(source).not.toContain('bash: false');
+    expect(source).not.toContain('bash: true');
+    // Narrowly scoped read access for coverage brief (compatible with no general bash access)
+    expect(source).toContain('cat:/tmp/gh-aw/agent/coverage-gaps-brief.txt');
+    expect(source).toContain('model: summarization');
+    expect(source).not.toContain('toolsets: [repos, discussions]');
+    expect(source).not.toContain('bash: true');
+    expect(source).toContain('const SECURITY_CRITICAL = [');
+    expect(source).toContain("'docker-manager'");
+    expect(source).toContain("'host-iptables'");
+    expect(source).toContain("'squid-config'");
+    expect(source).toContain("'domain-patterns'");
+    expect(source).toContain("'cli'");
+    expect(source).toContain('.filter(r => r.stmts < 80 || SECURITY_CRITICAL.some(s => r.file.includes(s)))');
+    expect(source).toContain('.slice(0, 20);');
+
+    // Token optimization: coverage-json step removed (COVERAGE_TABLE alone is sufficient)
+    expect(source).not.toContain('coverage-json');
+    expect(source).not.toContain('COVERAGE_JSON');
+
+    // Token optimization: pre-built discussion template step added
+    expect(source).toContain('Pre-build discussion template');
+    expect(source).toContain('id: discussion-template');
+    expect(source).toContain('DISCUSSION_BODY');
+    expect(source).not.toContain('The pre-built discussion template is in `${{ steps.discussion-template.outputs.DISCUSSION_BODY }}`.');
+    expect(source).not.toContain('Using only this brief and the full discussion body in `${{ steps.discussion-template.outputs.DISCUSSION_BODY }}`');
+
+    // Runtime optimization: npm cache (restore+save) before npm ci
+    expect(source).toContain('- name: Cache npm dependencies');
+    expect(source).toContain('uses: actions/cache');
+
+    // Runtime optimization: avoid full unshallow fetch
+    expect(source).toContain('git fetch --shallow-since="7 days ago" --no-tags origin HEAD');
+    expect(source).not.toContain('git fetch --prune --unshallow --tags');
+
+    // Token optimization: push trigger has paths filter to reduce run frequency
+    expect(source).toContain("paths:");
+    expect(source).toContain("- 'src/**/*.ts'");
+
+    // Token optimization: FUNC_AUDIT uses branch counts instead of misleading ternary line listing
+    expect(source).toContain('branch count');
+    expect(source).toContain('if-branches:');
+    expect(source).not.toContain('\\?.*:');
+  });
+
+  it('compiles without GitHub MCP server injection while preserving safeoutputs reporting', () => {
+    const lock = fs.readFileSync(lockPath, 'utf-8');
+
+    expect(lock).not.toContain('ghcr.io/github/github-mcp-server');
+    expect(lock).not.toContain('GITHUB_TOOLSETS');
+    expect(lock).not.toContain('github_mcp_tools_with_safeoutputs_prompt.md');
+    expect(lock).toContain("GH_AW_MCP_CLI_SERVERS_LIST: '- `safeoutputs` — run `safeoutputs --help` to see available tools'");
+    expect(lock).toContain('"safeoutputs": {');
+    expect(lock).not.toContain('"github": {');
+    // Narrowly scoped cat access; no general bash/npm/node shell tools
+    expect(lock).toContain("shell(cat:/tmp/gh-aw/agent/coverage-gaps-brief.txt)");
+    expect(lock).not.toContain("shell(npm");
+    expect(lock).not.toContain("shell(node");
+    expect(lock).not.toContain("shell(bash");
+    expect(lock).toContain('const SECURITY_CRITICAL = [');
+    expect(lock).toContain('.filter(r => r.stmts < 80 || SECURITY_CRITICAL.some(s => r.file.includes(s)))');
+    expect(lock).toContain('.slice(0, 20);');
+
+    // Token optimization: coverage-json step removed
+    expect(lock).not.toContain('coverage-json');
+    expect(lock).not.toContain('COVERAGE_JSON');
+
+    // Token optimization: pre-built discussion template step compiled correctly
+    expect(lock).toContain('id: discussion-template');
+    expect(lock).toContain('DISCUSSION_BODY');
+    expect(lock).not.toContain('The pre-built discussion template is in `${{ steps.discussion-template.outputs.DISCUSSION_BODY }}`.');
+    expect(lock).not.toContain('Using only this brief and the full discussion body in `${{ steps.discussion-template.outputs.DISCUSSION_BODY }}`');
+    expect(lock).toContain('- name: Cache npm dependencies');
+    expect(lock).toContain('uses: actions/cache@');
+    expect(lock).toContain('git fetch --shallow-since=\\"7 days ago\\" --no-tags origin HEAD');
+    expect(lock).not.toContain('git fetch --prune --unshallow --tags');
+
+    // Token optimization: push trigger paths filter present in compiled workflow
+    expect(lock).toContain('paths:');
+    expect(lock).toContain('src/**/*.ts');
+
+    // Token optimization: FUNC_AUDIT uses branch counts (not ternary line listing)
+    expect(lock).toContain('branch count');
+    expect(lock).toContain('if-branches:');
+
+    // Expression variables are passed via env entries that expand at runtime
+    // The compiler uses GH_AW_GITHUB_REPOSITORY for ${{ github.repository }} references
+    expect(lock).toContain('GH_AW_GITHUB_REPOSITORY: ${{ github.repository }}');
+  });
+});

@@ -1,0 +1,401 @@
+name: Chroot Integration Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-chroot-languages:
+    name: Test Chroot Language Support
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Setup Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - name: Setup Go
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v5
+        with:
+          go-version: '1.22'
+
+      - name: Setup Java
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@baa11fbfe1d6520db94683bd5c7a3818018e4309 # v5.1.0
+        with:
+          dotnet-version: '8.0'
+
+      - name: Capture tool paths for chroot tests
+        id: tool-paths
+        run: |
+          # Go on GitHub Actions uses trimmed binaries that require GOROOT
+          GOROOT_VALUE=$(go env GOROOT)
+          echo "GOROOT=${GOROOT_VALUE}" >> $GITHUB_OUTPUT
+          echo "GOROOT=${GOROOT_VALUE}" >> $GITHUB_ENV
+          echo "Captured GOROOT: ${GOROOT_VALUE}"
+
+          # Java: JAVA_HOME is needed so entrypoint can add $JAVA_HOME/bin to PATH
+          if [ -n "$JAVA_HOME" ]; then
+            echo "JAVA_HOME=${JAVA_HOME}" >> $GITHUB_ENV
+            echo "Captured JAVA_HOME: ${JAVA_HOME}"
+          fi
+
+          # .NET: DOTNET_ROOT is needed so entrypoint can add to PATH and set DOTNET_ROOT
+          if [ -n "$DOTNET_ROOT" ]; then
+            echo "DOTNET_ROOT=${DOTNET_ROOT}" >> $GITHUB_ENV
+            echo "Captured DOTNET_ROOT: ${DOTNET_ROOT}"
+          fi
+
+      - name: Verify host tools are available
+        run: |
+          echo "=== Verifying host tools ==="
+          echo "Node.js: $(node --version)"
+          echo "npm: $(npm --version)"
+          echo "Python: $(python3 --version)"
+          echo "pip: $(pip3 --version)"
+          echo "Go: $(go version)"
+          echo "GOROOT: $GOROOT"
+          echo "Java: $(java --version 2>&1 | head -1)"
+          echo "JAVA_HOME: $JAVA_HOME"
+          echo "dotnet: $(dotnet --version 2>&1)"
+          echo "DOTNET_ROOT: $DOTNET_ROOT"
+          echo "Git: $(git --version)"
+          echo "curl: $(curl --version | head -1)"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build project
+        run: npm run build
+
+      - name: Build local containers
+        run: |
+          echo "=== Building local containers ==="
+          docker build -t ghcr.io/github/gh-aw-firewall/squid:latest containers/squid/
+          docker build -t ghcr.io/github/gh-aw-firewall/agent:latest containers/agent/
+
+      - name: Pre-test cleanup
+        run: |
+          echo "=== Pre-test cleanup ==="
+          ./scripts/ci/cleanup.sh || true
+
+      - name: Run chroot language tests
+        run: |
+          echo "=== Running chroot language tests ==="
+          npm run test:integration -- --testPathPatterns="chroot-languages" --verbose
+        env:
+          JEST_TIMEOUT: 180000
+
+      - name: Post-test cleanup
+        if: always()
+        run: |
+          echo "=== Post-test cleanup ==="
+          ./scripts/ci/cleanup.sh || true
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Collecting failure logs ==="
+          docker ps -a || true
+          docker logs awf-squid 2>&1 || true
+          docker logs awf-agent 2>&1 || true
+          ls -la /tmp/awf-* 2>/dev/null || true
+          sudo cat /tmp/awf-*/squid-logs/access.log 2>/dev/null || true
+
+  test-chroot-package-managers:
+    name: Test Chroot Package Managers
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Package Manager tests install their own runtimes via setup actions
+    # and do not depend on the Languages job output
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Setup Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - name: Setup Go
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v5
+        with:
+          go-version: '1.22'
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@09a7688d3b55cf0e976497ff046b70949eeaccfd # v1
+        with:
+          ruby-version: '3.2'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Setup Java
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@baa11fbfe1d6520db94683bd5c7a3818018e4309 # v5.1.0
+        with:
+          dotnet-version: '8.0'
+
+      - name: Capture tool paths for chroot tests
+        id: tool-paths
+        run: |
+          # Go on GitHub Actions uses trimmed binaries that require GOROOT
+          # Capture it here so we can pass it to chroot tests
+          GOROOT_VALUE=$(go env GOROOT)
+          echo "GOROOT=${GOROOT_VALUE}" >> $GITHUB_OUTPUT
+          echo "GOROOT=${GOROOT_VALUE}" >> $GITHUB_ENV
+          echo "Captured GOROOT: ${GOROOT_VALUE}"
+
+          # Rust/Cargo: CARGO_HOME is needed so entrypoint can add $CARGO_HOME/bin to PATH
+          if [ -n "$CARGO_HOME" ]; then
+            echo "CARGO_HOME=${CARGO_HOME}" >> $GITHUB_ENV
+            echo "Captured CARGO_HOME: ${CARGO_HOME}"
+          fi
+
+          # Rust: RUSTUP_HOME is needed so rustc can find the toolchain
+          if [ -n "$RUSTUP_HOME" ]; then
+            echo "RUSTUP_HOME=${RUSTUP_HOME}" >> $GITHUB_ENV
+            echo "Captured RUSTUP_HOME: ${RUSTUP_HOME}"
+          fi
+
+          # Java: JAVA_HOME is needed so entrypoint can add $JAVA_HOME/bin to PATH
+          if [ -n "$JAVA_HOME" ]; then
+            echo "JAVA_HOME=${JAVA_HOME}" >> $GITHUB_ENV
+            echo "Captured JAVA_HOME: ${JAVA_HOME}"
+          fi
+
+          # .NET: DOTNET_ROOT is needed so entrypoint can add to PATH and set DOTNET_ROOT
+          if [ -n "$DOTNET_ROOT" ]; then
+            echo "DOTNET_ROOT=${DOTNET_ROOT}" >> $GITHUB_ENV
+            echo "Captured DOTNET_ROOT: ${DOTNET_ROOT}"
+          fi
+
+      - name: Verify host tools are available
+        run: |
+          echo "=== Verifying host tools ==="
+          echo "Node.js: $(node --version)"
+          echo "npm: $(npm --version)"
+          echo "Python: $(python3 --version)"
+          echo "pip: $(pip3 --version)"
+          echo "Go: $(go version)"
+          echo "GOROOT: $GOROOT"
+          echo "Ruby: $(ruby --version)"
+          echo "Gem: $(gem --version)"
+          echo "Bundler: $(bundle --version 2>&1 || echo 'Not installed')"
+          echo "Rust: $(rustc --version)"
+          echo "Cargo: $(cargo --version)"
+          echo "CARGO_HOME: $CARGO_HOME"
+          echo "RUSTUP_HOME: $RUSTUP_HOME"
+          echo "Java: $(java --version 2>&1 | head -1)"
+          echo "JAVA_HOME: $JAVA_HOME"
+          echo "Maven: $(mvn --version 2>&1 | head -1 || echo 'Not installed')"
+          echo "dotnet: $(dotnet --version 2>&1)"
+          echo "DOTNET_ROOT: $DOTNET_ROOT"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build project
+        run: npm run build
+
+      - name: Build local containers
+        run: |
+          echo "=== Building local containers ==="
+          docker build -t ghcr.io/github/gh-aw-firewall/squid:latest containers/squid/
+          docker build -t ghcr.io/github/gh-aw-firewall/agent:latest containers/agent/
+
+      - name: Pre-test cleanup
+        run: |
+          echo "=== Pre-test cleanup ==="
+          ./scripts/ci/cleanup.sh || true
+
+      - name: Run chroot package manager tests
+        run: |
+          echo "=== Running chroot package manager tests ==="
+          npm run test:integration -- --testPathPatterns="chroot-package-managers" --verbose
+        env:
+          JEST_TIMEOUT: 300000
+
+      - name: Post-test cleanup
+        if: always()
+        run: |
+          echo "=== Post-test cleanup ==="
+          ./scripts/ci/cleanup.sh || true
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Collecting failure logs ==="
+          docker ps -a || true
+          docker logs awf-squid 2>&1 || true
+          docker logs awf-agent 2>&1 || true
+          ls -la /tmp/awf-* 2>/dev/null || true
+          sudo cat /tmp/awf-*/squid-logs/access.log 2>/dev/null || true
+
+  test-chroot-procfs:
+    name: Test Chroot /proc Filesystem
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # No dependency on languages - runs in parallel for faster CI
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Setup Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - name: Setup Java
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Capture tool paths for chroot tests
+        run: |
+          if [ -n "$JAVA_HOME" ]; then
+            echo "JAVA_HOME=${JAVA_HOME}" >> $GITHUB_ENV
+            echo "Captured JAVA_HOME: ${JAVA_HOME}"
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build project
+        run: npm run build
+
+      - name: Build local containers
+        run: |
+          echo "=== Building local containers ==="
+          docker build -t ghcr.io/github/gh-aw-firewall/squid:latest containers/squid/
+          docker build -t ghcr.io/github/gh-aw-firewall/agent:latest containers/agent/
+
+      - name: Pre-test cleanup
+        run: |
+          echo "=== Pre-test cleanup ==="
+          ./scripts/ci/cleanup.sh || true
+
+      - name: Run chroot procfs tests
+        run: |
+          echo "=== Running chroot procfs tests ==="
+          npm run test:integration -- --testPathPatterns="chroot-procfs" --verbose
+        env:
+          JEST_TIMEOUT: 180000
+
+      - name: Post-test cleanup
+        if: always()
+        run: |
+          echo "=== Post-test cleanup ==="
+          ./scripts/ci/cleanup.sh || true
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Collecting failure logs ==="
+          docker ps -a || true
+          docker logs awf-squid 2>&1 || true
+          docker logs awf-agent 2>&1 || true
+          ls -la /tmp/awf-* 2>/dev/null || true
+          sudo cat /tmp/awf-*/squid-logs/access.log 2>/dev/null || true
+
+  test-chroot-edge-cases:
+    name: Test Chroot Edge Cases
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # No dependency on languages - runs in parallel for faster CI
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build project
+        run: npm run build
+
+      - name: Build local containers
+        run: |
+          echo "=== Building local containers ==="
+          docker build -t ghcr.io/github/gh-aw-firewall/squid:latest containers/squid/
+          docker build -t ghcr.io/github/gh-aw-firewall/agent:latest containers/agent/
+
+      - name: Pre-test cleanup
+        run: |
+          echo "=== Pre-test cleanup ==="
+          ./scripts/ci/cleanup.sh || true
+
+      - name: Run chroot edge case tests
+        run: |
+          echo "=== Running chroot edge case tests ==="
+          npm run test:integration -- --testPathPatterns="chroot-edge-cases" --verbose
+        env:
+          JEST_TIMEOUT: 180000
+
+      - name: Post-test cleanup
+        if: always()
+        run: |
+          echo "=== Post-test cleanup ==="
+          ./scripts/ci/cleanup.sh || true
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Collecting failure logs ==="
+          docker ps -a || true
+          docker logs awf-squid 2>&1 || true
+          docker logs awf-agent 2>&1 || true
+          ls -la /tmp/awf-* 2>/dev/null || true
+          sudo cat /tmp/awf-*/squid-logs/access.log 2>/dev/null || true

@@ -1,0 +1,258 @@
+name: 'Setup AWF'
+description: 'Install the Agentic Workflow Firewall (awf) CLI tool'
+author: 'GitHub'
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  version:
+    description: 'Version to install (e.g., v1.0.0). Defaults to latest release.'
+    required: false
+    default: 'latest'
+  pull-images:
+    description: 'Pull Docker images for the installed version. Set to "true" to pre-pull squid and agent images.'
+    required: false
+    default: 'false'
+
+outputs:
+  version:
+    description: 'The version of awf that was installed'
+    value: ${{ steps.install.outputs.version }}
+  image-tag:
+    description: 'The image tag metadata for awf runtime images (base tag plus optional per-image digests)'
+    value: ${{ steps.install.outputs.image_tag }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Validate runner OS and architecture
+      shell: bash
+      run: |
+        if [ "$RUNNER_OS" != "Linux" ]; then
+          echo "::error::This action only supports Linux runners. Current OS: $RUNNER_OS"
+          exit 1
+        fi
+
+        # Validate architecture (only x64 is supported)
+        ARCH=$(uname -m)
+        if [ "$ARCH" != "x86_64" ] && [ "$ARCH" != "amd64" ]; then
+          echo "::error::This action only supports x64 architecture. Current architecture: $ARCH"
+          exit 1
+        fi
+
+    - name: Install awf
+      id: install
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+
+        REPO="github/gh-aw-firewall"
+        BINARY_NAME="awf-linux-x64"
+        INSTALL_DIR="${RUNNER_TEMP}/awf-bin"
+
+        # Build auth headers for GitHub API (Bearer is the recommended format for GITHUB_TOKEN)
+        AUTH_HEADER=()
+        if [ -n "${GITHUB_TOKEN:-}" ]; then
+          AUTH_HEADER=(-H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
+        fi
+
+        # Create install directory
+        mkdir -p "$INSTALL_DIR"
+
+        # Determine version
+        if [ "$INPUT_VERSION" = "latest" ] || [ -z "$INPUT_VERSION" ]; then
+          echo "Fetching latest release version..."
+          VERSION=""
+          # Try gh CLI first (pre-installed on GitHub Actions runners, handles auth natively)
+          if command -v gh &> /dev/null && [ -n "${GITHUB_TOKEN:-}" ]; then
+            VERSION=$(gh api "repos/${REPO}/releases/latest" --jq '.tag_name' 2>/dev/null || true)
+          fi
+          # Fall back to curl with GitHub API
+          if [ -z "${VERSION:-}" ] || [ "$VERSION" = "null" ]; then
+            if command -v jq &> /dev/null; then
+              if ! VERSION=$(curl -fsSL "${AUTH_HEADER[@]}" "https://api.github.com/repos/${REPO}/releases/latest" | jq -r '.tag_name'); then
+                VERSION=""
+              fi
+            else
+              if ! VERSION=$(curl -fsSL "${AUTH_HEADER[@]}" "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'); then
+                VERSION=""
+              fi
+            fi
+          fi
+          if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
+            echo "::error::Failed to fetch latest version from GitHub API"
+            exit 1
+          fi
+          echo "Latest version: $VERSION"
+        else
+          VERSION="$INPUT_VERSION"
+          # Validate version format (supports v1.0.0, v1.0.0-beta.1, v1.0.0-rc.1, etc.)
+          if ! echo "$VERSION" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+            echo "::error::Invalid version format: $VERSION. Expected format: v1.0.0 or v1.0.0-beta.1"
+            exit 1
+          fi
+        fi
+
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        
+        # Download URLs
+        BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
+        BINARY_URL="${BASE_URL}/${BINARY_NAME}"
+        CHECKSUMS_URL="${BASE_URL}/checksums.txt"
+        CONTAINERS_URL="${BASE_URL}/containers.txt"
+
+        # Extract image tag (version without 'v' prefix), then augment with digest pins when available
+        IMAGE_TAG="${VERSION#v}"
+        IMAGE_TAG_WITH_DIGESTS="$IMAGE_TAG"
+
+        # Download binary
+        echo "Downloading awf ${VERSION}..."
+        if ! curl -fsSL "$BINARY_URL" -o "$INSTALL_DIR/awf"; then
+          echo "::error::Failed to download binary from $BINARY_URL"
+          exit 1
+        fi
+
+        # Download checksums
+        echo "Downloading checksums..."
+        if ! curl -fsSL "$CHECKSUMS_URL" -o "$INSTALL_DIR/checksums.txt"; then
+          echo "::error::Failed to download checksums from $CHECKSUMS_URL"
+          exit 1
+        fi
+
+        # Download optional containers digest manifest
+        echo "Downloading containers manifest (optional)..."
+        if curl -fsSL "$CONTAINERS_URL" -o "$INSTALL_DIR/containers.txt"; then
+          extract_digest() {
+            local image_name="$1"
+            grep -E "^ghcr\\.io/${REPO}/${image_name}@sha256:[a-fA-F0-9]{64}$" "$INSTALL_DIR/containers.txt" \
+              | sed -E 's#.*@(sha256:[a-fA-F0-9]{64})#\1#' \
+              | tr '[:upper:]' '[:lower:]' \
+              | head -n 1
+          }
+
+          DIGEST_ENTRIES=()
+          SQUID_DIGEST="$(extract_digest squid || true)"
+          AGENT_DIGEST="$(extract_digest agent || true)"
+          AGENT_ACT_DIGEST="$(extract_digest agent-act || true)"
+          API_PROXY_DIGEST="$(extract_digest api-proxy || true)"
+          CLI_PROXY_DIGEST="$(extract_digest cli-proxy || true)"
+          ENCLAVE_SCRIPT_DIGEST="$(extract_digest enclave-script || true)"
+          ENCLAVE_AGENT_DIGEST="$(extract_digest enclave-agent || true)"
+          ENCLAVE_MCP_SERVER_DIGEST="$(extract_digest enclave-mcp-server || true)"
+
+          [ -n "${SQUID_DIGEST:-}" ] && DIGEST_ENTRIES+=("squid=${SQUID_DIGEST}")
+          [ -n "${AGENT_DIGEST:-}" ] && DIGEST_ENTRIES+=("agent=${AGENT_DIGEST}")
+          [ -n "${AGENT_ACT_DIGEST:-}" ] && DIGEST_ENTRIES+=("agent-act=${AGENT_ACT_DIGEST}")
+          [ -n "${API_PROXY_DIGEST:-}" ] && DIGEST_ENTRIES+=("api-proxy=${API_PROXY_DIGEST}")
+          [ -n "${CLI_PROXY_DIGEST:-}" ] && DIGEST_ENTRIES+=("cli-proxy=${CLI_PROXY_DIGEST}")
+          [ -n "${ENCLAVE_SCRIPT_DIGEST:-}" ] && DIGEST_ENTRIES+=("enclave-script=${ENCLAVE_SCRIPT_DIGEST}")
+          [ -n "${ENCLAVE_AGENT_DIGEST:-}" ] && DIGEST_ENTRIES+=("enclave-agent=${ENCLAVE_AGENT_DIGEST}")
+          [ -n "${ENCLAVE_MCP_SERVER_DIGEST:-}" ] && DIGEST_ENTRIES+=("enclave-mcp-server=${ENCLAVE_MCP_SERVER_DIGEST}")
+
+          if [ "${#DIGEST_ENTRIES[@]}" -gt 0 ]; then
+            DIGEST_CSV="$(IFS=,; echo "${DIGEST_ENTRIES[*]}")"
+            IMAGE_TAG_WITH_DIGESTS="${IMAGE_TAG},${DIGEST_CSV}"
+            echo "Discovered digest pins for ${#DIGEST_ENTRIES[@]} image(s)"
+          else
+            echo "::warning::containers.txt downloaded but no valid digest entries matched ghcr.io/${REPO}/<image>@sha256:<digest>; falling back to tag-only image metadata."
+          fi
+        else
+          echo "::warning::No containers.txt found for ${VERSION}; falling back to tag-only image metadata"
+        fi
+
+        echo "image_tag=$IMAGE_TAG_WITH_DIGESTS" >> "$GITHUB_OUTPUT"
+
+        # Verify checksum
+        echo "Verifying SHA256 checksum..."
+        
+        # Validate checksums.txt format (should have "checksum  filename" format)
+        if ! grep -qE '^[a-fA-F0-9]{64}  ' "$INSTALL_DIR/checksums.txt"; then
+          echo "::error::checksums.txt has unexpected format"
+          exit 1
+        fi
+        
+        EXPECTED_SUM=$(awk -v fname="$BINARY_NAME" '$2 == fname {print $1; exit}' "$INSTALL_DIR/checksums.txt")
+
+        if [ -z "$EXPECTED_SUM" ]; then
+          echo "::error::Could not find checksum for $BINARY_NAME in checksums.txt"
+          exit 1
+        fi
+
+        # Validate checksum format (64 hex characters)
+        if ! echo "$EXPECTED_SUM" | grep -qE '^[a-fA-F0-9]{64}$'; then
+          echo "::error::Invalid checksum format: $EXPECTED_SUM"
+          exit 1
+        fi
+
+        # Normalize to lowercase for comparison
+        EXPECTED_SUM=$(echo "$EXPECTED_SUM" | tr '[:upper:]' '[:lower:]')
+        ACTUAL_SUM=$(sha256sum "$INSTALL_DIR/awf" | awk '{print $1}' | tr '[:upper:]' '[:lower:]')
+
+        if [ "$EXPECTED_SUM" != "$ACTUAL_SUM" ]; then
+          echo "::error::Checksum verification failed!"
+          echo "Expected: $EXPECTED_SUM"
+          echo "Got:      $ACTUAL_SUM"
+          exit 1
+        fi
+
+        echo "Checksum verification passed ✓"
+
+        # Verify it's a valid ELF executable
+        if ! file "$INSTALL_DIR/awf" | grep -q "ELF.*executable"; then
+          echo "::error::Downloaded file is not a valid Linux executable"
+          exit 1
+        fi
+
+        # Make executable
+        chmod +x "$INSTALL_DIR/awf"
+
+        # Clean up downloaded metadata files
+        rm -f "$INSTALL_DIR/checksums.txt" "$INSTALL_DIR/containers.txt"
+
+        # Add to PATH
+        echo "$INSTALL_DIR" >> "$GITHUB_PATH"
+
+        echo "Successfully installed awf ${VERSION} to $INSTALL_DIR"
+        echo "awf is now available in PATH for subsequent steps"
+
+    - name: Pull Docker images
+      if: ${{ inputs.pull-images == 'true' }}
+      shell: bash
+      env:
+        IMAGE_TAG: ${{ steps.install.outputs.image_tag }}
+      run: |
+        set -euo pipefail
+        
+        REGISTRY="ghcr.io/github/gh-aw-firewall"
+
+        BASE_TAG="${IMAGE_TAG%%,*}"
+        extract_digest_from_tag() {
+          local key="$1"
+          echo "$IMAGE_TAG" | tr ',' '\n' | grep -E "^${key}=sha256:[a-fA-F0-9]{64}$" | cut -d'=' -f2 | tr '[:upper:]' '[:lower:]' | head -n 1
+        }
+        SQUID_DIGEST="$(extract_digest_from_tag squid || true)"
+        AGENT_DIGEST="$(extract_digest_from_tag agent || true)"
+        SQUID_REF="${REGISTRY}/squid:${BASE_TAG}${SQUID_DIGEST:+@${SQUID_DIGEST}}"
+        AGENT_REF="${REGISTRY}/agent:${BASE_TAG}${AGENT_DIGEST:+@${AGENT_DIGEST}}"
+        
+        echo "Pulling awf Docker images with tag: ${IMAGE_TAG}"
+        
+        # Pull squid image
+        echo "Pulling ${SQUID_REF}..."
+        if ! docker pull "${SQUID_REF}"; then
+          echo "::warning::Failed to pull squid image ${SQUID_REF}, trying 'latest'"
+          docker pull "${REGISTRY}/squid:latest"
+        fi
+        
+        # Pull agent image
+        echo "Pulling ${AGENT_REF}..."
+        if ! docker pull "${AGENT_REF}"; then
+          echo "::warning::Failed to pull agent image ${AGENT_REF}, trying 'latest'"
+          docker pull "${REGISTRY}/agent:latest"
+        fi
+        
+        echo "Docker images pulled successfully ✓"

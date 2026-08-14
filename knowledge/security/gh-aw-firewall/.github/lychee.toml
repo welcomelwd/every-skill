@@ -1,0 +1,48 @@
+# Lychee link checker configuration
+# See: https://lychee.cli.rs/usage/config/
+
+# Exclude localhost, example, and known-broken/template URLs
+exclude = [
+  "^https?://localhost",
+  "^https?://127\\.0\\.0\\.1",
+  "^https?://172\\.",
+  "^https?://example\\.com",
+  "^https?://your-",
+  "^https?://grafana\\.internal",
+  # Template variables in workflow .md files and release templates
+  "%7B",
+  "\\{\\{",
+  "\\{run_url\\}",
+  # External URLs that are flaky or return non-200 for automated checks
+  "^https?://contributor-covenant\\.org",
+  "^https://mcp\\.tavily\\.com",
+  "^https://docs\\.sigstore\\.dev/cosign/installation",
+  "^https://docs\\.github\\.com/en/github/site-policy/github-bug-bounty",
+  "^https://www\\.sei\\.cmu\\.edu/",
+  "^https://platform\\.openai\\.com/docs/api-reference/authentication$",
+  # opentelemetry.io intermittently drops connections from CI runners
+  # (returns 200 interactively but "error sending request" in Actions)
+  "^https://opentelemetry\\.io/docs/specs/otel/",
+  # LOGGING.md is referenced but doesn't exist yet (planned doc)
+  "LOGGING\\.md",
+]
+
+# Exclude files that don't exist but are referenced as future/planned docs
+exclude_path = [
+  "LOGGING.md",
+]
+
+# Accept 429 (rate limit) responses
+accept = [200, 429]
+
+# Timeout per request (seconds)
+timeout = 30
+
+# Max retries
+max_retries = 3
+
+# Max concurrent requests
+max_concurrency = 10
+
+# Don't check mail addresses
+exclude_mail = true

@@ -1,0 +1,94 @@
+/**
+ * Security configuration options.
+ */
+
+export interface SecurityOptions {
+  /**
+   * Whether to enable SSL Bump for HTTPS content inspection
+   *
+   * When true, Squid will intercept HTTPS connections and generate
+   * per-host certificates on-the-fly, allowing inspection of URL paths,
+   * query parameters, and request methods for HTTPS traffic.
+   *
+   * Security implications:
+   * - A per-session CA certificate is generated (valid for 1 day)
+   * - The CA certificate is injected into the agent container's trust store
+   * - HTTPS traffic is decrypted at the proxy for inspection
+   * - The CA private key is stored only in the temporary work directory
+   *
+   * @default false
+   */
+  sslBump?: boolean;
+
+  /**
+   * Enable Docker-in-Docker by exposing the host Docker socket
+   *
+   * When true, the host's Docker socket (/var/run/docker.sock) is mounted
+   * into the agent container, allowing the agent to run Docker commands.
+   *
+   * WARNING: This allows the agent to bypass firewall restrictions by
+   * spawning new containers without network restrictions.
+   *
+   * @default false
+   */
+  enableDind?: boolean;
+
+  /**
+   * Memory limit for the agent execution container
+   *
+   * Accepts Docker memory format: a positive integer followed by a unit suffix
+   * (b, k, m, g). Controls the maximum amount of memory the container can use.
+   *
+   * @default '6g'
+   * @example '4g'
+   * @example '512m'
+   */
+  memoryLimit?: string;
+
+  /**
+   * Process/thread ceiling for the agent execution container
+   *
+   * Controls Docker's `pids_limit`, capping the number of processes/threads
+   * the container can create. Concurrent JVM-heavy builds (javac, Android
+   * manifest merger) can hit the default ceiling and fail with errors like
+   * "unable to create native thread" or "Cannot create worker GC thread".
+   * Increase this value if your workload spawns many processes/threads.
+   *
+   * @default 1000
+   * @example 2000
+   */
+  pidsLimit?: number;
+
+  /**
+   * Enable Data Loss Prevention (DLP) scanning
+   *
+   * When true, Squid proxy will block outgoing requests that contain
+   * credential-like patterns (API keys, tokens, secrets) in URLs.
+   * This protects against accidental credential exfiltration via
+   * query parameters, path segments, or encoded URL content.
+   *
+   * Detected patterns include: GitHub tokens (ghp_, gho_, ghs_, ghu_,
+   * github_pat_), OpenAI keys (sk-), Anthropic keys (sk-ant-),
+   * AWS access keys (AKIA), Google API keys (AIza), Slack tokens,
+   * and generic credential patterns.
+   *
+   * @default false
+   */
+  enableDlp?: boolean;
+
+  /**
+   * Enable legacy security mode.
+   *
+   * When true, enables the legacy iptables-based configuration that allows
+   * host-access, DinD, and requires sudo/NET_ADMIN.
+   *
+   * When false or unset (default), strict security is enforced: network-isolation
+   * (Docker network topology), API proxy (credential injection), and host-access /
+   * DinD passthrough are rejected.
+   *
+   * API proxy is always enabled regardless of this setting.
+   *
+   * @default false
+   */
+  legacySecurity?: boolean;
+}

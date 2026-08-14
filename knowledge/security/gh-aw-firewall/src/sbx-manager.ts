@@ -1,0 +1,560 @@
+/**
+ * Docker sbx (sandbox) microVM lifecycle manager.
+ *
+ * Manages the agent process inside a Docker sbx microVM while AWF's
+ * infrastructure containers (Squid, api-proxy) remain in Docker Compose
+ * on the host.  All sbx egress is chained through AWF's Squid proxy via
+ * the `DOCKER_SANDBOXES_PROXY` environment variable.
+ *
+ * ## Lifecycle
+ *
+ * 1. `createSandbox()` — `sbx create` with workspace mounts
+ * 2. `execInSandbox()` — `sbx exec` to run the agent command, streams
+ *    stdout/stderr and collects exit code
+ * 3. `removeSandbox()` — `sbx stop` + `sbx rm` for cleanup
+ *
+ * ## Proxy chaining
+ *
+ * `DOCKER_SANDBOXES_PROXY` is a daemon-level env var that routes all
+ * sandbox egress through the specified proxy.  In CI (one sandbox per
+ * runner), this is safe to set globally.  AWF sets it to Squid's address
+ * (`http://<squidIp>:3128`) before creating the sandbox, so all agent
+ * traffic flows through AWF's domain ACL.
+ */
+
+import execa from 'execa';
+import * as fs from 'fs';
+import * as path from 'path';
+import { copyEnvEntries } from './env-utils';
+import { logger } from './logger';
+import { HOME_TOOL_SUBDIRS } from './services/agent-volumes/home-whitelist';
+import { credentialEntriesUnderMountedParents } from './config/mount-policy';
+import { getRealUserHome } from './host-identity';
+
+/** Name prefix for AWF-managed sandboxes. */
+const SBX_NAME_PREFIX = 'awf-agent';
+
+/**
+ * Env vars that must NEVER reach the sbx CLI or sandbox interior.
+ * Patterns are matched case-insensitively against env var names.
+ */
+const SECRET_ENV_PATTERNS = [
+  /TOKEN/i,
+  /SECRET/i,
+  /PASSWORD/i,
+  /KEY/i,
+  /CREDENTIAL/i,
+  /PAT$/i,
+  /^DOCKER_PAT$/i,
+  /^DOCKER_USERNAME$/i,
+];
+
+/** Default sandbox name (single-sandbox-per-run model). */
+export const SBX_DEFAULT_NAME = `${SBX_NAME_PREFIX}-${process.pid}`;
+
+/**
+ * Strips secret-bearing env vars from process.env so they never reach
+ * the sbx CLI or the sandbox interior.  Returns a shallow copy with
+ * only non-secret entries plus any explicit overrides.
+ */
+function sanitizeEnvForSbx(
+  overrides: Record<string, string> = {},
+): Record<string, string | undefined> {
+  const clean: Record<string, string | undefined> = {};
+  copyEnvEntries(process.env, clean, {
+    keyPredicate: (key) => !SECRET_ENV_PATTERNS.some((p) => p.test(key)),
+  });
+  return { ...clean, ...overrides };
+}
+
+/**
+ * Runs an sbx management command with create-time environment fixes applied.
+ *
+ * `DOCKER_SANDBOXES_PROXY` must be absent before AWF's containers are ready,
+ * and `XDG_CONFIG_HOME` must not redirect the sbx CLI away from its normal
+ * credential store. Both variables are always restored, even on failure.
+ */
+async function withCreateSandboxEnvironment<T>(fn: () => Promise<T>): Promise<T> {
+  const savedProxy = process.env.DOCKER_SANDBOXES_PROXY;
+  const savedXdg = process.env.XDG_CONFIG_HOME;
+  delete process.env.DOCKER_SANDBOXES_PROXY;
+  delete process.env.XDG_CONFIG_HOME;
+  try {
+    return await fn();
+  } finally {
+    if (savedProxy !== undefined) {
+      process.env.DOCKER_SANDBOXES_PROXY = savedProxy;
+    } else {
+      delete process.env.DOCKER_SANDBOXES_PROXY;
+    }
+    if (savedXdg !== undefined) {
+      process.env.XDG_CONFIG_HOME = savedXdg;
+    } else {
+      delete process.env.XDG_CONFIG_HOME;
+    }
+  }
+}
+
+/** Records a credential path that was moved aside before `sbx create`. */
+interface ScrubbedCredential {
+  /** Original host path (inside a wholesale-mounted home dir). */
+  original: string;
+  /** Backup location the path was moved to (outside any mount). */
+  backup: string;
+}
+
+/**
+ * Credential paths moved aside for the current sandbox, plus the temp backup
+ * root that holds them. Module-level because scrub happens in createSandbox and
+ * restore happens later in removeSandbox (after the live mount is gone).
+ */
+let scrubbedCredentials: ScrubbedCredential[] = [];
+let credentialBackupRoot: string | undefined;
+
+/**
+ * Moves known credential stores out of the wholesale-mounted `$HOME` tool dirs
+ * before the sandbox is created, so they never enter the microVM. The paths are
+ * moved (not deleted) to a backup dir at the home root — which is NOT one of the
+ * mounted subdirs — and restored by {@link restoreHomeCredentials} after the
+ * sandbox is torn down. This is the sbx analog of compose mode's `/dev/null`
+ * credential overlays; the credential list comes from the central mount policy
+ * so the two backends can't drift.
+ */
+function scrubHomeCredentials(homePath: string): void {
+  scrubbedCredentials = [];
+  credentialBackupRoot = undefined;
+
+  const mountedParents = new Set<string>(HOME_TOOL_SUBDIRS);
+  for (const entry of credentialEntriesUnderMountedParents(mountedParents)) {
+    const original = path.join(homePath, entry.path);
+    if (!fs.existsSync(original)) continue;
+
+    if (!credentialBackupRoot) {
+      // A dotted dir at the home ROOT is never in the mounted subdir set, so
+      // the backup itself can't leak into the VM.
+      credentialBackupRoot = path.join(homePath, `.awf-sbx-cred-backup-${process.pid}`);
+      try {
+        fs.mkdirSync(credentialBackupRoot, { recursive: true });
+      } catch (err) {
+        logger.warn(`[sbx] Could not create credential backup dir: ${(err as Error).message}`);
+        credentialBackupRoot = undefined;
+        return;
+      }
+    }
+
+    const backup = path.join(credentialBackupRoot, entry.path.replace(/\//g, '__'));
+    try {
+      fs.renameSync(original, backup);
+      scrubbedCredentials.push({ original, backup });
+      logger.info(`[sbx] Hid credential path from sandbox: ${entry.path}`);
+    } catch (err) {
+      logger.warn(`[sbx] Could not hide credential path ${original}: ${(err as Error).message}`);
+    }
+  }
+
+  if (scrubbedCredentials.length > 0 && credentialBackupRoot) {
+    logger.info(
+      `[sbx] Moved ${scrubbedCredentials.length} credential path(s) aside to ${credentialBackupRoot} for the duration of the sandbox`,
+    );
+  }
+}
+
+/**
+ * Restores any credential paths that {@link scrubHomeCredentials} moved aside.
+ * Idempotent and non-throwing; safe to call even when nothing was scrubbed.
+ * MUST run only after the sandbox is removed, because the home dirs are live
+ * mounts — restoring while the VM is running would re-expose the secrets.
+ */
+function restoreHomeCredentials(): void {
+  for (const { original, backup } of scrubbedCredentials) {
+    try {
+      if (fs.existsSync(backup)) {
+        fs.renameSync(backup, original);
+      }
+    } catch (err) {
+      logger.warn(
+        `[sbx] Could not restore credential path ${original} from ${backup}: ${(err as Error).message}. ` +
+          `The original is preserved at ${backup}.`,
+      );
+    }
+  }
+  scrubbedCredentials = [];
+
+  if (credentialBackupRoot) {
+    try {
+      fs.rmSync(credentialBackupRoot, { recursive: true, force: true });
+    } catch {
+      // best-effort cleanup of the (now-empty) backup dir
+    }
+    credentialBackupRoot = undefined;
+  }
+}
+
+/**
+ * Creates a Docker sbx sandbox with workspace mounts.
+ * Sets `DOCKER_SANDBOXES_PROXY` to chain all egress through AWF's Squid.
+ */
+export async function createSandbox(config: {
+  /** Sandbox name (defaults to `awf-agent-<pid>`). */
+  name?: string;
+  /** Workspace directory to mount into the sandbox. */
+  workspaceDir: string;
+  /** Squid proxy IP for DOCKER_SANDBOXES_PROXY. */
+  squidIp: string;
+  /** Squid proxy port (default 3128). */
+  squidPort?: number;
+  /** Additional workspace mounts (read-only paths). */
+  extraMounts?: string[];
+}): Promise<string> {
+  const name = config.name || SBX_DEFAULT_NAME;
+  const squidPort = config.squidPort || 3128;
+  const proxyUrl = `http://${config.squidIp}:${squidPort}`;
+
+  logger.info(`[sbx] Creating sandbox "${name}" with proxy ${proxyUrl}`);
+
+  // Verify daemon is running and authenticated before attempting create
+  // (sbx has no 'auth status' command; 'sbx ls' requires auth so we use it as a probe)
+  const authCheck = await execa('sbx', ['ls'], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    reject: false,
+    timeout: 10_000,
+  });
+  if ((authCheck.exitCode ?? 1) !== 0) {
+    const daemonCheck = await execa('sbx', ['daemon', 'status'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      reject: false,
+      timeout: 10_000,
+    });
+    logger.error(`[sbx] Not authenticated. daemon status: ${(daemonCheck.stdout || '').trim()}`);
+    throw new Error(
+      `sbx is not authenticated (sbx ls exit=${authCheck.exitCode}). ` +
+      `Ensure 'sbx login' was called with a running daemon. ` +
+      `Daemon: ${(daemonCheck.stdout || '').trim()}. ` +
+      `Error: ${(authCheck.stderr || '').trim()}`
+    );
+  }
+  logger.info('[sbx] Auth verified ✓');
+
+  const args = [
+    'create',
+    '--name', name,
+    'shell',  // shell agent provides a generic sandbox
+    config.workspaceDir,
+  ];
+
+  // Add extra mounts passed from AWF config.
+  // AWF uses Docker-style "host:container:mode" format but sbx uses positional
+  // paths with optional :ro suffix (host path = container path in microVM).
+  const seenPaths = new Set<string>([config.workspaceDir]);
+  if (config.extraMounts) {
+    for (const mount of config.extraMounts) {
+      const parts = mount.split(':');
+      const hostPath = parts[0];
+      if (seenPaths.has(hostPath)) continue; // deduplicate
+      seenPaths.add(hostPath);
+      // Determine mode: last segment is 'ro' or 'rw' if there are 2+ colons
+      const mode = parts.length >= 3 ? parts[parts.length - 1] : (parts.length === 2 && (parts[1] === 'ro' || parts[1] === 'rw') ? parts[1] : undefined);
+      if (mode === 'ro') {
+        args.push(`${hostPath}:ro`);
+      } else {
+        args.push(hostPath);
+      }
+    }
+  }
+
+  // Mount /tmp so agent runtime files (prompts, logs) are accessible, and
+  // /usr/local/bin for Copilot CLI and other installed tools.
+  for (const sysPath of ['/tmp', '/usr/local/bin']) {
+    if (!seenPaths.has(sysPath)) {
+      seenPaths.add(sysPath);
+      args.push(sysPath);
+    }
+  }
+
+  // SECURITY: never mount the whole $HOME into the microVM. sbx mounts are
+  // positional (host path == guest path) and cannot express the per-file
+  // /dev/null credential overlays that compose mode uses (see
+  // credential-hiding.ts), so the only way to keep host secrets out of the VM
+  // is to curate which $HOME subdirs are mounted. The central mount policy
+  // (HOME_TOOL_SUBDIRS) lists the allowed tool-state dirs including agent-state
+  // dirs (.copilot, .gemini). Credential stores such as ~/.aws, ~/.ssh,
+  // ~/.docker, ~/.kube, ~/.gnupg, ~/.netrc and ~/.gitconfig are never
+  // whitelisted, so they never enter the sandbox. Only paths that exist on the
+  // host are mounted, because sbx requires the mount source to exist.
+  //
+  // Each whitelisted parent is mounted WHOLESALE (as a directory): sbx mounts
+  // are positional, directory-granular virtiofs passthroughs and cannot mount an
+  // individual file, so child-by-child expansion would drop loose files the
+  // agent needs (e.g. ~/.copilot/mcp-config.json). Several of these dirs also
+  // nest a credential store — e.g. .config/gh, .cargo/credentials,
+  // .claude/.credentials.json, .gemini/oauth_creds.json.
+  // Those specific paths are moved aside on the host BEFORE `sbx create` (see
+  // scrubHomeCredentials below) and restored after teardown, so the benign tool
+  // state stays available while the secrets never enter the microVM.
+  // Resolve the home the SAME way buildCoreEnvironment() does (getRealUserHome,
+  // which honors SUDO_USER), so the wholesale-mounted tool dirs land at exactly
+  // the $HOME the agent sees inside the VM. Using process.env.HOME here would
+  // diverge under sudo (e.g. /root vs /home/alice), mounting .local at a path
+  // the guest's $HOME never points at and hiding a rootless-installed binary.
+  const homePath = getRealUserHome();
+  for (const subdir of HOME_TOOL_SUBDIRS) {
+    const hostSubdir = `${homePath}/${subdir}`;
+    if (seenPaths.has(hostSubdir)) continue;
+    if (!fs.existsSync(hostSubdir)) continue;
+    seenPaths.add(hostSubdir);
+    args.push(hostSubdir);
+  }
+
+  logger.info(`[sbx] Running: sbx ${args.join(' ')}`);
+
+  // Move known credential stores out of the wholesale-mounted home dirs before
+  // the sandbox exists, and remember them so they can be restored on teardown.
+  scrubHomeCredentials(homePath);
+
+  // Do NOT pass a custom `env` to sbx create. The sanitized env (which strips
+  // vars matching TOKEN, SECRET, KEY, etc.) also strips variables the sbx CLI
+  // needs internally for credential lookup against the daemon's auth store.
+  // Since sbx create is a management command that talks to the local daemon
+  // (not user code running inside the sandbox), inheriting process.env is safe —
+  // these env vars never enter the sandbox interior. The sandbox interior's env
+  // is controlled separately by execInSandbox() which uses sanitizeEnvForSbx().
+  //
+  // DOCKER_SANDBOXES_PROXY must NOT be set during create — it forces the daemon
+  // to route Docker Hub registry auth through Squid, which isn't ready yet.
+  // XDG_CONFIG_HOME must also be removed — the Copilot harness sets it to $HOME,
+  // which makes the sbx CLI look for credentials in $HOME/ instead of the
+  // default $HOME/.config/ where `sbx login` stored them.
+  const createResult = await withCreateSandboxEnvironment(() => execa('sbx', args, {
+    input: 'y\n',
+    stdio: ['pipe', 'pipe', 'pipe'],
+    reject: false,
+    timeout: 120_000, // 2 minute timeout for sandbox creation
+  }));
+
+  const stdout = (createResult.stdout || '').trim();
+  const stderr = (createResult.stderr || '').trim();
+  const sbxSucceeded = stdout.includes('Created sandbox');
+  const exitCode = createResult.exitCode ?? 1;
+
+  if (exitCode !== 0 && !sbxSucceeded) {
+    // Sandbox never came up — restore the scrubbed credentials immediately so a
+    // failed run doesn't leave the user's home directory mutated.
+    restoreHomeCredentials();
+    // Log full debug output for diagnostics
+    if (stdout) logger.info(`[sbx] create stdout: ${stdout.substring(0, 2000)}`);
+    if (stderr) logger.info(`[sbx] create stderr: ${stderr.substring(0, 2000)}`);
+    throw new Error(
+      `sbx create failed (exit ${exitCode}): ${stderr || stdout || 'unknown error'}`
+    );
+  }
+
+  logger.info(`[sbx] Sandbox "${name}" created (exit=${exitCode}, detected=${sbxSucceeded}). stdout=${stdout.substring(0, 200)}`);
+  return name;
+}
+
+/**
+ * Wraps an agent command so the rootless install dir (~/.local/bin) is on PATH
+ * when it runs. sbx executes commands via a login shell (`bash -lc`), which
+ * sources /etc/profile — and on Debian/Ubuntu that unconditionally resets PATH,
+ * discarding anything injected via `--env PATH=...`. Prepending the export to
+ * the command itself runs AFTER login initialization, so a copilot binary
+ * installed rootless to ~/.local/bin (install_copilot_cli.sh --rootless) stays
+ * resolvable by name. `$HOME` resolves to the injected HOME (getRealUserHome),
+ * which matches the wholesale-mounted home tool dirs.
+ *
+ */
+function withLocalBinOnPath(command: string): string {
+  return `export PATH="$HOME/.local/bin\${PATH:+:$PATH}"; ${command}`;
+}
+
+/** @internal Exposed for unit tests only. */
+// ts-prune-ignore-next
+export const testHelpers = {
+  sanitizeEnvForSbx,
+  restoreHomeCredentials,
+  withCreateSandboxEnvironment,
+  withLocalBinOnPath,
+};
+
+/**
+ * Executes a command inside the sandbox, streaming stdout/stderr.
+ * Returns the exit code of the command.
+ */
+export async function execInSandbox(
+  name: string,
+  command: string,
+  options?: {
+    timeoutMinutes?: number;
+    workDir?: string;
+    environment?: Record<string, string>;
+    tty?: boolean;
+  },
+): Promise<{ exitCode: number }> {
+  logger.info(`Executing in sandbox "${name}": ${command}`);
+
+  const args = ['exec'];
+  if (options?.workDir) {
+    args.push('--workdir', options.workDir);
+  }
+
+  if (options?.tty) {
+    args.push('--tty');
+  }
+  if (options?.environment) {
+    for (const [key, value] of Object.entries(options.environment)) {
+      args.push('--env', `${key}=${value}`);
+    }
+  }
+
+  args.push(name, 'bash', '-lc', withLocalBinOnPath(command));
+
+  try {
+    const result = await execa('sbx', args, {
+      env: sanitizeEnvForSbx(),
+      stdio: ['ignore', 'inherit', 'inherit'],
+      reject: false,
+      timeout: options?.timeoutMinutes ? options.timeoutMinutes * 60 * 1000 : undefined,
+    });
+
+    const exitCode = result.exitCode ?? 1;
+
+    if (exitCode === 0) {
+      logger.info(`Sandbox command completed successfully`);
+    } else {
+      logger.warn(`Sandbox command exited with code ${exitCode}`);
+    }
+
+    return { exitCode };
+  } catch (error: any) {
+    if (error.timedOut) {
+      logger.error(`Sandbox command timed out after ${options?.timeoutMinutes} minutes`);
+      return { exitCode: 124 }; // match timeout convention
+    }
+    logger.error(`Sandbox exec failed: ${error.message}`);
+    return { exitCode: 1 };
+  }
+}
+
+/**
+ * Adds a resolver alias for the published API proxy and proves that the
+ * hard-coded gh-aw reflection endpoint is reachable before the agent starts.
+ */
+export async function assertSbxApiProxyReflect(
+  name: string,
+  environment: Record<string, string>,
+  workDir?: string,
+): Promise<void> {
+  environment.HOSTALIASES = '/tmp/awf-hostaliases';
+  const bridgeSource = [
+    'const http = require("node:http");',
+    'const upstreamHost = "host.docker.internal";',
+    'http.createServer((request, response) => {',
+    'const upstream = http.request({',
+    'hostname: upstreamHost,',
+    'port: 10000,',
+    'method: request.method,',
+    'path: request.url,',
+    'headers: { ...request.headers, host: `${upstreamHost}:10000` },',
+    '}, upstreamResponse => {',
+    'response.writeHead(upstreamResponse.statusCode || 502, upstreamResponse.headers);',
+    'upstreamResponse.pipe(response);',
+    '});',
+    'upstream.on("error", error => {',
+    'if (!response.headersSent) response.writeHead(502);',
+    'response.end(error.message);',
+    '});',
+    'request.pipe(upstream);',
+    '}).listen(10000, "127.0.0.1");',
+  ].join('\n');
+  const encodedBridge = Buffer.from(bridgeSource).toString('base64');
+  const command = [
+    'umask 077',
+    'printf "api-proxy localhost\\n" > "$HOSTALIASES"',
+    `printf %s ${encodedBridge} | base64 --decode > /tmp/awf-reflect-bridge.cjs`,
+    '{ nohup node /tmp/awf-reflect-bridge.cjs >/tmp/awf-reflect-bridge.log 2>&1 & }',
+    [
+      '{',
+      'for attempt in $(seq 1 30); do',
+      'if AWF_REFLECT_ATTEMPT="$attempt" node -e',
+      '\'fetch("http://api-proxy:10000/reflect", { signal: AbortSignal.timeout(500) }).then(',
+      'async response => {',
+      'if (!response.ok && process.env.AWF_REFLECT_ATTEMPT === "30")',
+      'console.error(`HTTP ${response.status}: ${await response.text()}`);',
+      'process.exit(response.ok ? 0 : 1);',
+      '}',
+      ').catch(error => {',
+      'if (process.env.AWF_REFLECT_ATTEMPT === "30") console.error(error, error.cause);',
+      'process.exit(1);',
+      '})\'',
+      '; then exit 0; fi;',
+      'sleep 1;',
+      'done;',
+      'cat /tmp/awf-reflect-bridge.log >&2 || true;',
+      'exit 1;',
+      '}',
+    ].join(' '),
+  ].join(' && ');
+
+  const result = await execInSandbox(name, command, {
+    timeoutMinutes: 1,
+    workDir,
+    environment,
+  });
+  if (result.exitCode !== 0) {
+    throw new Error('sbx sandbox cannot reach the API proxy /reflect endpoint');
+  }
+}
+
+/**
+ * Stops and removes the sandbox.
+ */
+export async function removeSandbox(name: string): Promise<void> {
+  logger.info(`Removing sandbox "${name}"...`);
+
+  try {
+    const stopResult = await execa('sbx', ['stop', name], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      reject: false,
+    });
+    if ((stopResult.exitCode ?? 1) !== 0) {
+      const stderr = stopResult.stderr?.trim();
+      logger.warn(
+        `Failed to stop sandbox "${name}" (exit ${(stopResult.exitCode ?? 1)}${stderr ? `: ${stderr}` : ''})`
+      );
+    }
+  } catch {
+    // stop may fail if already stopped — that's fine
+  }
+
+  const rmResult = await execa('sbx', ['rm', '--force', name], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    reject: false,
+  });
+  if ((rmResult.exitCode ?? 1) !== 0) {
+    const stderr = rmResult.stderr?.trim();
+    logger.warn(
+      `Failed to remove sandbox "${name}" (exit ${(rmResult.exitCode ?? 1)}${stderr ? `: ${stderr}` : ''})`
+    );
+    // Still restore credentials — the sandbox is being torn down regardless, and
+    // leaving the user's home scrubbed would be worse than a stale sandbox.
+    restoreHomeCredentials();
+    return;
+  }
+
+  // Sandbox is gone (mounts released) → safe to move credentials back.
+  restoreHomeCredentials();
+
+  logger.info(`Sandbox "${name}" removed`);
+}
+
+/**
+ * Checks if the sbx CLI is available on the system.
+ */
+export async function isSbxAvailable(): Promise<boolean> {
+  try {
+    await execa('sbx', ['version'], { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}

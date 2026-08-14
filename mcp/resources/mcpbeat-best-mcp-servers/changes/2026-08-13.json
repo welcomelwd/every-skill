@@ -1,0 +1,165 @@
+{
+  "date": "2026-08-13",
+  "findings": {
+    "fixed": 533,
+    "high": 65,
+    "new": 1718
+  },
+  "licence": "CC BY 4.0",
+  "notable": [
+    {
+      "detail": "destroy.fs",
+      "kind": "new_high",
+      "server": "paperclipai/paperclip",
+      "url": "https://mcpbeat.com/mcp-servers/incorporatedpartners/labelhead-artist-momentum/"
+    },
+    {
+      "detail": "combo.exec_exfil",
+      "kind": "new_high",
+      "server": "MaxFreedomPollard/Compartment",
+      "url": "https://mcpbeat.com/mcp-servers/maxfreedompollard/compartment/"
+    },
+    {
+      "detail": "docker.curl_pipe",
+      "kind": "new_high",
+      "server": "PostHog/posthog",
+      "url": "https://mcpbeat.com/mcp-servers/posthog/mcp/"
+    },
+    {
+      "detail": "combo.exec_exfil",
+      "kind": "new_high",
+      "server": "ariffazil/arifOS",
+      "url": "https://mcpbeat.com/mcp-servers/ariffazil/arifos-mcp/"
+    },
+    {
+      "detail": "claim.read_only",
+      "kind": "new_high",
+      "server": "arifulislamat/database-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/arifulislamat/database-mcp-mariadb/"
+    },
+    {
+      "detail": "combo.secrets_out",
+      "kind": "new_high",
+      "server": "bawbel/scanner",
+      "url": "https://mcpbeat.com/mcp-servers/bawbel/scanner/"
+    },
+    {
+      "detail": "claim.read_only",
+      "kind": "new_high",
+      "server": "datacharter/datacharter",
+      "url": "https://mcpbeat.com/mcp-servers/datacharter/datacharter/"
+    },
+    {
+      "detail": "combo.secrets_out",
+      "kind": "new_high",
+      "server": "yaver-io/yaver.io",
+      "url": "https://mcpbeat.com/mcp-servers/kivanccakmak/yaver/"
+    },
+    {
+      "detail": "supply.ci_secrets",
+      "kind": "new_high",
+      "server": "metabase/metabase",
+      "url": "https://mcpbeat.com/mcp-servers/metabase/mcp/"
+    },
+    {
+      "detail": "exfil.cloud_meta",
+      "kind": "new_high",
+      "server": "nirholas/three.ws",
+      "url": "https://mcpbeat.com/mcp-servers/nirholas/alerts-mcp/"
+    },
+    {
+      "detail": "combo.obf_exfil",
+      "kind": "new_high",
+      "server": "ogasurfproject-jpg/horizon-shield",
+      "url": "https://mcpbeat.com/mcp-servers/ogasurfproject-jpg/hs-audit-app/"
+    },
+    {
+      "detail": "combo.secrets_out",
+      "kind": "new_high",
+      "server": "vaaraio/vaara",
+      "url": "https://mcpbeat.com/mcp-servers/vaaraio/vaara/"
+    },
+    {
+      "detail": "search_products",
+      "kind": "schema",
+      "server": "BuyWhere/buywhere",
+      "url": "https://mcpbeat.com/mcp-servers/buywhere/catalog-api/"
+    },
+    {
+      "detail": "web_access_fetch",
+      "kind": "schema",
+      "server": "usestring/string-ai-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/usestring/web-access/"
+    },
+    {
+      "detail": "get_transactions",
+      "kind": "schema",
+      "server": "jdguggs10/flaim",
+      "url": "https://mcpbeat.com/mcp-servers/flaim/mcp/"
+    },
+    {
+      "detail": "realty_region_trend_basket",
+      "kind": "schema",
+      "server": "sallim-app/korea-realty",
+      "url": "https://mcpbeat.com/mcp-servers/sallim/korea-realty/"
+    },
+    {
+      "detail": "formation_create_formation",
+      "kind": "schema",
+      "server": "lovieco/lovie-company-formation-mcp-npx",
+      "url": "https://mcpbeat.com/mcp-servers/lovie/company-formation/"
+    },
+    {
+      "detail": "register",
+      "kind": "schema",
+      "server": "ee324/a2awire",
+      "url": "https://mcpbeat.com/mcp-servers/a2awire/a2awire/"
+    },
+    {
+      "detail": "preview_case",
+      "kind": "schema",
+      "server": "debitura/Debitura.MCP",
+      "url": "https://mcpbeat.com/mcp-servers/debitura/mcp-server/"
+    },
+    {
+      "detail": "getNetworkPools",
+      "kind": "schema",
+      "server": "coinpaprika/dexpaprika-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/dexpaprika/dexpaprika/"
+    },
+    {
+      "detail": "gribstream_build_runs_request",
+      "kind": "schema",
+      "server": "GribStream/gribstream-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/gribstream/mcp/"
+    },
+    {
+      "detail": "web_wait_for",
+      "kind": "schema",
+      "server": "lanchuske/local-mcp-releases",
+      "url": "https://mcpbeat.com/mcp-servers/local-mcp/local-mcp/"
+    },
+    {
+      "detail": "run_workflow",
+      "kind": "schema",
+      "server": "daliu/meta-council",
+      "url": "https://mcpbeat.com/mcp-servers/meta-council/decision-intelligence/"
+    },
+    {
+      "detail": "request_invoice",
+      "kind": "schema",
+      "server": "lmno100/mudko",
+      "url": "https://mcpbeat.com/mcp-servers/mudko/agent-ready-kit/"
+    }
+  ],
+  "servers": {
+    "gone": 33,
+    "new": 160
+  },
+  "source": "https://mcpbeat.com/data/2026-08-13/",
+  "tools": {
+    "added": 777,
+    "removed": 606,
+    "schema_changed": 4225
+  }
+}

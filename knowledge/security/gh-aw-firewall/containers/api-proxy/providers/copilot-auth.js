@@ -1,0 +1,318 @@
+'use strict';
+
+const { normalizeApiTarget } = require('../proxy-utils');
+const { COPILOT_PLACEHOLDER_TOKEN } = require('./copilot-byok');
+const { URL } = require('url');
+
+const COPILOT_DUMMY_BYOK_OFFLINE_TOKEN = 'dummy-byok-key-for-offline-mode';
+
+/**
+ * Strip any accidental "Bearer " or "token " prefix from a raw credential
+ * value and trim
+ * surrounding whitespace.  Returns undefined when the result is empty so that
+ * callers can use `|| undefined` fall-through cleanly.
+ *
+ * A value like "Bearer " (prefix with nothing after it) reduces to undefined
+ * rather than "Bearer", which is why the prefix is removed before trimming.
+ *
+ * @param {string|undefined} value - Raw credential string
+ * @returns {string|undefined}
+ */
+function stripBearerPrefix(value) {
+  return ((value || '').replace(/^\s*(?:Bearer|token)\s+/i, '').trim()) || undefined;
+}
+
+/**
+ * Returns the COPILOT_PROVIDER_API_KEY value from env if it is a real BYOK credential,
+ * or undefined in three cases:
+ *   1. COPILOT_PROVIDER_API_KEY is not set (or is empty/whitespace-only).
+ *   2. COPILOT_PROVIDER_API_KEY equals the known AWF placeholder sentinel — it was injected
+ *      by AWF for credential isolation and is not a usable BYOK credential.
+ *   3. COPILOT_PROVIDER_API_KEY equals gh-aw's offline-mode dummy BYOK sentinel
+ *      (`dummy-byok-key-for-offline-mode`) and should not suppress COPILOT_GITHUB_TOKEN.
+ *
+ * The case-(2) placeholder check is defense-in-depth: in AWF's normal flow the placeholder
+ * is never written into the sidecar's own COPILOT_PROVIDER_API_KEY (src/services/api-proxy-
+ * service-config.ts only forwards a real user-supplied BYOK key). If a future refactor,
+ * misconfiguration, or standalone use of the sidecar image ever caused the agent's env
+ * (which does contain the placeholder) to be passed through to the sidecar, we must treat
+ * it as absent so that the placeholder is not used as a real Authorization credential
+ * against an upstream provider.
+ *
+ * @param {Record<string, string|undefined>} env - Environment variables to inspect
+ * @returns {string|undefined} The real BYOK key, or undefined when absent or placeholder.
+ */
+function resolveApiKey(env) {
+  const key = stripBearerPrefix(env.COPILOT_PROVIDER_API_KEY);
+  return (key === COPILOT_PLACEHOLDER_TOKEN || key === COPILOT_DUMMY_BYOK_OFFLINE_TOKEN)
+    ? undefined
+    : key;
+}
+
+/**
+ * Resolves the Copilot auth token from environment variables.
+ * COPILOT_PROVIDER_API_KEY (direct BYOK key) takes precedence over COPILOT_GITHUB_TOKEN (GitHub OAuth).
+ *
+ * The AWF placeholder token is treated as absent (via resolveApiKey) so that when AWF
+ * injects it as a dummy COPILOT_PROVIDER_API_KEY the sidecar falls back to COPILOT_GITHUB_TOKEN.
+ * This ensures that when a real BYOK key is configured alongside a GitHub token, the BYOK
+ * key is used for inference rather than inadvertently sending a GitHub OAuth token to a
+ * third-party provider.
+ *
+ * Any accidental "Bearer " prefix is stripped via stripBearerPrefix so that
+ * the injected Authorization header contains a single bearer token value rather
+ * than a malformed double-prefixed value that external providers would reject
+ * in BYOK mode.
+ *
+ * @param {Record<string, string|undefined>} env - Environment variables to inspect
+ * @returns {string|undefined} The resolved auth token, or undefined if neither is set
+ */
+function resolveCopilotAuthToken(env = process.env) {
+  return resolveApiKey(env) || stripBearerPrefix(env.COPILOT_GITHUB_TOKEN);
+}
+
+/**
+ * Classify GITHUB_SERVER_URL by host type for auth-routing derivation logic.
+ *
+ * @param {Record<string, string|undefined>} env - Environment variables
+ * @returns {{kind: 'missing'|'invalid'|'github'|'ghec'|'ghes', subdomain?: string}}
+ */
+function classifyGithubServerHost(env = process.env) {
+  const serverUrl = env.GITHUB_SERVER_URL;
+  if (!serverUrl) return { kind: 'missing' };
+  try {
+    const hostname = new URL(serverUrl).hostname;
+    if (hostname === 'github.com') return { kind: 'github' };
+    if (hostname.endsWith('.ghe.com')) {
+      return { kind: 'ghec', subdomain: hostname.slice(0, -8) };
+    }
+    return { kind: 'ghes' };
+  } catch {
+    return { kind: 'invalid' };
+  }
+}
+
+/**
+ * Derive the Copilot API target hostname from environment variables.
+ *
+ * Priority:
+ *   1. Explicit COPILOT_API_TARGET env var
+ *   2. Auto-derived from GITHUB_SERVER_URL:
+ *      - *.ghe.com (GHEC tenant) → copilot-api.<subdomain>.ghe.com
+ *      - Other non-github.com  (GHES)   → api.enterprise.githubcopilot.com
+ *   3. Default: api.githubcopilot.com
+ *
+ * @param {Record<string, string|undefined>} env - Environment variables
+ * @returns {string} Copilot API target hostname
+ */
+function deriveCopilotApiTarget(env = process.env) {
+  if (env.COPILOT_API_TARGET) {
+    const target = normalizeApiTarget(env.COPILOT_API_TARGET);
+    // Only use the explicit value if it parsed into a valid hostname;
+    // fall through to auto-derivation when the value is malformed.
+    if (target) return target;
+  }
+  const serverHost = classifyGithubServerHost(env);
+  if (serverHost.kind === 'ghec') return `copilot-api.${serverHost.subdomain}.ghe.com`;
+  if (serverHost.kind === 'ghes') return 'api.enterprise.githubcopilot.com';
+  return 'api.githubcopilot.com';
+}
+
+/**
+ * Derive the GitHub REST API target hostname (used for GHES/GHEC endpoints).
+ *
+ * Priority:
+ *   1. Explicit GITHUB_API_URL env var (hostname extracted)
+ *   2. Auto-derived from GITHUB_SERVER_URL for GHEC tenants (*.ghe.com)
+ *   3. Default: api.github.com
+ *
+ * @param {Record<string, string|undefined>} env - Environment variables
+ * @returns {string} GitHub REST API target hostname
+ */
+function deriveGitHubApiTarget(env = process.env) {
+  if (env.GITHUB_API_URL) {
+    const target = normalizeApiTarget(env.GITHUB_API_URL);
+    if (target) return target;
+  }
+  const serverHost = classifyGithubServerHost(env);
+  if (serverHost.kind === 'ghec') return `api.${serverHost.subdomain}.ghe.com`;
+  return 'api.github.com';
+}
+
+/**
+ * Extract the base path from GITHUB_API_URL for GHES deployments
+ * (e.g. https://ghes.example.com/api/v3 → '/api/v3').
+ * Returns '' for github.com or when no path component is present.
+ *
+ * @param {Record<string, string|undefined>} env - Environment variables
+ * @returns {string} Base path or ''
+ */
+function deriveGitHubApiBasePath(env = process.env) {
+  const raw = env.GITHUB_API_URL;
+  if (!raw) return '';
+  try {
+    const parsed = new URL(raw.trim().startsWith('http') ? raw.trim() : `https://${raw.trim()}`);
+    const p = parsed.pathname.replace(/\/+$/, '');
+    return p === '/' ? '' : p;
+  } catch {
+    return '';
+  }
+}
+
+function isGithubCopilotCatalogTarget(rawTarget) {
+  const target = normalizeApiTarget(rawTarget);
+  if (!target) return true;
+  return target === 'api.githubcopilot.com'
+    || target === 'api.enterprise.githubcopilot.com'
+    || target.endsWith('.githubcopilot.com')
+    || target.endsWith('.ghe.com');
+}
+
+function getCopilotModelFallbackPolicy(modelFallback, env = process.env) {
+  if (!modelFallback.enabled) {
+    return { effective: modelFallback, suppressed: false };
+  }
+
+  const hasByokHints = Boolean(
+    (env.COPILOT_PROVIDER_TYPE || '').trim()
+    || (env.COPILOT_PROVIDER_BASE_URL || '').trim()
+    || (env.COPILOT_PROVIDER_API_KEY || '').trim()
+  );
+
+  // Standard Copilot (no BYOK hints): suppress fallback because Copilot is
+  // authoritative for its own model catalogue. Rewriting a retired/restricted
+  // model to a middle-power fallback obscures the real error.
+  if (!hasByokHints) {
+    return {
+      effective: { ...modelFallback, enabled: false },
+      suppressed: true,
+      suppression_reason: 'copilot_standard_authoritative',
+    };
+  }
+
+  // BYOK pointing at a GitHub Copilot catalog target — still suppress because
+  // the catalog is authoritative.
+  if (isGithubCopilotCatalogTarget(env.COPILOT_API_TARGET)) {
+    return {
+      effective: { ...modelFallback, enabled: false },
+      suppressed: true,
+      suppression_reason: 'copilot_catalog_target_authoritative',
+    };
+  }
+
+  // BYOK pointing at a non-GitHub target (Azure, custom OpenAI, etc.)
+  return {
+    effective: { ...modelFallback, enabled: false },
+    suppressed: true,
+    suppression_reason: 'copilot_byok_non_githubcopilot_target',
+  };
+}
+
+/**
+ * Detect whether the current environment is a GHES (GitHub Enterprise Server) instance.
+ *
+ * Uses multiple signals to avoid false negatives:
+ *   0. AWF_PLATFORM_TYPE === 'ghes' (explicit config — highest priority)
+ *   1. The resolved Copilot API target is api.enterprise.githubcopilot.com
+ *   2. GITHUB_SERVER_URL is set and is not github.com or *.ghe.com (GHEC)
+ *
+ * @param {string} resolvedTarget - The resolved Copilot API target hostname
+ * @param {Record<string, string|undefined>} env - Environment variables
+ * @returns {boolean}
+ */
+function isGhesInstance(resolvedTarget, env = process.env) {
+  // Explicit platform config takes highest priority
+  if (env.AWF_PLATFORM_TYPE === 'ghes') return true;
+  // Explicit non-GHES platform types override heuristics
+  if (env.AWF_PLATFORM_TYPE && env.AWF_PLATFORM_TYPE !== 'ghes') return false;
+
+  if (resolvedTarget === 'api.enterprise.githubcopilot.com') return true;
+  return classifyGithubServerHost(env).kind === 'ghes';
+}
+
+/**
+ * GitHub-hosted Copilot endpoints that authenticate a GitHub OAuth/PAT token
+ * directly and therefore require the `token <value>` Authorization prefix
+ * (rather than `Bearer <value>`) for GitHub credentials.
+ *
+ * Enterprise, Business, and GHEC data-residency endpoints behave this way; the
+ * standard `api.githubcopilot.com` endpoint instead expects a Copilot token
+ * with the `Bearer` prefix.
+ */
+const GITHUB_TOKEN_PREFIX_COPILOT_TARGETS = new Set([
+  'api.enterprise.githubcopilot.com',
+  'api.business.githubcopilot.com',
+]);
+
+function isGhecCopilotApiTarget(target) {
+  return /^copilot-api\.[^.]+\.ghe\.com$/.test(target);
+}
+
+/**
+ * Decide whether a GitHub OAuth/PAT token sent to the Copilot API must use the
+ * `token <value>` Authorization prefix instead of `Bearer <value>`.
+ *
+ * This is true when either:
+ *   1. The resolved target is a known GitHub-hosted Copilot endpoint that
+ *      authenticates the GitHub token directly — i.e. the Enterprise, Business,
+ *      or GHEC data-residency host. This check takes highest priority and is NOT
+ *      overridable by AWF_PLATFORM_TYPE. Without this ordering, an explicit
+ *      AWF_PLATFORM_TYPE=ghec would suppress the required `token` prefix.
+ *   2. The environment is a GHES instance (see {@link isGhesInstance}).
+ *
+ * An explicit non-GHES AWF_PLATFORM_TYPE overrides the GHES heuristics (case 2)
+ * but never overrides known catalog endpoints (case 1).
+ *
+ * BYOK API keys always use `Bearer`; this predicate only governs the GitHub
+ * token case (callers gate on the absence of a real BYOK key).
+ *
+ * @param {string} resolvedTarget - The resolved Copilot API target hostname
+ * @param {Record<string, string|undefined>} env - Environment variables
+ * @returns {boolean}
+ */
+function copilotTargetRequiresGitHubTokenPrefix(resolvedTarget, env = process.env) {
+  // Known GitHub-hosted Copilot endpoints always require the 'token' prefix for
+  // GitHub OAuth/PAT credentials, regardless of platform type. This check must
+  // come before the AWF_PLATFORM_TYPE guard so that an explicit platform type
+  // does not suppress the required 'token' prefix.
+  const target = normalizeApiTarget(resolvedTarget);
+  if (target && (
+    GITHUB_TOKEN_PREFIX_COPILOT_TARGETS.has(target)
+    || isGhecCopilotApiTarget(target)
+  )) return true;
+
+  // An explicit non-GHES platform type overrides the GHES heuristics below
+  // for custom/unknown targets but never overrides catalog endpoints (above).
+  if (env.AWF_PLATFORM_TYPE && env.AWF_PLATFORM_TYPE !== 'ghes') return false;
+
+  if (isGhesInstance(resolvedTarget, env)) return true;
+  return false;
+}
+
+module.exports = {
+  stripBearerPrefix,
+  resolveApiKey,
+  resolveCopilotAuthToken,
+  deriveCopilotApiTarget,
+  deriveGitHubApiTarget,
+  deriveGitHubApiBasePath,
+  isGithubCopilotCatalogTarget,
+  isGhesInstance,
+  classifyGithubServerHost,
+  copilotTargetRequiresGitHubTokenPrefix,
+  getCopilotModelFallbackPolicy,
+  // Exported for unit-test access only; not part of the public API.
+  _testing: {
+    stripBearerPrefix,
+    resolveApiKey,
+    resolveCopilotAuthToken,
+    deriveCopilotApiTarget,
+    deriveGitHubApiTarget,
+    deriveGitHubApiBasePath,
+    isGithubCopilotCatalogTarget,
+    isGhesInstance,
+    classifyGithubServerHost,
+    copilotTargetRequiresGitHubTokenPrefix,
+    getCopilotModelFallbackPolicy,
+  },
+};

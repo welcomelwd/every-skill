@@ -1,0 +1,638 @@
+import * as fs from 'fs';
+import * as path from 'path';
+import { execFileSync } from 'child_process';
+import Ajv2020 from 'ajv/dist/2020'; // ajv package path, not this project's dist/
+
+const schemaPath = path.join(__dirname, '..', 'docs', 'awf-config.schema.json');
+
+describe('awf-config.schema.json', () => {
+  let schema: Record<string, unknown>;
+  let validate: ReturnType<Ajv2020['compile']>;
+
+  beforeAll(() => {
+    const raw = fs.readFileSync(schemaPath, 'utf8');
+    schema = JSON.parse(raw) as Record<string, unknown>;
+    const ajv = new Ajv2020({ allErrors: true });
+    ajv.addKeyword({ keyword: 'version' });
+    validate = ajv.compile(schema);
+  });
+
+  it('is valid JSON and compiles without errors', () => {
+    expect(schema).toBeDefined();
+    expect(validate).toBeDefined();
+  });
+
+  it('has expected top-level metadata', () => {
+    expect(schema.$schema).toBe('https://json-schema.org/draft/2020-12/schema');
+    expect(schema.type).toBe('object');
+    expect(schema.additionalProperties).toBe(false);
+  });
+
+  it('covers all AwfFileConfig top-level fields', () => {
+    const properties = schema.properties as Record<string, unknown>;
+    expect(Object.keys(properties)).toEqual(
+      expect.arrayContaining([
+        '$schema',
+        'network',
+        'apiProxy',
+        'security',
+        'container',
+        'chroot',
+        'dind',
+        'environment',
+        'logging',
+        'rateLimiting',
+        'platform',
+        'enclaves',
+      ])
+    );
+  });
+
+  it('accepts an empty config', () => {
+    expect(validate({})).toBe(true);
+    expect(validate.errors).toBeNull();
+  });
+
+  it('accepts a full valid config', () => {
+    const valid = {
+      $schema: 'https://github.com/github/gh-aw-firewall/releases/latest/download/awf-config.schema.json',
+      network: {
+        allowDomains: ['github.com', 'api.openai.com'],
+        blockDomains: ['malicious.example.com'],
+        dnsServers: ['8.8.8.8', '8.8.4.4'],
+        upstreamProxy: 'http://proxy.corp.example.com:8080',
+        isolation: true,
+        topologyAttach: ['mcp-gateway', 'difc-proxy'],
+      },
+      apiProxy: {
+        enabled: true,
+        anthropicAutoCache: true,
+        anthropicCacheTailTtl: '5m',
+        maxEffectiveTokens: 100000,
+        maxAiCredits: 5.5,
+        modelMultipliers: {
+          'gpt-4o': 2,
+          'claude-sonnet-4': 1.5,
+        },
+        defaultModelMultiplier: 2,
+        maxCacheMisses: 3,
+        targets: {
+          openai: { host: 'api.openai.com', basePath: '/v1' },
+          anthropic: { host: 'api.anthropic.com', basePath: '/v1' },
+          copilot: { host: 'api.githubcopilot.com', extraHeaders: { 'x-session-id': 'run-42' } },
+          gemini: { host: 'generativelanguage.googleapis.com', basePath: '/v1beta' },
+        },
+        models: {
+          'gpt-4o': ['gpt-4o-2024-11-20', 'gpt-4o-latest'],
+        },
+      },
+      security: {
+        sslBump: false,
+        enableDlp: false,
+        enableHostAccess: true,
+        allowHostPorts: ['5432', '6379'],
+        allowHostServicePorts: 'postgresql',
+        difcProxy: { host: 'proxy.example.com', caCert: '/path/to/ca.crt' },
+      },
+      container: {
+        memoryLimit: '4g',
+        agentTimeout: 30,
+        enableDind: false,
+        workDir: '/tmp/awf-work',
+        containerWorkDir: '/workspace',
+        imageRegistry: 'ghcr.io/github/gh-aw-firewall',
+        imageTag: 'latest',
+        skipPull: false,
+        buildLocal: false,
+        agentImage: 'ghcr.io/actions/actions-runner:latest',
+        tty: false,
+        dockerHost: 'unix:///var/run/docker.sock',
+        dockerHostPathPrefix: '/host',
+      },
+      chroot: {
+        identity: {
+          home: '/tmp/gh-aw/home',
+          user: 'runner',
+          uid: 1001,
+          gid: 1001,
+        },
+      },
+      dind: {
+        preStageDirs: true,
+        workDir: '/tmp/gh-aw',
+        stagingImage: 'ghcr.io/github/gh-aw-firewall/agent:latest',
+        stageEngineBinary: {
+          path: '/usr/local/bin/copilot',
+          targetPath: '/usr/local/bin/copilot',
+        },
+      },
+      environment: {
+        envFile: '.env',
+        envAll: false,
+        excludeEnv: ['AWS_SECRET_ACCESS_KEY'],
+      },
+      logging: {
+        logLevel: 'info',
+        diagnosticLogs: true,
+        auditDir: '/tmp/awf-audit',
+        proxyLogsDir: '/tmp/awf-proxy-logs',
+        sessionStateDir: '/tmp/gh-aw/sandbox/agent/session-state',
+      },
+      rateLimiting: {
+        enabled: true,
+        requestsPerMinute: 60,
+        requestsPerHour: 1000,
+        bytesPerMinute: 10485760,
+      },
+      platform: {
+        type: 'ghes',
+      },
+    };
+    expect(validate(valid)).toBe(true);
+    expect(validate.errors).toBeNull();
+  });
+
+  it('rejects unknown top-level fields', () => {
+    expect(validate({ unknown: true })).toBe(false);
+  });
+
+  it.each([
+    `bounded${'Queries'}`,
+    `bounded${'Agents'}`,
+  ])('rejects removed configuration key %s', (removedKey) => {
+    expect(validate({ [removedKey]: { enabled: true } })).toBe(false);
+    expect(validate.errors).not.toBeNull();
+  });
+
+  it('rejects unknown network fields', () => {
+    expect(validate({ network: { unknownField: true } })).toBe(false);
+  });
+
+  it('rejects non-string $schema', () => {
+    expect(validate({ $schema: 123 })).toBe(false);
+  });
+
+  it('rejects non-array network.allowDomains', () => {
+    expect(validate({ network: { allowDomains: 'github.com' } })).toBe(false);
+  });
+
+  it('accepts network.isolation as a boolean', () => {
+    expect(validate({ network: { isolation: true } })).toBe(true);
+    expect(validate({ network: { isolation: 'yes' } })).toBe(false);
+  });
+
+  it('requires network.isolation:true when network.topologyAttach is set', () => {
+    expect(validate({ network: { isolation: true, topologyAttach: ['mcp-gateway'] } })).toBe(true);
+    // topologyAttach without isolation is rejected
+    expect(validate({ network: { topologyAttach: ['mcp-gateway'] } })).toBe(false);
+    // topologyAttach with isolation:false is rejected
+    expect(validate({ network: { isolation: false, topologyAttach: ['mcp-gateway'] } })).toBe(false);
+  });
+
+  it('rejects non-string network.topologyAttach items', () => {
+    expect(validate({ network: { isolation: true, topologyAttach: [123] } })).toBe(false);
+  });
+
+  it('rejects invalid anthropicCacheTailTtl values', () => {
+    expect(validate({ apiProxy: { anthropicCacheTailTtl: '10m' } })).toBe(false);
+    expect(validate({ apiProxy: { anthropicCacheTailTtl: '5m' } })).toBe(true);
+    expect(validate({ apiProxy: { anthropicCacheTailTtl: '1h' } })).toBe(true);
+  });
+
+  it('validates effective-token guard apiProxy fields', () => {
+    expect(validate({ apiProxy: { maxEffectiveTokens: 1000 } })).toBe(true);
+    expect(validate({ apiProxy: { maxEffectiveTokens: 0 } })).toBe(false);
+    expect(validate({ apiProxy: { maxAiCredits: 1.2 } })).toBe(true);
+    expect(validate({ apiProxy: { maxAiCredits: 0 } })).toBe(false);
+    expect(validate({ apiProxy: { modelMultipliers: { 'gpt-4o': 2, 'claude': 1.5 } } })).toBe(true);
+    expect(validate({ apiProxy: { modelMultipliers: { 'gpt-4o': 0 } } })).toBe(false);
+    expect(validate({ apiProxy: { defaultModelMultiplier: 27 } })).toBe(true);
+    expect(validate({ apiProxy: { defaultModelMultiplier: 0 } })).toBe(false);
+    expect(validate({ apiProxy: { maxCacheMisses: 3 } })).toBe(true);
+    expect(validate({ apiProxy: { maxCacheMisses: 0 } })).toBe(false);
+  });
+
+  it('accepts apiProxy.requestedModel as a string', () => {
+    expect(validate({ apiProxy: { requestedModel: 'gpt-4o' } })).toBe(true);
+    expect(validate({ apiProxy: { requestedModel: 123 } })).toBe(false);
+  });
+
+  it('accepts apiProxy.modelRouter with string fields', () => {
+    expect(validate({
+      apiProxy: {
+        modelRouter: {
+          providerType: 'azure',
+          baseUrl: 'https://router.example.com/v1',
+        },
+      },
+    })).toBe(true);
+  });
+
+  it('rejects invalid apiProxy.modelRouter field types', () => {
+    expect(validate({ apiProxy: { modelRouter: { providerType: 123 } } })).toBe(false);
+    expect(validate({ apiProxy: { modelRouter: { baseUrl: 456 } } })).toBe(false);
+  });
+
+  it('rejects invalid logging.logLevel values', () => {
+    expect(validate({ logging: { logLevel: 'verbose' } })).toBe(false);
+    expect(validate({ logging: { logLevel: 'debug' } })).toBe(true);
+    expect(validate({ logging: { logLevel: 'info' } })).toBe(true);
+    expect(validate({ logging: { logLevel: 'warn' } })).toBe(true);
+    expect(validate({ logging: { logLevel: 'error' } })).toBe(true);
+  });
+
+  it('rejects non-positive-integer agentTimeout', () => {
+    expect(validate({ container: { agentTimeout: 0 } })).toBe(false);
+    expect(validate({ container: { agentTimeout: -1 } })).toBe(false);
+    expect(validate({ container: { agentTimeout: 1 } })).toBe(true);
+  });
+
+  it('accepts container.runnerToolCachePath as a string', () => {
+    expect(validate({ container: { runnerToolCachePath: '/opt/hostedtoolcache' } })).toBe(true);
+    expect(validate({ container: { runnerToolCachePath: 123 } })).toBe(false);
+  });
+
+  it('accepts valid container.mounts array', () => {
+    expect(validate({ container: { mounts: ['/tmp/gh-aw:/tmp/gh-aw:ro'] } })).toBe(true);
+    expect(validate({ container: { mounts: ['/tmp/gh-aw:/tmp/gh-aw:rw', '/data:/data'] } })).toBe(true);
+    expect(validate({ container: { mounts: [] } })).toBe(true);
+  });
+
+  it('rejects invalid container.mounts entries', () => {
+    expect(validate({ container: { mounts: ['invalid-no-colon'] } })).toBe(false);
+    expect(validate({ container: { mounts: ['/src:/dst:invalid-mode'] } })).toBe(false);
+    expect(validate({ container: { mounts: 'not-an-array' } })).toBe(false);
+    // Relative paths must be rejected (runtime validator requires absolute paths)
+    expect(validate({ container: { mounts: ['relative/path:/container/dst'] } })).toBe(false);
+    expect(validate({ container: { mounts: ['/host/src:relative/container'] } })).toBe(false);
+    expect(validate({ container: { mounts: ['./relative:/container/dst:ro'] } })).toBe(false);
+  });
+
+  it('accepts runner.topology and runner.sysrootImage', () => {
+    expect(validate({ runner: { topology: 'arc-dind' } })).toBe(true);
+    expect(validate({ runner: { topology: 'invalid' } })).toBe(false);
+    expect(validate({ runner: { sysrootImage: 'ghcr.io/github/gh-aw-firewall/build-tools:latest' } })).toBe(true);
+    expect(validate({ runner: { sysrootImage: 123 } })).toBe(false);
+  });
+
+  it('validates chroot.identity fields', () => {
+    expect(validate({ chroot: { identity: { home: '/tmp/gh-aw/home', user: 'runner', uid: 1001, gid: 1001 } } })).toBe(true);
+    expect(validate({ chroot: { identity: { uid: 1.2 } } })).toBe(false);
+    expect(validate({ chroot: { identity: { gid: 1.2 } } })).toBe(false);
+  });
+
+  it('validates chroot.binariesSourcePath as string', () => {
+    expect(validate({ chroot: { binariesSourcePath: '/tmp/gh-aw/runner-bin' } })).toBe(true);
+    expect(validate({ chroot: { binariesSourcePath: 123 } })).toBe(false);
+  });
+
+  it('validates dind bootstrap fields', () => {
+    expect(validate({
+      dind: {
+        preStageDirs: true,
+        workDir: '/tmp/gh-aw',
+        stagingImage: 'ghcr.io/github/gh-aw-firewall/agent:latest',
+        stageEngineBinary: {
+          path: '/usr/local/bin/copilot',
+          targetPath: '/usr/local/bin/copilot',
+        },
+      },
+    })).toBe(true);
+    expect(validate({ dind: { preStageDirs: 'true' } })).toBe(false);
+    expect(validate({ dind: { stageEngineBinary: { path: 123 } } })).toBe(false);
+  });
+
+  it('rejects non-positive-integer rateLimiting values', () => {
+    expect(validate({ rateLimiting: { requestsPerMinute: 0 } })).toBe(false);
+    expect(validate({ rateLimiting: { requestsPerMinute: 1 } })).toBe(true);
+    expect(validate({ rateLimiting: { bytesPerMinute: -5 } })).toBe(false);
+  });
+
+  it('rejects copilot basePath (not supported)', () => {
+    expect(validate({ apiProxy: { targets: { copilot: { host: 'api.githubcopilot.com', basePath: '/v1' } } } })).toBe(false);
+  });
+
+  it('accepts copilot extraHeaders as string map', () => {
+    expect(validate({
+      apiProxy: {
+        targets: {
+          copilot: {
+            host: 'api.githubcopilot.com',
+            extraHeaders: { 'x-session-id': 'run-42' },
+          },
+        },
+      },
+    })).toBe(true);
+  });
+
+  it('rejects non-string copilot extraHeaders values', () => {
+    expect(validate({
+      apiProxy: {
+        targets: {
+          copilot: {
+            extraHeaders: { 'x-session-id': 42 },
+          },
+        },
+      },
+    })).toBe(false);
+  });
+
+  it('accepts copilot extraBodyFields as string map', () => {
+    expect(validate({
+      apiProxy: {
+        targets: {
+          copilot: {
+            extraBodyFields: { session_id: 'run-42' },
+          },
+        },
+      },
+    })).toBe(true);
+  });
+
+  it('rejects non-string copilot extraBodyFields values', () => {
+    expect(validate({
+      apiProxy: {
+        targets: {
+          copilot: {
+            extraBodyFields: { session_id: 42 },
+          },
+        },
+      },
+    })).toBe(false);
+  });
+
+  it('accepts copilot sessionId as a string', () => {
+    expect(validate({
+      apiProxy: {
+        targets: {
+          copilot: {
+            sessionId: 'run-42',
+          },
+        },
+      },
+    })).toBe(true);
+  });
+
+  it('rejects non-string copilot sessionId', () => {
+    expect(validate({
+      apiProxy: {
+        targets: {
+          copilot: {
+            sessionId: 42,
+          },
+        },
+      },
+    })).toBe(false);
+  });
+
+  it('accepts allowHostPorts as string or array of strings', () => {
+    expect(validate({ security: { allowHostPorts: '5432' } })).toBe(true);
+    expect(validate({ security: { allowHostPorts: ['5432', '6379'] } })).toBe(true);
+    expect(validate({ security: { allowHostPorts: 5432 } })).toBe(false);
+  });
+
+  it('accepts apiProxy.models as object with string array values', () => {
+    expect(validate({ apiProxy: { models: { 'gpt-4o': ['gpt-4o-2024-11-20'] } } })).toBe(true);
+    expect(validate({ apiProxy: { models: { 'gpt-4o': 'not-an-array' } } })).toBe(false);
+  });
+
+  it('accepts a valid apiProxy.auth azure config (default provider)', () => {
+    expect(
+      validate({
+        apiProxy: {
+          auth: {
+            type: 'github-oidc',
+            azureTenantId: 'my-tenant-id',
+            azureClientId: 'my-client-id',
+          },
+        },
+      })
+    ).toBe(true);
+  });
+
+  it('accepts a valid apiProxy.auth azure config with all optional fields', () => {
+    expect(
+      validate({
+        apiProxy: {
+          auth: {
+            type: 'github-oidc',
+            provider: 'azure',
+            oidcAudience: 'api://AzureADTokenExchange',
+            azureTenantId: 'my-tenant-id',
+            azureClientId: 'my-client-id',
+            azureScope: 'https://cognitiveservices.azure.com/.default',
+            azureCloud: 'usgovernment',
+          },
+        },
+      })
+    ).toBe(true);
+  });
+
+  it('rejects apiProxy.auth azure config missing azureTenantId', () => {
+    expect(
+      validate({
+        apiProxy: { auth: { type: 'github-oidc', azureClientId: 'my-client-id' } },
+      })
+    ).toBe(false);
+  });
+
+  it('rejects apiProxy.auth azure config missing azureClientId', () => {
+    expect(
+      validate({
+        apiProxy: { auth: { type: 'github-oidc', azureTenantId: 'my-tenant-id' } },
+      })
+    ).toBe(false);
+  });
+
+  it('accepts a valid apiProxy.auth aws config', () => {
+    expect(
+      validate({
+        apiProxy: {
+          auth: {
+            type: 'github-oidc',
+            provider: 'aws',
+            awsRoleArn: 'arn:aws:iam::123456789012:role/my-role',
+            awsRegion: 'us-east-1',
+          },
+        },
+      })
+    ).toBe(true);
+  });
+
+  it('rejects apiProxy.auth aws config missing awsRoleArn', () => {
+    expect(
+      validate({
+        apiProxy: {
+          auth: { type: 'github-oidc', provider: 'aws', awsRegion: 'us-east-1' },
+        },
+      })
+    ).toBe(false);
+  });
+
+  it('rejects apiProxy.auth aws config missing awsRegion', () => {
+    expect(
+      validate({
+        apiProxy: {
+          auth: {
+            type: 'github-oidc',
+            provider: 'aws',
+            awsRoleArn: 'arn:aws:iam::123456789012:role/my-role',
+          },
+        },
+      })
+    ).toBe(false);
+  });
+
+  it('accepts a valid apiProxy.auth gcp config', () => {
+    expect(
+      validate({
+        apiProxy: {
+          auth: {
+            type: 'github-oidc',
+            provider: 'gcp',
+            gcpWorkloadIdentityProvider:
+              'projects/123/locations/global/workloadIdentityPools/pool/providers/github',
+          },
+        },
+      })
+    ).toBe(true);
+  });
+
+  it('rejects apiProxy.auth gcp config missing gcpWorkloadIdentityProvider', () => {
+    expect(
+      validate({
+        apiProxy: { auth: { type: 'github-oidc', provider: 'gcp' } },
+      })
+    ).toBe(false);
+  });
+
+  it('accepts a valid apiProxy.auth anthropic config', () => {
+    expect(
+      validate({
+        apiProxy: {
+          auth: {
+            type: 'github-oidc',
+            provider: 'anthropic',
+            anthropicFederationRuleId: 'fdrl_abc123',
+            anthropicOrganizationId: 'org-uuid-abc',
+            anthropicServiceAccountId: 'svac_abc123',
+          },
+        },
+      })
+    ).toBe(true);
+  });
+
+  it('rejects apiProxy.auth anthropic without required fields', () => {
+    expect(
+      validate({
+        apiProxy: {
+          auth: {
+            type: 'github-oidc',
+            provider: 'anthropic',
+          },
+        },
+      })
+    ).toBe(false);
+  });
+
+  it('accepts apiProxy.auth anthropic with optional workspaceId', () => {
+    expect(
+      validate({
+        apiProxy: {
+          auth: {
+            type: 'github-oidc',
+            provider: 'anthropic',
+            anthropicFederationRuleId: 'fdrl_abc123',
+            anthropicOrganizationId: 'org-uuid-abc',
+            anthropicServiceAccountId: 'svac_abc123',
+            anthropicWorkspaceId: 'ws_abc123',
+          },
+        },
+      })
+    ).toBe(true);
+  });
+
+  it('accepts apiProxy.auth anthropic with optional token URL override', () => {
+    expect(
+      validate({
+        apiProxy: {
+          auth: {
+            type: 'github-oidc',
+            provider: 'anthropic',
+            anthropicFederationRuleId: 'fdrl_abc123',
+            anthropicOrganizationId: 'org-uuid-abc',
+            anthropicServiceAccountId: 'svac_abc123',
+            anthropicTokenUrl: 'https://anthropic.internal.example/v1/oauth/token',
+          },
+        },
+      })
+    ).toBe(true);
+  });
+
+  it('rejects apiProxy.auth with unknown type', () => {
+    expect(
+      validate({
+        apiProxy: {
+          auth: { type: 'basic', azureTenantId: 'tid', azureClientId: 'cid' },
+        },
+      })
+    ).toBe(false);
+  });
+
+  it('rejects apiProxy.auth with unknown provider', () => {
+    expect(
+      validate({
+        apiProxy: {
+          auth: { type: 'github-oidc', provider: 'oracle', azureTenantId: 'tid', azureClientId: 'cid' },
+        },
+      })
+    ).toBe(false);
+  });
+
+  it('rejects apiProxy.auth with extra properties', () => {
+    expect(
+      validate({
+        apiProxy: {
+          auth: {
+            type: 'github-oidc',
+            azureTenantId: 'my-tenant-id',
+            azureClientId: 'my-client-id',
+            unknownField: true,
+          },
+        },
+      })
+    ).toBe(false);
+  });
+
+  it('rejects invalid apiProxy.auth.azureCloud value', () => {
+    expect(
+      validate({
+        apiProxy: {
+          auth: {
+            type: 'github-oidc',
+            azureTenantId: 'my-tenant-id',
+            azureClientId: 'my-client-id',
+            azureCloud: 'invalid-cloud',
+          },
+        },
+      })
+    ).toBe(false);
+  });
+
+  it('src/awf-config-schema.json stays in sync with docs/awf-config.schema.json', () => {
+    const srcSchemaPath = path.join(__dirname, 'awf-config-schema.json');
+    const srcSchema = JSON.parse(fs.readFileSync(srcSchemaPath, 'utf8'));
+    // Compare all fields except $id (which differs for versioned releases)
+    const docsRest = { ...schema };
+    delete docsRest.$id;
+    const srcRest = { ...srcSchema };
+    delete srcRest.$id;
+    expect(srcRest).toEqual(docsRest);
+  });
+
+  it('scripts/generate-schema.mjs --print matches docs/awf-config.schema.json', () => {
+    const scriptPath = path.join(__dirname, '..', 'scripts', 'generate-schema.mjs');
+    const printedSchema = execFileSync(process.execPath, [scriptPath, '--print'], { encoding: 'utf8' });
+    expect(JSON.parse(printedSchema)).toEqual(schema);
+  });
+});

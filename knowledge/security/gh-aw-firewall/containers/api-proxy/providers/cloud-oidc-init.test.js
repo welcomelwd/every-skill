@@ -1,0 +1,333 @@
+'use strict';
+
+const {
+  resolveCloudOidcProviders,
+  createProviderOidcAuth,
+  createProviderOidcHeaderResolver,
+  createProviderOidcHeaderStrategy,
+} = require('./cloud-oidc-init');
+
+describe('resolveCloudOidcProviders', () => {
+  it('returns no providers when github-oidc is not configured', () => {
+    const result = resolveCloudOidcProviders({});
+    expect(result.authProvider).toBe('azure');
+    expect(result.oidcProvider).toBeNull();
+    expect(result.awsOidcProvider).toBeNull();
+    expect(result.oidcConfigured).toBe(false);
+  });
+
+  it('supports skipping provider initialization when skipWhen=true', () => {
+    const result = resolveCloudOidcProviders({
+      AWF_AUTH_TYPE: 'github-oidc',
+      ACTIONS_ID_TOKEN_REQUEST_URL: 'http://localhost/token',
+      ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'test-token',
+      AWF_AUTH_AZURE_TENANT_ID: 'tenant-uuid',
+      AWF_AUTH_AZURE_CLIENT_ID: 'client-uuid',
+    }, { skipWhen: true });
+
+    expect(result.oidcProvider).toBeNull();
+    expect(result.awsOidcProvider).toBeNull();
+    expect(result.oidcConfigured).toBe(false);
+  });
+
+  it('creates Azure provider by default when configured', () => {
+    const result = resolveCloudOidcProviders({
+      AWF_AUTH_TYPE: 'github-oidc',
+      ACTIONS_ID_TOKEN_REQUEST_URL: 'http://localhost/token',
+      ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'test-token',
+      AWF_AUTH_AZURE_TENANT_ID: 'tenant-uuid',
+      AWF_AUTH_AZURE_CLIENT_ID: 'client-uuid',
+    });
+
+    expect(result.authProvider).toBe('azure');
+    expect(result.oidcProvider).toBeTruthy();
+    expect(result.awsOidcProvider).toBeNull();
+    expect(result.oidcConfigured).toBe(true);
+
+    result.oidcProvider.shutdown();
+  });
+
+  it('creates AWS provider when configured', () => {
+    const result = resolveCloudOidcProviders({
+      AWF_AUTH_TYPE: 'github-oidc',
+      AWF_AUTH_PROVIDER: 'aws',
+      ACTIONS_ID_TOKEN_REQUEST_URL: 'http://localhost/token',
+      ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'test-token',
+      AWF_AUTH_AWS_ROLE_ARN: 'arn:aws:iam::123456789012:role/my-role',
+      AWF_AUTH_AWS_REGION: 'us-east-1',
+    });
+
+    expect(result.authProvider).toBe('aws');
+    expect(result.oidcProvider).toBeNull();
+    expect(result.awsOidcProvider).toBeTruthy();
+    expect(result.oidcConfigured).toBe(true);
+
+    result.awsOidcProvider.shutdown();
+  });
+
+  it('creates GCP provider when configured', () => {
+    const result = resolveCloudOidcProviders({
+      AWF_AUTH_TYPE: 'github-oidc',
+      AWF_AUTH_PROVIDER: 'gcp',
+      ACTIONS_ID_TOKEN_REQUEST_URL: 'http://localhost/token',
+      ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'test-token',
+      AWF_AUTH_GCP_WORKLOAD_IDENTITY_PROVIDER: 'projects/123/locations/global/workloadIdentityPools/pool/providers/provider',
+    });
+
+    expect(result.authProvider).toBe('gcp');
+    expect(result.oidcProvider).toBeTruthy();
+    expect(result.awsOidcProvider).toBeNull();
+    expect(result.oidcConfigured).toBe(true);
+
+    result.oidcProvider.shutdown();
+  });
+});
+
+describe('createProviderOidcAuth', () => {
+  it('returns no providers and a disabled bundle when OIDC is not configured', () => {
+    const auth = createProviderOidcAuth({});
+
+    expect(auth.authProvider).toBe('azure');
+    expect(auth.oidcProvider).toBeNull();
+    expect(auth.awsOidcProvider).toBeNull();
+    expect(auth.oidcConfigured).toBe(false);
+    expect(auth.runtimeMethods.isEnabled()).toBe(false);
+    expect(auth.validationSkip()).toBeNull();
+    expect(auth.skipModelsFetch()).toBe(false);
+  });
+
+  describe('createProviderOidcHeaderResolver', () => {
+    it('resolves OIDC headers when token is available', () => {
+      const resolveAuthHeaders = jest.fn((buildOidcHeaders) => buildOidcHeaders('oidc-token'));
+      const resolver = createProviderOidcHeaderResolver({
+        resolveAuthHeaders,
+        buildOidcHeaders: (token) => ({ Authorization: 'Bearer ' + token }),
+        buildStaticHeaders: () => ({ 'x-api-key': 'static-key' }),
+      });
+
+      expect(resolver.resolveHeaders()).toEqual({ Authorization: 'Bearer ' + 'oidc-' + 'token' });
+      expect(resolveAuthHeaders).toHaveBeenCalledWith(
+        expect.any(Function),
+        { 'x-api-key': 'static-key' },
+      );
+    });
+
+    it('returns static headers when OIDC is not configured', () => {
+      const resolver = createProviderOidcHeaderResolver({
+        resolveAuthHeaders: (_buildOidcHeaders, staticHeaders) => staticHeaders,
+        buildOidcHeaders: (token) => ({ Authorization: 'Bearer ' + token }),
+        buildStaticHeaders: () => ({ 'x-api-key': 'static-key' }),
+      });
+
+      expect(resolver.resolveHeaders()).toEqual({ 'x-api-key': 'static-key' });
+    });
+
+    it('returns empty headers when OIDC is configured but token is unavailable', () => {
+      const resolver = createProviderOidcHeaderResolver({
+        resolveAuthHeaders: () => ({}),
+        buildOidcHeaders: (token) => ({ Authorization: 'Bearer ' + token }),
+        buildStaticHeaders: () => ({ 'x-api-key': 'static-key' }),
+      });
+
+      expect(resolver.resolveHeaders()).toEqual({});
+    });
+  });
+
+  it('isEnabled() returns true when staticAuthToken is set (no OIDC)', () => {
+    const auth = createProviderOidcAuth({}, { staticAuthToken: 'my-api-key' });
+
+    expect(auth.oidcConfigured).toBe(false);
+    expect(auth.runtimeMethods.isEnabled()).toBe(true);
+  });
+
+  it('creates Azure OIDC provider and marks validationSkip/skipModelsFetch', () => {
+    const auth = createProviderOidcAuth({
+      AWF_AUTH_TYPE: 'github-oidc',
+      ACTIONS_ID_TOKEN_REQUEST_URL: 'http://localhost/token',
+      ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'test-token',
+      AWF_AUTH_AZURE_TENANT_ID: 'tenant-uuid',
+      AWF_AUTH_AZURE_CLIENT_ID: 'client-uuid',
+    });
+
+    expect(auth.authProvider).toBe('azure');
+    expect(auth.oidcProvider).toBeTruthy();
+    expect(auth.awsOidcProvider).toBeNull();
+    expect(auth.oidcConfigured).toBe(true);
+    expect(auth.validationSkip()).toEqual({ skip: true, reason: 'OIDC auth; validation via token acquisition' });
+    expect(auth.skipModelsFetch()).toBe(true);
+
+    auth.oidcProvider.shutdown();
+  });
+
+  it('skipWhen=true suppresses OIDC initialisation', () => {
+    const auth = createProviderOidcAuth({
+      AWF_AUTH_TYPE: 'github-oidc',
+      ACTIONS_ID_TOKEN_REQUEST_URL: 'http://localhost/token',
+      ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'test-token',
+      AWF_AUTH_AZURE_TENANT_ID: 'tenant-uuid',
+      AWF_AUTH_AZURE_CLIENT_ID: 'client-uuid',
+    }, { skipWhen: true });
+
+    expect(auth.oidcProvider).toBeNull();
+    expect(auth.oidcConfigured).toBe(false);
+  });
+
+  it('resolveAuthHeaders returns OIDC headers when a token is available', () => {
+    const auth = createProviderOidcAuth({}, {
+      // Bypass resolveCloudOidcProviders by using a factory
+      oidcProviderFactory: () => ({ isReady: () => true, getToken: () => 'oidc-token' }),
+    });
+
+    const headers = auth.resolveAuthHeaders(
+      (token) => ({ Authorization: 'Bearer ' + token }),
+      { 'x-api-key': 'static' },
+    );
+
+    expect(headers).toEqual({ Authorization: 'Bearer oidc-token' });
+  });
+
+  it('resolveAuthHeaders returns empty object when OIDC is configured but token not yet ready', () => {
+    const auth = createProviderOidcAuth({}, {
+      oidcProviderFactory: () => ({ isReady: () => false, getToken: () => '' }),
+    });
+
+    const headers = auth.resolveAuthHeaders(
+      (token) => ({ Authorization: 'Bearer ' + token }),
+      { 'x-api-key': 'static' },
+    );
+
+    expect(headers).toEqual({});
+  });
+
+  it('resolveAuthHeaders returns staticHeaders when OIDC is not configured', () => {
+    const auth = createProviderOidcAuth({});
+
+    const headers = auth.resolveAuthHeaders(
+      (token) => ({ Authorization: 'Bearer ' + token }),
+      { 'x-api-key': 'static-key' },
+    );
+
+    expect(headers).toEqual({ 'x-api-key': 'static-key' });
+  });
+
+  it('uses custom oidcProviderFactory when provided', () => {
+    const mockProvider = { isReady: () => true, getToken: () => 'custom-token' };
+    const factory = jest.fn().mockReturnValue(mockProvider);
+
+    const auth = createProviderOidcAuth({ AWF_AUTH_PROVIDER: 'custom-provider' }, {
+      oidcProviderFactory: factory,
+    });
+
+    expect(factory).toHaveBeenCalledWith(expect.objectContaining({ AWF_AUTH_PROVIDER: 'custom-provider' }));
+    expect(auth.authProvider).toBe('custom-provider');
+    expect(auth.oidcProvider).toBe(mockProvider);
+    expect(auth.awsOidcProvider).toBeNull();
+    expect(auth.oidcConfigured).toBe(true);
+  });
+
+  it('oidcProviderFactory returning null/undefined results in oidcConfigured=false', () => {
+    const auth = createProviderOidcAuth({}, {
+      oidcProviderFactory: () => null,
+    });
+
+    expect(auth.oidcProvider).toBeNull();
+    expect(auth.oidcConfigured).toBe(false);
+    expect(auth.validationSkip()).toBeNull();
+  });
+
+  it('falls back to resolveCloudOidcProviders when oidcProviderFactory is not a function', () => {
+    const auth = createProviderOidcAuth({
+      AWF_AUTH_TYPE: 'github-oidc',
+      ACTIONS_ID_TOKEN_REQUEST_URL: 'http://localhost/token',
+      ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'test-token',
+      AWF_AUTH_AZURE_TENANT_ID: 'tenant-uuid',
+      AWF_AUTH_AZURE_CLIENT_ID: 'client-uuid',
+    }, { oidcProviderFactory: {} });
+
+    expect(auth.authProvider).toBe('azure');
+    expect(auth.oidcProvider).toBeTruthy();
+    expect(auth.oidcConfigured).toBe(true);
+
+    auth.oidcProvider.shutdown();
+  });
+});
+
+describe('createProviderOidcHeaderStrategy', () => {
+  it('returns all oidcAuth fields plus a resolveHeaders function', () => {
+    const strategy = createProviderOidcHeaderStrategy({}, {}, {
+      buildOidcHeaders: (token) => ({ Authorization: 'Bearer ' + token }),
+      buildStaticHeaders: () => ({ 'x-api-key': 'static-key' }),
+    });
+
+    expect(strategy.oidcConfigured).toBe(false);
+    expect(strategy.oidcProvider).toBeNull();
+    expect(strategy.awsOidcProvider).toBeNull();
+    expect(strategy.authProvider).toBe('azure');
+    expect(typeof strategy.runtimeMethods).toBe('object');
+    expect(typeof strategy.validationSkip).toBe('function');
+    expect(typeof strategy.skipModelsFetch).toBe('function');
+    expect(typeof strategy.resolveAuthHeaders).toBe('function');
+    expect(typeof strategy.resolveHeaders).toBe('function');
+  });
+
+  it('resolveHeaders returns static headers when no OIDC is configured', () => {
+    const strategy = createProviderOidcHeaderStrategy({}, {}, {
+      buildOidcHeaders: (token) => ({ Authorization: 'Bearer ' + token }),
+      buildStaticHeaders: () => ({ 'x-api-key': 'static-key' }),
+    });
+
+    expect(strategy.resolveHeaders()).toEqual({ 'x-api-key': 'static-key' });
+  });
+
+  it('resolveHeaders returns OIDC headers when a token is available', () => {
+    const mockProvider = { isReady: () => true, getToken: () => 'oidc-token' };
+    const strategy = createProviderOidcHeaderStrategy({}, {
+      oidcProviderFactory: () => mockProvider,
+    }, {
+      buildOidcHeaders: (token) => ({ Authorization: 'Bearer ' + token }),
+      buildStaticHeaders: () => ({ 'x-api-key': 'static-key' }),
+    });
+
+    expect(strategy.oidcConfigured).toBe(true);
+    expect(strategy.resolveHeaders()).toEqual({ Authorization: 'Bearer oidc-token' });
+  });
+
+  it('resolveHeaders returns empty object when OIDC configured but token not ready', () => {
+    const mockProvider = { isReady: () => false, getToken: () => '' };
+    const strategy = createProviderOidcHeaderStrategy({}, {
+      oidcProviderFactory: () => mockProvider,
+    }, {
+      buildOidcHeaders: (token) => ({ Authorization: 'Bearer ' + token }),
+      buildStaticHeaders: () => ({ 'x-api-key': 'static-key' }),
+    });
+
+    expect(strategy.oidcConfigured).toBe(true);
+    expect(strategy.resolveHeaders()).toEqual({});
+  });
+
+  it('forwards oidcAuthOptions to createProviderOidcAuth', () => {
+    const strategy = createProviderOidcHeaderStrategy({}, {
+      staticAuthToken: 'my-api-key',
+    }, {
+      buildOidcHeaders: (token) => ({ Authorization: 'Bearer ' + token }),
+      buildStaticHeaders: () => ({ 'x-api-key': 'my-api-key' }),
+    });
+
+    expect(strategy.runtimeMethods.isEnabled()).toBe(true);
+  });
+
+  it('resolveHeaders uses the provider-specific buildOidcHeaders decorator', () => {
+    const mockProvider = { isReady: () => true, getToken: () => 'oidc-token' };
+    const strategy = createProviderOidcHeaderStrategy({}, {
+      oidcProviderFactory: () => mockProvider,
+    }, {
+      buildOidcHeaders: (token) => ({ Authorization: 'Bearer ' + token, 'x-custom': 'extra' }),
+      buildStaticHeaders: () => ({ 'x-api-key': 'static-key' }),
+    });
+
+    expect(strategy.resolveHeaders()).toEqual({
+      Authorization: 'Bearer oidc-token',
+      'x-custom': 'extra',
+    });
+  });
+});

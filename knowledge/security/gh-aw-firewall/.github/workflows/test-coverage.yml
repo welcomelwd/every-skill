@@ -1,0 +1,203 @@
+name: Test Coverage
+
+on:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - '.github/workflows/release.yml'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  coverage:
+    name: Test Coverage Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build project
+        run: npm run build
+
+      - name: Run tests with coverage (PR branch)
+        run: npm run test:coverage
+
+      - name: Save PR coverage
+        run: cp coverage/coverage-summary.json /tmp/pr-coverage-summary.json
+
+      - name: Get base branch coverage (PR only)
+        if: github.event_name == 'pull_request'
+        id: base_coverage
+        run: |
+          # Save the current commit
+          PR_COMMIT=$(git rev-parse HEAD)
+
+          # Checkout base branch
+          git checkout ${{ github.event.pull_request.base.sha }}
+
+          # Install dependencies and build for base branch
+          npm ci
+          npm run build
+
+          # Run coverage on base branch
+          npm run test:coverage || true
+
+          # Save base coverage
+          if [ -f coverage/coverage-summary.json ]; then
+            cp coverage/coverage-summary.json /tmp/base-coverage-summary.json
+            echo "base_coverage_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "base_coverage_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Checkout back to PR commit
+          git checkout $PR_COMMIT
+
+          # Reinstall PR dependencies
+          npm ci
+
+      - name: Compare coverage (PR only)
+        if: github.event_name == 'pull_request' && steps.base_coverage.outputs.base_coverage_exists == 'true'
+        id: compare
+        run: |
+          npx tsx scripts/ci/compare-coverage.ts \
+            /tmp/pr-coverage-summary.json \
+            /tmp/base-coverage-summary.json
+        continue-on-error: true
+
+      - name: Generate coverage summary (push to main)
+        if: github.event_name == 'push'
+        id: coverage
+        run: |
+          # Read the coverage summary
+          COVERAGE_JSON=$(cat coverage/coverage-summary.json)
+
+          # Extract metrics using jq
+          LINES_PCT=$(echo "$COVERAGE_JSON" | jq -r '.total.lines.pct')
+          STATEMENTS_PCT=$(echo "$COVERAGE_JSON" | jq -r '.total.statements.pct')
+          FUNCTIONS_PCT=$(echo "$COVERAGE_JSON" | jq -r '.total.functions.pct')
+          BRANCHES_PCT=$(echo "$COVERAGE_JSON" | jq -r '.total.branches.pct')
+
+          LINES_COVERED=$(echo "$COVERAGE_JSON" | jq -r '.total.lines.covered')
+          LINES_TOTAL=$(echo "$COVERAGE_JSON" | jq -r '.total.lines.total')
+          STATEMENTS_COVERED=$(echo "$COVERAGE_JSON" | jq -r '.total.statements.covered')
+          STATEMENTS_TOTAL=$(echo "$COVERAGE_JSON" | jq -r '.total.statements.total')
+          FUNCTIONS_COVERED=$(echo "$COVERAGE_JSON" | jq -r '.total.functions.covered')
+          FUNCTIONS_TOTAL=$(echo "$COVERAGE_JSON" | jq -r '.total.functions.total')
+          BRANCHES_COVERED=$(echo "$COVERAGE_JSON" | jq -r '.total.branches.covered')
+          BRANCHES_TOTAL=$(echo "$COVERAGE_JSON" | jq -r '.total.branches.total')
+
+          # Create summary for GitHub Actions Summary
+          echo "## Test Coverage Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Coverage | Covered/Total |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|----------|---------------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Lines** | ${LINES_PCT}% | ${LINES_COVERED}/${LINES_TOTAL} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Statements** | ${STATEMENTS_PCT}% | ${STATEMENTS_COVERED}/${STATEMENTS_TOTAL} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Functions** | ${FUNCTIONS_PCT}% | ${FUNCTIONS_COVERED}/${FUNCTIONS_TOTAL} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Branches** | ${BRANCHES_PCT}% | ${BRANCHES_COVERED}/${BRANCHES_TOTAL} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Also save individual metrics as outputs
+          echo "lines_pct=${LINES_PCT}" >> $GITHUB_OUTPUT
+          echo "statements_pct=${STATEMENTS_PCT}" >> $GITHUB_OUTPUT
+          echo "functions_pct=${FUNCTIONS_PCT}" >> $GITHUB_OUTPUT
+          echo "branches_pct=${BRANCHES_PCT}" >> $GITHUB_OUTPUT
+
+      - name: Comment PR with coverage comparison
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+
+            // Try to read the coverage report from compare step
+            let commentBody = process.env.COVERAGE_REPORT;
+
+            // If no comparison report, generate a simple report
+            if (!commentBody) {
+              const prCoverage = JSON.parse(fs.readFileSync('/tmp/pr-coverage-summary.json', 'utf8'));
+              const total = prCoverage.total;
+
+              commentBody = `## 📊 Test Coverage Report
+
+            | Metric | Coverage |
+            |--------|----------|
+            | Lines | ${total.lines.pct.toFixed(2)}% |
+            | Statements | ${total.statements.pct.toFixed(2)}% |
+            | Functions | ${total.functions.pct.toFixed(2)}% |
+            | Branches | ${total.branches.pct.toFixed(2)}% |
+
+            > ℹ️ Base branch coverage not available for comparison.
+
+            ---
+            *Coverage report generated by \`npm run test:coverage\`*`;
+            }
+
+            // Find existing coverage comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(comment =>
+              comment.user.type === 'Bot' &&
+              (comment.body.includes('Test Coverage Report') || comment.body.includes('Coverage Check'))
+            );
+
+            if (botComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: commentBody
+              });
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: commentBody
+              });
+            }
+
+      - name: Upload coverage reports
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: coverage-report
+          path: |
+            coverage/
+          retention-days: 30
+
+      - name: Fail on coverage regression
+        if: github.event_name == 'pull_request' && steps.compare.outcome == 'failure'
+        run: |
+          echo "❌ Coverage regression detected!"
+          echo "This PR decreases overall test coverage. Please add tests to maintain coverage levels."
+          echo ""
+          echo "See the PR comment above for detailed coverage comparison."
+          exit 1

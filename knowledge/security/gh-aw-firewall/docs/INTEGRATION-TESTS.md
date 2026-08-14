@@ -1,0 +1,281 @@
+# Integration Tests Coverage Guide
+
+A reference guide to what the gh-aw-firewall integration tests cover and how they relate to real-world usage in GitHub Agentic Workflows.
+
+**Last updated:** February 2026
+
+---
+
+## Quick Navigation
+
+| Area | Tests | Doc |
+|------|-------|-----|
+| Domain filtering, DNS, network security | 6 files, ~50 tests | [domain-network.md](test-analysis/domain-network.md) |
+| Chroot sandbox, languages, package managers | 5 files, ~70 tests | [chroot.md](test-analysis/chroot.md) |
+| Protocol support, credentials, tokens | 8 files, ~100 tests | [protocol-security.md](test-analysis/protocol-security.md) |
+| Containers, volumes, git, env vars | 7 files, ~45 tests | [container-ops.md](test-analysis/container-ops.md) |
+| CI workflows, smoke tests, build-test | 27 workflows | [ci-smoke.md](test-analysis/ci-smoke.md) |
+| Test fixtures and infrastructure | 6 helper files | [test-infra.md](test-analysis/test-infra.md) |
+
+---
+
+## Overview
+
+The test suite is organized in three tiers:
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Smoke Tests (4 workflows)                          │
+│  Smoke workflows (Claude, Copilot, Codex, Chroot)   │
+│  running inside AWF sandbox                         │
+├─────────────────────────────────────────────────────┤
+│  Build-Test Workflows (8 workflows)                 │
+│  Real projects (Go, Rust, Java, Node, etc.)         │
+│  built and tested through the firewall proxy        │
+├─────────────────────────────────────────────────────┤
+│  Integration Tests (26 files, ~265 tests)           │
+│  End-to-end AWF container execution with            │
+│  domain filtering, chroot, security assertions      │
+├─────────────────────────────────────────────────────┤
+│  Unit Tests (19 files)                              │
+│  Individual module testing (parser, config, logger)  │
+└─────────────────────────────────────────────────────┘
+```
+
+### Test Counts by Category
+
+| Category | Files | Approx Tests | CI Workflow |
+|----------|-------|-------------|-------------|
+| Domain/Network | 6 | 50 | None |
+| Chroot | 5 | 70 | `test-chroot.yml` (4 jobs) |
+| Protocol/Security | 8 | 100 | None |
+| Container/Ops | 7 | 45 | None |
+| Unit Tests | 19 | ~200 | `test-coverage.yml` |
+| Smoke Tests | 4 | N/A | Per-workflow (scheduled + PR) |
+| Build-Test | 8 | N/A | Per-workflow (PR + dispatch) |
+
+### Unified enclave coverage
+
+Legacy bounded smoke and runtime-matrix assets were removed from the owned workflow surface. Until a unified gh-aw enclave smoke workflow exists, coverage for the enclave MCP server and executor contracts stays local/unit-focused:
+
+- `src/services/enclave-mcp-service.test.ts`
+- `src/services/enclave-agent-service.test.ts`
+- `src/enclave/script-runner-spec.test.ts`
+- `src/enclave/agent-runner-spec.test.ts`
+- `src/enclave/manager.test.ts`
+- `src/enclave/mcp-server.test.ts`
+- `src/enclave/agent-mcp-server.test.ts`
+
+These cover the shared tool contract, gVisor routing assumptions, fail-closed `sbx` behavior, and the mcpg-only topology.
+
+---
+
+## What's Covered
+
+### 1. Chroot Filesystem Isolation (Strong)
+
+The chroot tests are the most mature, run in CI, and cover critical scenarios:
+
+- **Language runtimes**: Python, Node.js, Go, Java, .NET, Ruby, Rust all verified accessible through chroot
+- **Package managers**: pip, npm, cargo, maven, dotnet, gem, go modules — all tested for registry connectivity
+- **Security properties**: NET_ADMIN/SYS_CHROOT capability drop, Docker socket hidden, non-root execution
+- **/proc filesystem**: Dynamic mount verified for JVM and .NET CLR compatibility
+- **Shell features**: Pipes, redirects, command substitution, compound commands all work in chroot
+
+**CI coverage**: 4 parallel jobs in `test-chroot.yml` exercise these tests on every PR.
+
+### 2. Credential Isolation (Strong)
+
+Multi-layered defense tested at each level:
+
+- **Credential file hiding**: Docker config, GitHub CLI tokens, npmrc auth tokens all verified hidden via `/dev/null` overlays
+- **Exfiltration resistance**: base64 encoding, xxd pipelines, grep patterns all tested — return empty
+- **Chroot bypass prevention**: Specific regression test for the vulnerability where credentials were accessible at `$HOME` but not `/host$HOME`
+- **API proxy sidecar**: Agent gets placeholder tokens; real keys held by proxy. Healthchecks for OpenAI, Anthropic, Copilot
+- **One-shot token library**: LD_PRELOAD intercepts `getenv()`, caches value, clears from environment. Tested in both container and chroot modes
+- **Token unsetting from /proc/1/environ**: GITHUB_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY all verified cleared
+
+### 3. Multi-Engine Smoke Tests (Strong)
+
+Real AI agents running through the full AWF pipeline:
+
+- **Claude**: GitHub MCP, Playwright browser automation, file I/O, bash tools
+- **Copilot**: Same + web-fetch, agentic-workflows tools
+- **Codex**: GH CLI safe inputs, Tavily web search, discussion interactions
+
+### 4. Multi-Language Build-Test (Strong)
+
+8 language ecosystems tested with real open-source projects:
+
+- Bun, C++, Deno, .NET, Go, Java, Node.js, Rust
+- Each clones a test repo, installs dependencies, builds, and runs tests through AWF
+
+### 5. Exit Code Propagation (Good)
+
+15 tests covering exit codes 0-255, command exit codes, pipeline behavior. Critical for CI/CD integration where non-zero = failure.
+
+---
+
+## Coverage Heat Map
+
+A visual overview of what's tested vs. not:
+
+```
+Feature                          Unit  Integration  CI   Smoke  Build-Test
+─────────────────────────────────────────────────────────────────────────
+Domain allow-list                 ✅      ✅         ❌    ✅      ✅
+Domain deny-list (--block-domains) ❌      ❌         ❌    ❌      ❌
+Wildcard patterns                 ✅      ✅         ❌    ❌      ❌
+Empty domains (air-gapped)        ❌      ✅         ❌    ❌      ❌
+DNS server restriction            ✅      ⚠️ *       ❌    ❌      ❌
+Network security (SSRF, bypass)   ❌      ✅         ❌    ❌      ❌
+Chroot languages                  ❌      ✅         ✅    ✅      ✅
+Chroot package managers           ❌      ✅         ✅    ❌      ✅
+Chroot /proc filesystem           ❌      ✅         ✅    ❌      ❌
+Chroot edge cases                 ❌      ✅         ✅    ❌      ❌
+Credential hiding                 ❌      ✅         ❌    ❌      ❌
+Token unsetting                   ❌      ✅         ❌    ❌      ❌
+One-shot tokens (LD_PRELOAD)      ❌      ✅         ❌    ❌      ❌
+API proxy sidecar                 ❌      ✅         ❌    ❌      ❌
+Protocol support (HTTP/HTTPS)     ❌      ✅         ❌    ❌      ❌
+IPv6                              ❌      ✅         ❌    ❌      ❌
+Exit code propagation             ❌      ✅         ❌    ❌      ❌
+Error handling                    ❌      ✅         ❌    ❌      ❌
+Volume mounts                     ❌      ✅         ❌    ❌      ❌
+Container workdir                 ❌      ✅         ❌    ❌      ❌
+Git operations                    ❌      ✅         ❌    ❌      ❌
+Environment variables             ❌      ✅         ❌    ❌      ❌
+--env-all                         ❌      ❌         ❌    ❌      ❌
+SSL Bump                          ✅      ❌         ❌    ❌      ❌
+Log commands                      ✅      ⚠️ *       ❌    ❌      ❌
+Docker unavailability             ❌      ✅         ❌    ❌      ❌
+Docker warning stub               ❌      ❌ **      ❌    ❌      ❌
+Setup action (action.yml)         ❌      ❌         ✅    ❌      ❌
+Container security scan           ❌      ❌         ✅    ❌      ❌
+Dependency audit                  ❌      ❌         ✅    ❌      ❌
+
+* ⚠️ = Tests exist but have significant gaps (see detailed docs)
+** = Tests exist but are skipped
+```
+
+---
+
+## Test Infrastructure Summary
+
+### How Tests Run
+
+- **Serial execution** (`maxWorkers: 1`) — Docker network/container conflicts prevent parallelism
+- **120-second timeout** per test — container lifecycle takes 15-25 seconds
+- **Batch runner** groups commands sharing the same config into single containers — reduces ~73 startups to ~27 for chroot tests
+- **Custom Jest matchers**: `toSucceed()`, `toFail()`, `toExitWithCode()`, `toTimeout()`, `toAllowDomain()`, `toBlockDomain()`
+- **4-stage cleanup**: pre-test TypeScript cleanup → AWF normal exit → AWF signal handlers → CI always-cleanup
+
+### Infrastructure Limitations
+
+1. Docker + sudo required — no lightweight local testing
+2. Batch runner loses individual stderr (merged via `2>&1`)
+3. Log-based matchers require `keepContainers: true`
+4. Aggressive `docker prune` in cleanup can affect non-AWF containers
+5. No retry logic for flaky network tests
+
+See [test-infra.md](test-analysis/test-infra.md) for full infrastructure analysis.
+
+---
+
+## Detailed Analysis Documents
+
+Each document provides per-test-case analysis with plain-language descriptions, real-world mappings, and gap identification:
+
+- **[Domain & Network Tests](test-analysis/domain-network.md)** — Domain filtering, DNS, network security, localhost
+- **[Chroot Tests](test-analysis/chroot.md)** — Sandbox isolation, languages, package managers, /proc, edge cases
+- **[Protocol & Security Tests](test-analysis/protocol-security.md)** — HTTP/HTTPS, IPv6, API proxy, credentials, tokens, exit codes
+- **[Container & Operations Tests](test-analysis/container-ops.md)** — Workdir, volumes, git, env vars, logging, Docker availability
+- **[CI & Smoke Tests](test-analysis/ci-smoke.md)** — All 27 CI/smoke/build-test workflows analyzed
+- **[Test Infrastructure](test-analysis/test-infra.md)** — Runner architecture, batch pattern, cleanup strategy, limitations
+
+## Firecracker preview integration tests
+
+The dedicated Firecracker CI workflow is disabled. The deterministic artifact
+build and live KVM smoke scripts remain available for explicit local validation,
+but they are not run by pull request, push, schedule, or manual Actions events.
+
+The live smoke/security suite verifies all five SHA-256 digests before running.
+Its preflight requires usable KVM and fails closed if `/dev/kvm` or another
+required host capability is unavailable.
+
+Live assertions (see `scripts/ci/firecracker-live-smoke.sh`):
+
+| Case | What it proves |
+|------|---------------|
+| `allowed-https` | Allowed domains reach the internet through Squid |
+| `blocked-domain` | Non-allowlisted domains are blocked |
+| `direct-egress` | Bypassing proxy env vars does not enable direct egress |
+| `arbitrary-tcp` | Raw TCP to arbitrary IPs is blocked |
+| `dns-denial` | Direct DNS (8.8.8.8:53) is blocked from the guest |
+| `metadata-denial` | EC2/GCP/Azure instance metadata IP (`169.254.169.254`) is unreachable |
+| `api-proxy-reflect` | API proxy `/reflect` reachable; secret sentinel not present in output |
+| `workspace-copyback` | Guest file writes, permission changes, and symlinks survive copy-back |
+| `exit-code` | Agent exit code propagates faithfully (37 → 37) |
+| `timeout-124` | Timed-out agent exits 124 |
+| `partial-start-cleanup` | Corrupt rootfs causes clean failure; no namespace residue |
+| `cancellation` | `SIGTERM` cleans up network namespace; exits 143 |
+| `keep` | `--keep-containers` preserves jail/namespace/images; all diagnostics ≤1 MiB |
+
+After every case, the suite asserts no `awffc-*` namespaces or Firecracker
+interface residue remain. See [Firecracker integration (preview)](../docs/firecracker-integration.md#part-14--ci-workflow)
+for the current automation status and local validation details.
+
+## Cloud Hypervisor preview integration tests
+
+The Cloud Hypervisor backend has its own separate CI workflow
+(`test-cloud-hypervisor.yml`), based on the retained Firecracker test
+conventions but scoped to Cloud Hypervisor paths and **GitHub-hosted Ubuntu
+x86_64 runners only** (self-hosted runners are explicitly rejected).
+
+**Trigger:** `workflow_dispatch`, or pull request open/synchronize/reopen/label
+scoped to `guest/cloud-hypervisor/**`, `src/cloud-hypervisor/**`,
+`src/microvm/**`, and the related scripts/docs/workflow files. Only label
+`cloud-hypervisor-kvm` enables the live job. It does **not** run on push or
+schedule.
+
+**Build job** (`ubuntu-24.04`): Builds deterministic guest artifacts — Cloud
+Hypervisor v53.0 binary, the same pinned Linux 6.1.141 kernel config
+Firecracker uses, BusyBox 1.36.1 rootfs, and the shared AWF guest supervisor —
+from pinned, SHA-256 verified sources. Attests provenance. Uploads as a
+7-day workflow artifact (`cloud-hypervisor-test-x86_64`).
+
+**Live job** (`ubuntu-24.04`): Downloads the build artifact, verifies all four
+SHA-256 digests plus GitHub-hosted-only host eligibility (`GITHUB_ACTIONS`,
+`RUNNER_ENVIRONMENT`, `ImageOS`) and Landlock LSM availability, then runs the
+live smoke/security suite. The preflight requires usable KVM and fails closed
+if `/dev/kvm` or another required host capability is unavailable.
+
+Live assertions (see `scripts/ci/cloud-hypervisor-live-smoke.sh`) reproduce
+Firecracker's full 13-case contract verbatim, plus two Cloud Hypervisor-only
+cases:
+
+| Case | What it proves |
+|------|---------------|
+| `allowed-https` | Allowed domains reach the internet through Squid |
+| `blocked-domain` | Non-allowlisted domains are blocked |
+| `direct-egress` | Bypassing proxy env vars does not enable direct egress |
+| `arbitrary-tcp` | Raw TCP to arbitrary IPs is blocked |
+| `dns-denial` | Direct DNS (8.8.8.8:53) is blocked from the guest |
+| `metadata-denial` | Instance metadata IP (`169.254.169.254`) is unreachable |
+| `api-proxy-reflect` | API proxy `/reflect` reachable; secret sentinel not in output |
+| `workspace-copyback` | Guest file writes, permission changes, and symlinks survive copy-back |
+| `exit-code` | Agent exit code propagates faithfully (37 → 37) |
+| `timeout-124` | Timed-out agent exits 124 |
+| `device-assumptions` **(CH-only)** | `/dev/vda`/`/dev/vdb` and `eth0` guest device assumptions hold |
+| `partial-start-cleanup` | Corrupt rootfs causes clean failure; no residue |
+| `cancellation` | `SIGTERM` cleans up residue within a non-flaky time ceiling; exits 143 |
+| `keep` | `--keep-containers` preserves namespace/run-directory; diagnostics ≤1 MiB |
+| `security-assertions` **(CH-only)** | Live jailer-replacement boundary: non-root uid, `CapEff` limited to `CAP_NET_ADMIN` alone, `no_new_privs`, active seccomp filter, per-run cgroup membership/bounded memory, `landlock_enable` + exactly-minimal disk/net/vsock topology via `vm.info` |
+
+After every case, the suite asserts no `awffc-*` namespaces, `fch*`/`fcn*`/`fct*`
+interfaces (shared naming with Firecracker), `awf-cloud-hypervisor` cgroup
+entries, or `cloud-hypervisor` processes remain. The secret sentinel
+(`awf-cloud-hypervisor-real-secret-do-not-expose`, distinct from
+Firecracker's) is scanned for in the same way. See
+[Cloud Hypervisor integration (preview)](../docs/cloud-hypervisor-foundation.md#part-14--ci-workflow)
+for the full CI workflow specification.

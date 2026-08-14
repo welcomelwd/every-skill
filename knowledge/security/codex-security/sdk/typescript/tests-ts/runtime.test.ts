@@ -74,6 +74,7 @@ import {
   verifyStableWindowsCredentialDescendants,
 } from "../src/runtime.js";
 import { PLUGIN_ROOT } from "./plugin-root.js";
+import { runMockInSubprocess } from "./support/isolated-mock.js";
 
 const temporaryDirectories: string[] = [];
 const testPosix = process.platform === "win32" ? test.skip : test;
@@ -401,30 +402,6 @@ describe("plugin runtime preparation", () => {
     expect(schema).toContain(
       "userContext: editableUserContextSchema.max(2400).optional()",
     );
-  });
-
-  test("keeps focused Standard scans on native direct-start tools", async () => {
-    const skill = await readFile(
-      join(PLUGIN_ROOT, "skills", "security-scan", "SKILL.md"),
-      "utf8",
-    );
-    const desktop = await readFile(
-      join(
-        PLUGIN_ROOT,
-        "skills",
-        "security-scan",
-        "references",
-        "desktop-scan.md",
-      ),
-      "utf8",
-    );
-
-    expect(skill).toContain("Immediately launch one baseline subagent");
-    expect(skill).toContain("Launch focused investigator subagents");
-    expect(skill).toContain("record_codex_security_scan_draft");
-    expect(desktop).toContain("start_codex_security_prompt_only_scan");
-    expect(desktop).toContain("record_codex_security_scan_draft");
-    expect(desktop).not.toContain("await_codex_security_scan_start");
   });
 
   test("keeps native scan tools without the obsolete setup widget", async () => {
@@ -838,6 +815,14 @@ describe("plugin runtime preparation", () => {
   });
 
   test("cancels configured plugin directory discovery", async () => {
+    if (
+      runMockInSubprocess(
+        import.meta.path,
+        "cancels configured plugin directory discovery",
+      )
+    ) {
+      return;
+    }
     const cancellationRoot = await temporaryDirectory();
     const cancellationSource = await plugin(cancellationRoot);
     const cancellationDirectory = join(cancellationSource, "many-files");
@@ -954,6 +939,14 @@ describe("plugin runtime preparation", () => {
   testPosix(
     "rejects a queued plugin directory replaced with a symlink",
     async () => {
+      if (
+        runMockInSubprocess(
+          import.meta.path,
+          "rejects a queued plugin directory replaced with a symlink",
+        )
+      ) {
+        return;
+      }
       const root = await temporaryDirectory();
       const selected = await plugin(root);
       const scripts = join(selected, "scripts");
@@ -1259,6 +1252,14 @@ describe("plugin runtime preparation", () => {
   });
 
   test("imports ambient auth when credential files do not support hard links", async () => {
+    if (
+      runMockInSubprocess(
+        import.meta.path,
+        "imports ambient auth when credential files do not support hard links",
+      )
+    ) {
+      return;
+    }
     const root = await temporaryDirectory();
     const ambient = join(root, "ambient");
     const isolated = join(root, "isolated");
@@ -1889,33 +1890,6 @@ describe("runtime directories and plugin Python boundary", () => {
     },
   );
 
-  testPosix("rejects sticky shared parents controlled by another user", () => {
-    expect(() =>
-      requireTrustedOutputAncestor(
-        { mode: 0o41777, uid: 1001 },
-        "/shared",
-        1000,
-      ),
-    ).toThrow("trusted owner");
-    expect(() =>
-      requireTrustedOutputAncestor(
-        { mode: 0o40755, uid: 1001 },
-        "/shared",
-        1000,
-      ),
-    ).toThrow("trusted owner");
-    expect(() =>
-      requireTrustedOutputAncestor(
-        { mode: 0o41777, uid: 1000 },
-        "/shared",
-        1000,
-      ),
-    ).not.toThrow();
-    expect(() =>
-      requireTrustedOutputAncestor({ mode: 0o41777, uid: 0 }, "/tmp", 1000),
-    ).not.toThrow();
-  });
-
   testPosix(
     "rejects a credential home that is no longer private to the current user",
     async () => {
@@ -2180,6 +2154,14 @@ describe("runtime directories and plugin Python boundary", () => {
   });
 
   test("retries Windows credential verification when a descendant disappears", async () => {
+    if (
+      runMockInSubprocess(
+        import.meta.path,
+        "retries Windows credential verification when a descendant disappears",
+      )
+    ) {
+      return;
+    }
     const root = await temporaryDirectory();
     const home = join(root, "home");
     const temporary = join(home, ".auth-temporary");
@@ -2217,6 +2199,14 @@ describe("runtime directories and plugin Python boundary", () => {
   });
 
   test("rejects Windows credential descendants that repeatedly disappear", async () => {
+    if (
+      runMockInSubprocess(
+        import.meta.path,
+        "rejects Windows credential descendants that repeatedly disappear",
+      )
+    ) {
+      return;
+    }
     const root = await temporaryDirectory();
     const home = join(root, "home");
     const credential = join(home, "auth.json");
@@ -3539,6 +3529,101 @@ describe("runtime directories and plugin Python boundary", () => {
         (result) => result.capability === "usable_worker_slots_6",
       ),
     ).toMatchObject({ actual: 8, source: configPath });
+  });
+
+  test("continues when optional preflight capabilities are unknown", async () => {
+    const root = await temporaryDirectory();
+    const config = join(root, "config.toml");
+    await writeFile(config, "");
+    const python = Bun.which("python3") ?? Bun.which("python");
+    expect(python).not.toBeNull();
+
+    for (const profile of [
+      "security_diff_scan",
+      "security_scan",
+      "deep_security_scan",
+    ]) {
+      const result = spawnSync(
+        python!,
+        [
+          "-I",
+          "-B",
+          join(PLUGIN_ROOT, "scripts", "config_preflight.py"),
+          "--profile",
+          profile,
+          "--config",
+          config,
+          "--cwd",
+          root,
+        ],
+        { encoding: "utf8", env: process.env },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        status: string;
+        unknown: { capability: string; severity: string }[];
+      };
+      expect(payload.status).toBe("ready");
+      expect(payload.unknown.length).toBeGreaterThan(0);
+      expect(
+        payload.unknown.every(({ severity }) => severity !== "block"),
+      ).toBe(true);
+    }
+  });
+
+  test("keeps required preflight capabilities blocking", async () => {
+    const root = await temporaryDirectory();
+    const config = join(root, "config.toml");
+    const registry = join(root, "capabilities.toml");
+    await writeFile(config, "");
+    await writeFile(
+      registry,
+      [
+        "version = 1",
+        "[capabilities.required]",
+        'kind = "runtime"',
+        'check = "required_available"',
+        "[profiles.required]",
+        'description = "Required runtime capability"',
+        "[[profiles.required.requirements]]",
+        'capability = "required"',
+        'severity = "block"',
+        'reason = "Required runtime capability"',
+      ].join("\n"),
+    );
+    const python = Bun.which("python3") ?? Bun.which("python");
+    expect(python).not.toBeNull();
+
+    for (const [value, status, exitCode] of [
+      [undefined, "incomplete", 2],
+      ["false", "blocked", 1],
+      ["true", "ready", 0],
+    ] as const) {
+      const result = spawnSync(
+        python!,
+        [
+          "-I",
+          "-B",
+          join(PLUGIN_ROOT, "scripts", "config_preflight.py"),
+          "--registry",
+          registry,
+          "--profile",
+          "required",
+          "--config",
+          config,
+          "--cwd",
+          root,
+          ...(value === undefined
+            ? []
+            : ["--runtime-check", `required_available=${value}`]),
+        ],
+        { encoding: "utf8", env: process.env },
+      );
+
+      expect(result.status, result.stderr).toBe(exitCode);
+      expect(JSON.parse(result.stdout)).toMatchObject({ status });
+    }
   });
 
   test("runs workbench commands without output limits, credentials, or generated bytecode", async () => {

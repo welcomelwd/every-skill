@@ -1,0 +1,236 @@
+'use strict';
+
+/**
+ * Anthropic provider adapter.
+ *
+ * Port: 10001
+ * Auth: x-api-key or Authorization header, plus optional anthropic-version
+ *       and anthropic-beta headers
+ * Credentials: ANTHROPIC_API_KEY or AWF_AUTH_TYPE=github-oidc + AWF_AUTH_PROVIDER=anthropic
+ * Target: ANTHROPIC_API_TARGET  (default: api.anthropic.com)
+ * Base path: ANTHROPIC_API_BASE_PATH
+ * Body transforms: model alias rewriting + optional prompt-cache optimisations
+ */
+
+const {
+  composeBodyTransforms,
+} = require('../proxy-utils');
+const {
+  validateAuthHeaderEnv,
+} = require('../oidc-adapter-utils');
+const { createProviderAuthScaffold, createOidcAwareProviderAdapter } = require('../adapter-factory');
+const { AnthropicOidcTokenProvider } = require('../anthropic-oidc-token-provider');
+const { ANTHROPIC_ENV } = require('../provider-env-constants');
+const { bearerAuthHeaders, providerKeyHeaders } = require('./auth-headers');
+
+const OAUTH_API_BETA = 'oauth-2025-04-20';
+
+let makeAnthropicTransform, loadCustomTransform, EXTENDED_CACHE_BETA;
+try {
+  ({ makeAnthropicTransform, loadCustomTransform, EXTENDED_CACHE_BETA } = require('../anthropic-transforms'));
+} catch (err) {
+  if (err && err.code === 'MODULE_NOT_FOUND') {
+    makeAnthropicTransform = () => () => null;
+    loadCustomTransform = () => null;
+    EXTENDED_CACHE_BETA = undefined;
+  } else {
+    throw err;
+  }
+}
+
+function mergeAnthropicBetas(...values) {
+  const merged = [];
+  const seen = new Set();
+  for (const value of values) {
+    const normalized = Array.isArray(value) ? value.join(',') : value;
+    if (!normalized) continue;
+    for (const beta of normalized.split(',').map(item => item.trim()).filter(Boolean)) {
+      if (!seen.has(beta)) {
+        seen.add(beta);
+        merged.push(beta);
+      }
+    }
+  }
+  return merged.join(',');
+}
+
+/**
+ * Create the Anthropic provider adapter.
+ *
+ * @param {Record<string, string|undefined>} env - Environment variables
+ * @param {{ bodyTransform: ((body: Buffer) => Buffer|null)|null }} deps - Injected dependencies
+ * @returns {import('./index').ProviderAdapter}
+ */
+function createAnthropicAdapter(env, deps = {}) {
+  const { apiKey, rawTarget, basePath, bodyTransform: depsBodyTransform } = createProviderAuthScaffold(env, deps, {
+    keyEnvVar: ANTHROPIC_ENV.KEY,
+    targetEnvVar: ANTHROPIC_ENV.TARGET,
+    basePathEnvVar: ANTHROPIC_ENV.BASE_PATH,
+    defaultTarget: 'api.anthropic.com',
+  });
+  const authHeaderName = validateAuthHeaderEnv(ANTHROPIC_ENV.AUTH_HEADER, env[ANTHROPIC_ENV.AUTH_HEADER], 'x-api-key');
+
+  // oidcRequested tracks whether the caller asked for Anthropic OIDC, regardless
+  // of whether the token env vars (ACTIONS_ID_TOKEN_REQUEST_*) are also present.
+  // This lets getUnconfiguredResponse() give a more helpful error message when
+  // OIDC was asked for but could not be fully initialised.
+  const oidcRequested = (env.AWF_AUTH_TYPE || '').trim().toLowerCase() === 'github-oidc'
+    && (env.AWF_AUTH_PROVIDER || '').trim().toLowerCase() === 'anthropic';
+
+  // ── Anthropic-specific optimisations ──────────────────────────────────────
+  const autoCache = (env.AWF_ANTHROPIC_AUTO_CACHE === '1' || env.AWF_ANTHROPIC_AUTO_CACHE === 'true');
+  const cacheTailTtl = (() => {
+    const raw = (env.AWF_ANTHROPIC_CACHE_TAIL_TTL || '').trim();
+    return (raw === '1h' || raw === '5m') ? raw : '5m';
+  })();
+  const dropTools = (() => {
+    const raw = (env.AWF_ANTHROPIC_DROP_TOOLS || '').trim();
+    return raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
+  })();
+  const stripAnsi = (env.AWF_ANTHROPIC_STRIP_ANSI === '1' || env.AWF_ANTHROPIC_STRIP_ANSI === 'true');
+  const transformFile = (env.AWF_ANTHROPIC_TRANSFORM_FILE || '').trim() || undefined;
+
+  const customTransform = loadCustomTransform(transformFile);
+  const optimisationsTransform = makeAnthropicTransform({
+    autoCache,
+    tailTtl: cacheTailTtl,
+    dropTools,
+    stripAnsiCodes: stripAnsi,
+    customTransform,
+  });
+
+  // Build the composed transform once at construction time to avoid
+  // re-allocating the wrapper function on every request.
+  const composedBodyTransform = composeBodyTransforms(depsBodyTransform, optimisationsTransform);
+  return createOidcAwareProviderAdapter({
+    env,
+    oidcAuthOptions: {
+      staticAuthToken: apiKey,
+      oidcProviderFactory: oidcRequested ? (env) => {
+        const requestUrl = env.ACTIONS_ID_TOKEN_REQUEST_URL;
+        const requestToken = env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+        if (!requestUrl || !requestToken) return null;
+        const workspaceId = env.AWF_AUTH_ANTHROPIC_WORKSPACE_ID;
+        const tokenEndpoint = (env.AWF_AUTH_ANTHROPIC_TOKEN_URL || '').trim();
+        return new AnthropicOidcTokenProvider({
+          requestUrl,
+          requestToken,
+          federationRuleId: env.AWF_AUTH_ANTHROPIC_FEDERATION_RULE_ID,
+          organizationId: env.AWF_AUTH_ANTHROPIC_ORGANIZATION_ID,
+          serviceAccountId: env.AWF_AUTH_ANTHROPIC_SERVICE_ACCOUNT_ID,
+          ...(workspaceId !== undefined ? { workspaceId } : {}),
+          ...(tokenEndpoint ? { tokenEndpoint } : {}),
+          oidcAudience: env.AWF_AUTH_OIDC_AUDIENCE || 'https://api.anthropic.com',
+        });
+      } : null,
+    },
+    buildOidcHeaders: (token) => bearerAuthHeaders(token, {
+      'anthropic-beta': OAUTH_API_BETA,
+    }),
+    buildStaticHeaders: () => providerKeyHeaders(authHeaderName, apiKey),
+    createAdapterMethodsOptions: ({ oidcConfigured, oidcProvider, resolveHeaders }) => ({
+      apiKey,
+      credentialConfigured: !!apiKey || oidcConfigured,
+      rawTarget,
+      basePath,
+      provider: 'anthropic',
+      port: 10001,
+      defaultTarget: 'api.anthropic.com',
+      validationPath: '/v1/messages',
+      validationMethod: 'POST',
+      validationBody: '{}',
+      validationHeaders: () => ({
+        ...resolveHeaders(),
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      }),
+      validationSkip: () => {
+        if (!oidcConfigured) return null;
+        // After OIDC init, validate using the acquired token
+        if (oidcProvider.isReady()) return null;
+        return { skip: true, reason: 'OIDC auth; token not yet available' };
+      },
+      skipModelsFetch: () => oidcConfigured && !oidcProvider?.isReady(),
+      modelsPath: '/v1/models',
+      modelsFetchHeaders: () => ({
+        ...resolveHeaders(),
+        'anthropic-version': '2023-06-01',
+      }),
+      reflectionConfigured: !!apiKey || oidcConfigured,
+      reflectionExtra: () => ({
+        auth_type: oidcRequested ? 'github-oidc/anthropic' : 'static-key',
+      }),
+    }),
+    buildAdapterOptions: ({ oidcConfigured }) => {
+      const oidcUnavailableError = oidcConfigured
+        ? 'Anthropic OIDC token unavailable; retry shortly'
+        : 'Anthropic OIDC requires ACTIONS_ID_TOKEN_REQUEST_URL and ACTIONS_ID_TOKEN_REQUEST_TOKEN (permissions: id-token: write).';
+      return {
+        name: 'anthropic',
+        port: 10001,
+        isManagementPort: false,
+        bodyTransform: composedBodyTransform,
+        missingCredentialResponse: {
+          kind: 'provider_not_configured',
+          message: 'Credentials for Anthropic (port 10001) are not configured. Set ANTHROPIC_API_KEY to enable this provider.',
+        },
+        unconfiguredResponseWhen: () => (oidcRequested
+          ? {
+              kind: 'provider_not_configured',
+              message: oidcUnavailableError,
+              retryable: oidcConfigured,
+            }
+          : null),
+        healthServiceName: 'awf-api-proxy-anthropic',
+        missingCredentialMessage: 'ANTHROPIC_API_KEY not configured in api-proxy sidecar',
+        unavailableWhen: () => oidcRequested ? { message: oidcUnavailableError, status: 'unavailable' } : null,
+        extra: {
+          // Exposed for introspection (logging, tests)
+          _autoCache: autoCache,
+          _cacheTailTtl: cacheTailTtl,
+          _dropTools: dropTools,
+          _stripAnsi: stripAnsi,
+          _transformFile: transformFile,
+          _customTransformLoaded: !!customTransform,
+          _optimisationsTransform: optimisationsTransform,
+        },
+      };
+    },
+    /**
+     * Build Anthropic auth headers for this request.
+     * Merges in the anthropic-version default and required anthropic-beta
+     * values without dropping values already set by the client.
+     *
+     * @param {{ resolveHeaders: () => Record<string,string>, req: import('http').IncomingMessage }} params
+     * @returns {Record<string, string>}
+     */
+    getAuthHeaders({ resolveHeaders, req }) {
+      const headers = resolveHeaders();
+
+      // OIDC configured but token not yet ready: fail closed so static creds are not leaked.
+      if (Object.keys(headers).length === 0) {
+        return {};
+      }
+      const mergedHeaders = { ...headers };
+      const authBeta = mergedHeaders['anthropic-beta'];
+      delete mergedHeaders['anthropic-beta'];
+
+      if (!req.headers['anthropic-version']) {
+        mergedHeaders['anthropic-version'] = '2023-06-01';
+      }
+
+      const mergedBeta = mergeAnthropicBetas(
+        req.headers['anthropic-beta'],
+        authBeta,
+        autoCache ? EXTENDED_CACHE_BETA : undefined
+      );
+      if (authBeta || (autoCache && EXTENDED_CACHE_BETA)) {
+        mergedHeaders['anthropic-beta'] = mergedBeta;
+      }
+
+      return mergedHeaders;
+    },
+  });
+}
+
+module.exports = { createAnthropicAdapter };

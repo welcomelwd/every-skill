@@ -1,6 +1,6 @@
 [project]
 name = "code-graph-rag"
-version = "0.0.629"
+version = "0.0.631"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "PYPI_README.md"
 requires-python = ">=3.12"
@@ -60,6 +60,9 @@ dependencies = [
 [project.scripts]
 code-graph-rag = "codebase_rag.cli:app"
 cgr = "codebase_rag.cli:app"
+
+[project.entry-points.pytest11]
+cgr_trace = "codebase_rag.trace.pytest_plugin"
 
 [tool.uv]
 package = true

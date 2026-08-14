@@ -1,0 +1,1051 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+
+concurrency:
+  group: release
+  cancel-in-progress: false  # Never cancel an in-progress release
+
+permissions:
+  contents: write   # Required for creating releases, pushing version commits and tags
+  packages: write   # Required for pushing to GHCR
+  id-token: write   # Required for cosign keyless signing
+  attestations: write # Required for Cloud Hypervisor test artifact provenance
+
+jobs:
+  bump-version:
+    name: Bump Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      version_number: ${{ steps.bump.outputs.version_number }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Verify branch
+        if: github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/heads/v')
+        run: |
+          echo "::error::Release should be triggered on main or a maintenance branch (v*.x), got: ${{ github.ref }}"
+          exit 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: '22'
+
+      - name: Bump version
+        id: bump
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Derive current version from git tags (authoritative source),
+          # not package.json which may be stale on main since we can't
+          # push version-bump commits to protected branches.
+          LATEST_TAG=$(git tag --sort=-version:refname | grep '^v[0-9]' | head -n1 || echo "v0.0.0")
+          LATEST_VERSION=${LATEST_TAG#v}
+          echo "Latest version from git tags: $LATEST_VERSION"
+
+          # Sync package.json to latest tag version before bumping
+          npm version "$LATEST_VERSION" --no-git-tag-version --allow-same-version
+
+          # Bump to next version
+          npm version ${{ inputs.bump }} --no-git-tag-version
+          VERSION=$(node -p "require('./package.json').version")
+
+          # Check if this tag already exists (idempotent retry support)
+          if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+            echo "Tag v$VERSION already exists, reusing it"
+            echo "version=v$VERSION" >> $GITHUB_OUTPUT
+            echo "version_number=$VERSION" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Create a commit with the bumped version and tag it.
+          # Only push the tag — branch protection prevents pushing to main.
+          # Downstream jobs checkout by tag, so they get the correct package.json.
+          git add package.json package-lock.json
+          git commit -m "$VERSION"
+          git tag "v$VERSION"
+          git push origin "v$VERSION"
+
+          echo "version=v$VERSION" >> $GITHUB_OUTPUT
+          echo "version_number=$VERSION" >> $GITHUB_OUTPUT
+          echo "Bumped to v$VERSION (${{ inputs.bump }})"
+
+  build-squid:
+    name: Build Squid Image
+    runs-on: ubuntu-latest
+    needs: bump-version
+    outputs:
+      digest: ${{ steps.build_squid.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+        with:
+          ref: ${{ needs.bump-version.outputs.version }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf # v3.2.0
+        with:
+          platforms: arm64
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 # v3.5.0
+
+      - name: Build and push Squid image
+        id: build_squid
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: ./containers/squid
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/${{ github.repository }}/squid:${{ needs.bump-version.outputs.version_number }}
+            ghcr.io/${{ github.repository }}/squid:latest
+          cache-from: type=gha,scope=squid
+          cache-to: type=gha,mode=max,scope=squid
+
+      - name: Sign Squid image with cosign
+        run: |
+          cosign sign --yes \
+            ghcr.io/${{ github.repository }}/squid@${{ steps.build_squid.outputs.digest }}
+
+      - name: Generate SBOM for Squid image
+        uses: anchore/sbom-action@28d71544de8eaf1b958d335707167c5f783590ad # v0.22.2
+        with:
+          image: ghcr.io/${{ github.repository }}/squid@${{ steps.build_squid.outputs.digest }}
+          format: spdx-json
+          output-file: squid-sbom.spdx.json
+
+      - name: Attest SBOM for Squid image
+        run: |
+          cosign attest --yes \
+            --predicate squid-sbom.spdx.json \
+            --type spdxjson \
+            ghcr.io/${{ github.repository }}/squid@${{ steps.build_squid.outputs.digest }}
+
+  build-agent:
+    name: Build Agent Image
+    runs-on: ubuntu-latest
+    needs: bump-version
+    outputs:
+      digest: ${{ steps.build_agent.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+        with:
+          ref: ${{ needs.bump-version.outputs.version }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf # v3.2.0
+        with:
+          platforms: arm64
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 # v3.5.0
+
+      - name: Build and push Agent image
+        id: build_agent
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: ./containers/agent
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/${{ github.repository }}/agent:${{ needs.bump-version.outputs.version_number }}
+            ghcr.io/${{ github.repository }}/agent:latest
+          # Disable cache for agent image to ensure security-critical packages
+          # (like libcap2-bin for capability dropping) are always freshly installed
+          no-cache: true
+
+      - name: Verify seccomp blocks name_to_handle_at/open_by_handle_at
+        run: |
+          bash ./scripts/ci/check-agent-seccomp-syscalls.sh \
+            "ghcr.io/${{ github.repository }}/agent:${{ needs.bump-version.outputs.version_number }}" \
+            linux/amd64
+          bash ./scripts/ci/check-agent-seccomp-syscalls.sh \
+            "ghcr.io/${{ github.repository }}/agent:${{ needs.bump-version.outputs.version_number }}" \
+            linux/arm64
+
+      - name: Sign Agent image with cosign
+        run: |
+          cosign sign --yes \
+            ghcr.io/${{ github.repository }}/agent@${{ steps.build_agent.outputs.digest }}
+
+      - name: Generate SBOM for Agent image
+        uses: anchore/sbom-action@28d71544de8eaf1b958d335707167c5f783590ad # v0.22.2
+        with:
+          image: ghcr.io/${{ github.repository }}/agent@${{ steps.build_agent.outputs.digest }}
+          format: spdx-json
+          output-file: agent-sbom.spdx.json
+
+      - name: Attest SBOM for Agent image
+        run: |
+          cosign attest --yes \
+            --predicate agent-sbom.spdx.json \
+            --type spdxjson \
+            ghcr.io/${{ github.repository }}/agent@${{ steps.build_agent.outputs.digest }}
+
+  build-api-proxy:
+    name: Build API Proxy Image
+    runs-on: ubuntu-latest
+    needs: bump-version
+    outputs:
+      digest: ${{ steps.build_api_proxy.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+        with:
+          ref: ${{ needs.bump-version.outputs.version }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf # v3.2.0
+        with:
+          platforms: arm64
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 # v3.5.0
+
+      - name: Build and push API Proxy image
+        id: build_api_proxy
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: ./containers/api-proxy
+          push: true
+          pull: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/${{ github.repository }}/api-proxy:${{ needs.bump-version.outputs.version_number }}
+            ghcr.io/${{ github.repository }}/api-proxy:latest
+          build-args: |
+            AWF_VERSION=${{ needs.bump-version.outputs.version_number }}
+          cache-from: type=gha,scope=api-proxy
+          cache-to: type=gha,mode=max,scope=api-proxy
+
+      - name: Sign API Proxy image with cosign
+        run: |
+          cosign sign --yes \
+            ghcr.io/${{ github.repository }}/api-proxy@${{ steps.build_api_proxy.outputs.digest }}
+
+      - name: Generate SBOM for API Proxy image
+        uses: anchore/sbom-action@28d71544de8eaf1b958d335707167c5f783590ad # v0.22.2
+        with:
+          image: ghcr.io/${{ github.repository }}/api-proxy@${{ steps.build_api_proxy.outputs.digest }}
+          format: spdx-json
+          output-file: api-proxy-sbom.spdx.json
+
+      - name: Attest SBOM for API Proxy image
+        run: |
+          cosign attest --yes \
+            --predicate api-proxy-sbom.spdx.json \
+            --type spdxjson \
+            ghcr.io/${{ github.repository }}/api-proxy@${{ steps.build_api_proxy.outputs.digest }}
+
+  build-cli-proxy:
+    name: Build CLI Proxy Image
+    runs-on: ubuntu-latest
+    needs: bump-version
+    outputs:
+      digest: ${{ steps.build_cli_proxy.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+        with:
+          ref: ${{ needs.bump-version.outputs.version }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf # v3.2.0
+        with:
+          platforms: arm64
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 # v3.5.0
+
+      - name: Build and push CLI Proxy image
+        id: build_cli_proxy
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: ./containers/cli-proxy
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/${{ github.repository }}/cli-proxy:${{ needs.bump-version.outputs.version_number }}
+            ghcr.io/${{ github.repository }}/cli-proxy:latest
+          cache-from: type=gha,scope=cli-proxy
+          cache-to: type=gha,mode=max,scope=cli-proxy
+
+      - name: Sign CLI Proxy image with cosign
+        run: |
+          cosign sign --yes \
+            ghcr.io/${{ github.repository }}/cli-proxy@${{ steps.build_cli_proxy.outputs.digest }}
+
+      - name: Generate SBOM for CLI Proxy image
+        uses: anchore/sbom-action@28d71544de8eaf1b958d335707167c5f783590ad # v0.22.2
+        with:
+          image: ghcr.io/${{ github.repository }}/cli-proxy@${{ steps.build_cli_proxy.outputs.digest }}
+          format: spdx-json
+          output-file: cli-proxy-sbom.spdx.json
+
+      - name: Attest SBOM for CLI Proxy image
+        run: |
+          cosign attest --yes \
+            --predicate cli-proxy-sbom.spdx.json \
+            --type spdxjson \
+            ghcr.io/${{ github.repository }}/cli-proxy@${{ steps.build_cli_proxy.outputs.digest }}
+
+  # Build the unified enclave images from containers/enclave/Dockerfile.
+  build-enclaves:
+    name: Build Enclave Images
+    runs-on: ubuntu-latest
+    needs: bump-version
+    outputs:
+      enclave_script_digest: ${{ steps.build_enclave_script.outputs.digest }}
+      enclave_agent_digest: ${{ steps.build_enclave_agent.outputs.digest }}
+      enclave_mcp_server_digest: ${{ steps.build_enclave_mcp_server.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+        with:
+          ref: ${{ needs.bump-version.outputs.version }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf # v3.2.0
+        with:
+          platforms: arm64
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 # v3.5.0
+
+      - name: Build and push Enclave Script image
+        id: build_enclave_script
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: ./containers
+          file: ./containers/enclave/Dockerfile
+          target: enclave-script
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/${{ github.repository }}/enclave-script:${{ needs.bump-version.outputs.version_number }}
+            ghcr.io/${{ github.repository }}/enclave-script:latest
+          cache-from: type=gha,scope=enclave-script
+          cache-to: type=gha,mode=max,scope=enclave-script
+
+      - name: Sign Enclave Script image with cosign
+        run: |
+          cosign sign --yes \
+            ghcr.io/${{ github.repository }}/enclave-script@${{ steps.build_enclave_script.outputs.digest }}
+
+      - name: Generate SBOM for Enclave Script image
+        uses: anchore/sbom-action@28d71544de8eaf1b958d335707167c5f783590ad # v0.22.2
+        with:
+          image: ghcr.io/${{ github.repository }}/enclave-script@${{ steps.build_enclave_script.outputs.digest }}
+          format: spdx-json
+          output-file: enclave-script-sbom.spdx.json
+
+      - name: Attest SBOM for Enclave Script image
+        run: |
+          cosign attest --yes \
+            --predicate enclave-script-sbom.spdx.json \
+            --type spdxjson \
+            ghcr.io/${{ github.repository }}/enclave-script@${{ steps.build_enclave_script.outputs.digest }}
+
+      - name: Build and push Enclave Agent image
+        id: build_enclave_agent
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: ./containers
+          file: ./containers/enclave/Dockerfile
+          target: enclave-agent
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/${{ github.repository }}/enclave-agent:${{ needs.bump-version.outputs.version_number }}
+            ghcr.io/${{ github.repository }}/enclave-agent:latest
+          cache-from: type=gha,scope=enclave-agent
+          cache-to: type=gha,mode=max,scope=enclave-agent
+
+      - name: Sign Enclave Agent image with cosign
+        run: |
+          cosign sign --yes \
+            ghcr.io/${{ github.repository }}/enclave-agent@${{ steps.build_enclave_agent.outputs.digest }}
+
+      - name: Generate SBOM for Enclave Agent image
+        uses: anchore/sbom-action@28d71544de8eaf1b958d335707167c5f783590ad # v0.22.2
+        with:
+          image: ghcr.io/${{ github.repository }}/enclave-agent@${{ steps.build_enclave_agent.outputs.digest }}
+          format: spdx-json
+          output-file: enclave-agent-sbom.spdx.json
+
+      - name: Attest SBOM for Enclave Agent image
+        run: |
+          cosign attest --yes \
+            --predicate enclave-agent-sbom.spdx.json \
+            --type spdxjson \
+            ghcr.io/${{ github.repository }}/enclave-agent@${{ steps.build_enclave_agent.outputs.digest }}
+
+      - name: Build and push Enclave MCP Server image
+        id: build_enclave_mcp_server
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: ./containers
+          file: ./containers/enclave/Dockerfile
+          target: enclave-mcp-server
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/${{ github.repository }}/enclave-mcp-server:${{ needs.bump-version.outputs.version_number }}
+            ghcr.io/${{ github.repository }}/enclave-mcp-server:latest
+          cache-from: type=gha,scope=enclave-mcp-server
+          cache-to: type=gha,mode=max,scope=enclave-mcp-server
+
+      - name: Sign Enclave MCP Server image with cosign
+        run: |
+          cosign sign --yes \
+            ghcr.io/${{ github.repository }}/enclave-mcp-server@${{ steps.build_enclave_mcp_server.outputs.digest }}
+
+      - name: Generate SBOM for Enclave MCP Server image
+        uses: anchore/sbom-action@28d71544de8eaf1b958d335707167c5f783590ad # v0.22.2
+        with:
+          image: ghcr.io/${{ github.repository }}/enclave-mcp-server@${{ steps.build_enclave_mcp_server.outputs.digest }}
+          format: spdx-json
+          output-file: enclave-mcp-server-sbom.spdx.json
+
+      - name: Attest SBOM for Enclave MCP Server image
+        run: |
+          cosign attest --yes \
+            --predicate enclave-mcp-server-sbom.spdx.json \
+            --type spdxjson \
+            ghcr.io/${{ github.repository }}/enclave-mcp-server@${{ steps.build_enclave_mcp_server.outputs.digest }}
+
+  # Build agent-act image with catthehacker/ubuntu:act-24.04 base for GitHub Actions parity
+  # amd64-only: catthehacker/ubuntu:act-24.04 does not publish arm64 manifests
+  build-agent-act:
+    name: Build Agent-Act Image
+    runs-on: ubuntu-latest
+    needs: bump-version
+    outputs:
+      digest: ${{ steps.build_agent_act.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+        with:
+          ref: ${{ needs.bump-version.outputs.version }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 # v3.5.0
+
+      - name: Build and push Agent-Act image
+        id: build_agent_act
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: ./containers/agent
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ghcr.io/${{ github.repository }}/agent-act:${{ needs.bump-version.outputs.version_number }}
+            ghcr.io/${{ github.repository }}/agent-act:latest
+          build-args: |
+            BASE_IMAGE=ghcr.io/catthehacker/ubuntu:act-24.04
+          no-cache: true
+
+      - name: Sign Agent-Act image with cosign
+        run: |
+          cosign sign --yes \
+            ghcr.io/${{ github.repository }}/agent-act@${{ steps.build_agent_act.outputs.digest }}
+
+      - name: Generate SBOM for Agent-Act image
+        uses: anchore/sbom-action@28d71544de8eaf1b958d335707167c5f783590ad # v0.22.2
+        with:
+          image: ghcr.io/${{ github.repository }}/agent-act@${{ steps.build_agent_act.outputs.digest }}
+          format: spdx-json
+          output-file: agent-act-sbom.spdx.json
+
+      - name: Attest SBOM for Agent-Act image
+        continue-on-error: true  # Don't block release if Rekor is unavailable
+        run: |
+          # Retry with exponential backoff - agent-act's large image size
+          # can cause OIDC token expiry or Rekor timeouts
+          for attempt in 1 2 3; do
+            echo "Attempt $attempt of 3..."
+            if cosign attest --yes \
+              --predicate agent-act-sbom.spdx.json \
+              --type spdxjson \
+              ghcr.io/${{ github.repository }}/agent-act@${{ steps.build_agent_act.outputs.digest }}; then
+              echo "SBOM attestation succeeded on attempt $attempt"
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              sleep_time=$((30 * attempt))
+              echo "Attempt $attempt failed, retrying in ${sleep_time}s..."
+              sleep "$sleep_time"
+            fi
+          done
+          echo "::warning::SBOM attestation for agent-act failed after 3 attempts (Rekor may be unavailable)"
+          exit 1
+
+  # Build build-tools sysroot image for ARC/DinD deployments
+  # Provides system-level build infrastructure (gcc, make, dev libraries) for agent containers
+  build-build-tools:
+    name: Build Build-Tools Image
+    runs-on: ubuntu-latest
+    needs: bump-version
+    outputs:
+      digest: ${{ steps.build_build_tools.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+        with:
+          ref: ${{ needs.bump-version.outputs.version }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf # v3.2.0
+        with:
+          platforms: linux/arm64
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 # v3.5.0
+
+      - name: Build and push Build-Tools image
+        id: build_build_tools
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: ./containers/build-tools
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/${{ github.repository }}/build-tools:${{ needs.bump-version.outputs.version_number }}
+            ghcr.io/${{ github.repository }}/build-tools:latest
+          no-cache: true
+
+      - name: Sign Build-Tools image with cosign
+        run: |
+          cosign sign --yes \
+            ghcr.io/${{ github.repository }}/build-tools@${{ steps.build_build_tools.outputs.digest }}
+
+      - name: Generate SBOM for Build-Tools image
+        uses: anchore/sbom-action@28d71544de8eaf1b958d335707167c5f783590ad # v0.22.2
+        with:
+          image: ghcr.io/${{ github.repository }}/build-tools@${{ steps.build_build_tools.outputs.digest }}
+          format: spdx-json
+          output-file: build-tools-sbom.spdx.json
+
+      - name: Attest SBOM for Build-Tools image
+        continue-on-error: true
+        run: |
+          for attempt in 1 2 3; do
+            echo "Attempt $attempt of 3..."
+            if cosign attest --yes \
+              --predicate build-tools-sbom.spdx.json \
+              --type spdxjson \
+              ghcr.io/${{ github.repository }}/build-tools@${{ steps.build_build_tools.outputs.digest }}; then
+              echo "SBOM attestation succeeded on attempt $attempt"
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              sleep_time=$((30 * attempt))
+              echo "Attempt $attempt failed, retrying in ${sleep_time}s..."
+              sleep "$sleep_time"
+            fi
+          done
+          echo "::warning::SBOM attestation for build-tools failed after 3 attempts (Rekor may be unavailable)"
+          exit 1
+
+  # Build gh-aw-node: minimal Node.js Alpine image for the gh-aw safeoutputs MCP server.
+  # Fixes CVEs in libcrypto3/libssl3, musl (Alpine 3.24), tar, brace-expansion, sigstore,
+  # and undici by using node:22.23.2-alpine3.24 + npm 11.18.0.
+  build-gh-aw-node:
+    name: Build gh-aw-node Image
+    runs-on: ubuntu-latest
+    needs: bump-version
+    outputs:
+      digest: ${{ steps.build_gh_aw_node.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+        with:
+          ref: ${{ needs.bump-version.outputs.version }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf # v3.2.0
+        with:
+          platforms: arm64
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 # v3.5.0
+
+      - name: Build and push gh-aw-node image
+        id: build_gh_aw_node
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: ./containers/gh-aw-node
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/${{ github.repository }}/gh-aw-node:${{ needs.bump-version.outputs.version_number }}
+            ghcr.io/${{ github.repository }}/gh-aw-node:latest
+          build-args: |
+            AWF_VERSION=${{ needs.bump-version.outputs.version_number }}
+          no-cache: true
+
+      - name: Sign gh-aw-node image with cosign
+        run: |
+          cosign sign --yes \
+            ghcr.io/${{ github.repository }}/gh-aw-node@${{ steps.build_gh_aw_node.outputs.digest }}
+
+      - name: Generate SBOM for gh-aw-node image
+        uses: anchore/sbom-action@28d71544de8eaf1b958d335707167c5f783590ad # v0.22.2
+        with:
+          image: ghcr.io/${{ github.repository }}/gh-aw-node@${{ steps.build_gh_aw_node.outputs.digest }}
+          format: spdx-json
+          output-file: gh-aw-node-sbom.spdx.json
+
+      - name: Attest SBOM for gh-aw-node image
+        continue-on-error: true
+        run: |
+          for attempt in 1 2 3; do
+            echo "Attempt $attempt of 3..."
+            if cosign attest --yes \
+              --predicate gh-aw-node-sbom.spdx.json \
+              --type spdxjson \
+              ghcr.io/${{ github.repository }}/gh-aw-node@${{ steps.build_gh_aw_node.outputs.digest }}; then
+              echo "SBOM attestation succeeded on attempt $attempt"
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              sleep_time=$((30 * attempt))
+              echo "Attempt $attempt failed, retrying in ${sleep_time}s..."
+              sleep "$sleep_time"
+            fi
+          done
+          echo "::warning::SBOM attestation for gh-aw-node failed after 3 attempts (Rekor may be unavailable)"
+          exit 1
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [bump-version, build-squid, build-agent, build-api-proxy, build-cli-proxy, build-agent-act, build-build-tools, build-enclaves, build-gh-aw-node, build-cloud-hypervisor-test-artifacts]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+        with:
+          ref: ${{ needs.bump-version.outputs.version }}  # Checkout the version tag
+          fetch-depth: 0  # Full history for tag listing and changelog generation
+          fetch-tags: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Create esbuild bundle
+        run: |
+          node scripts/build-bundle.mjs
+          echo "=== Bundle size ==="
+          ls -lh release/awf-bundle.js
+          echo "=== Bundle smoke test ==="
+          node release/awf-bundle.js --version
+          node release/awf-bundle.js --help | head -5
+
+      - name: Install pkg for binary creation
+        run: npm install -g pkg
+
+      - name: Create binaries
+        run: |
+          mkdir -p release
+
+          # Create standalone executables for Linux (x64 and arm64)
+          pkg . \
+            --targets node18-linux-x64 \
+            --output release/awf-linux-x64
+
+          pkg . \
+            --targets node18-linux-arm64 \
+            --output release/awf-linux-arm64
+
+          # Create standalone executables for macOS (x64 and arm64)
+          pkg . \
+            --targets node18-macos-x64 \
+            --output release/awf-darwin-x64
+
+          pkg . \
+            --targets node18-macos-arm64 \
+            --output release/awf-darwin-arm64
+
+          # Verify the binaries were created
+          echo "=== Contents of release directory ==="
+          ls -lh release/
+          echo "=== Verifying binaries ==="
+          for bin in awf-linux-x64 awf-linux-arm64 awf-darwin-x64 awf-darwin-arm64; do
+            test -f "release/$bin" && echo "✓ Binary exists at release/$bin" || echo "✗ Binary NOT found: $bin"
+            file "release/$bin"
+          done
+
+      - name: Smoke test binary (x64)
+        run: |
+          npx tsx scripts/ci/smoke-test-binary.ts \
+            release/awf-linux-x64 \
+            ${{ needs.bump-version.outputs.version_number }}
+
+      - name: Verify arm64 binary is valid ELF
+        run: |
+          file release/awf-linux-arm64 | grep -q "ELF 64-bit LSB" || { echo "ERROR: arm64 binary is not a valid ELF"; exit 1; }
+          file release/awf-linux-arm64 | grep -qi "aarch64\|arm" || { echo "ERROR: arm64 binary is not for ARM architecture"; exit 1; }
+          echo "✓ arm64 binary is a valid ELF for ARM64"
+
+      - name: Verify macOS binaries are valid Mach-O
+        run: |
+          file release/awf-darwin-x64 | grep -q "Mach-O 64-bit" || { echo "ERROR: macOS x64 binary is not a valid Mach-O"; exit 1; }
+          file release/awf-darwin-x64 | grep -qi "x86_64" || { echo "ERROR: macOS x64 binary is not for x86_64 architecture"; exit 1; }
+          echo "✓ macOS x64 binary is a valid Mach-O for x86_64"
+
+          file release/awf-darwin-arm64 | grep -q "Mach-O 64-bit" || { echo "ERROR: macOS arm64 binary is not a valid Mach-O"; exit 1; }
+          file release/awf-darwin-arm64 | grep -qi "arm64" || { echo "ERROR: macOS arm64 binary is not for ARM64 architecture"; exit 1; }
+          echo "✓ macOS arm64 binary is a valid Mach-O for ARM64"
+
+      - name: Create tarball for npm package
+        run: |
+          npm pack
+          mv *.tgz release/awf.tgz
+
+      - name: Download Cloud Hypervisor preview test artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-cloud-hypervisor-test-x86_64
+          path: cloud-hypervisor-release-assets
+
+      - name: Stage Cloud Hypervisor preview test assets
+        run: |
+          cp cloud-hypervisor-release-assets/awf-cloud-hypervisor-test-x86_64.tar.gz \
+            release/cloud-hypervisor-test-x86_64.tar.gz
+          cp cloud-hypervisor-release-assets/SHA256SUMS \
+            release/cloud-hypervisor-test-x86_64.SHA256SUMS
+          cp cloud-hypervisor-release-assets/manifest.json \
+            release/cloud-hypervisor-test-x86_64.manifest.json
+          cp cloud-hypervisor-release-assets/sbom.spdx.json \
+            release/cloud-hypervisor-test-x86_64.sbom.spdx.json
+
+      - name: Generate containers list
+        run: |
+          mkdir -p release
+          printf '%s\n' \
+            "ghcr.io/${{ github.repository }}/squid@${{ needs['build-squid'].outputs.digest }}" \
+            "ghcr.io/${{ github.repository }}/agent@${{ needs['build-agent'].outputs.digest }}" \
+            "ghcr.io/${{ github.repository }}/agent-act@${{ needs['build-agent-act'].outputs.digest }}" \
+            "ghcr.io/${{ github.repository }}/api-proxy@${{ needs['build-api-proxy'].outputs.digest }}" \
+            "ghcr.io/${{ github.repository }}/cli-proxy@${{ needs['build-cli-proxy'].outputs.digest }}" \
+            "ghcr.io/${{ github.repository }}/enclave-script@${{ needs['build-enclaves'].outputs.enclave_script_digest }}" \
+            "ghcr.io/${{ github.repository }}/enclave-agent@${{ needs['build-enclaves'].outputs.enclave_agent_digest }}" \
+            "ghcr.io/${{ github.repository }}/enclave-mcp-server@${{ needs['build-enclaves'].outputs.enclave_mcp_server_digest }}" \
+            "ghcr.io/${{ github.repository }}/gh-aw-node@${{ needs['build-gh-aw-node'].outputs.digest }}" \
+            > release/containers.txt
+          echo "Generated containers.txt:"
+          cat release/containers.txt
+
+      - name: Generate versioned JSON Schema
+        run: |
+          mkdir -p release
+          # Generate all schemas with versioned $id URLs
+          node scripts/generate-schema.mjs --version ${{ needs.bump-version.outputs.version }}
+          # Copy generated files to release/ for upload
+          cp docs/awf-config.schema.json release/awf-config.schema.json
+          # Compatibility alias for consumers that previously pinned to awf-config.v1.schema.json
+          cp docs/awf-config.schema.json release/awf-config.v1.schema.json
+          cp schemas/audit.schema.json release/audit.schema.json
+          cp schemas/token-usage.schema.json release/token-usage.schema.json
+          echo "=== Schema preview (first 10 lines) ==="
+          head -10 release/awf-config.schema.json
+
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum * > checksums.txt
+
+      - name: Get previous release tag
+        id: previous_tag
+        run: |
+          set -euo pipefail
+          CURRENT_TAG="${{ needs.bump-version.outputs.version }}"
+
+          # Use git tags directly (more reliable than gh release list)
+          # Get the most recent tag that is not the current tag
+          PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -v "^${CURRENT_TAG}$" | head -n1 || echo "")
+
+          echo "previous_tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
+          echo "Previous tag: $PREVIOUS_TAG (current: $CURRENT_TAG)"
+
+      - name: Generate changelog from commits
+        id: changelog
+        run: |
+          set -euo pipefail
+          CURRENT_TAG="${{ needs.bump-version.outputs.version }}"
+          PREVIOUS_TAG="${{ steps.previous_tag.outputs.previous_tag }}"
+
+          echo "Generating changelog from $PREVIOUS_TAG to $CURRENT_TAG"
+
+          # Generate changelog using GitHub's API
+          if [ -n "$PREVIOUS_TAG" ]; then
+            CHANGELOG=$(gh api repos/${{ github.repository }}/releases/generate-notes \
+              -f tag_name="$CURRENT_TAG" \
+              -f previous_tag_name="$PREVIOUS_TAG" \
+              --jq '.body' 2>/dev/null || echo "")
+          else
+            # First release - try API without previous tag
+            CHANGELOG=$(gh api repos/${{ github.repository }}/releases/generate-notes \
+              -f tag_name="$CURRENT_TAG" \
+              --jq '.body' 2>/dev/null || echo "")
+          fi
+
+          # If API call failed, fall back to git log
+          if [ -z "$CHANGELOG" ]; then
+            echo "GitHub API failed, falling back to git log"
+            if [ -n "$PREVIOUS_TAG" ]; then
+              CHANGELOG=$(git log --oneline --pretty=format:"* %s (%h)" "$PREVIOUS_TAG..HEAD" 2>/dev/null || echo "* Initial release")
+            else
+              # First release - get all commits (no arbitrary limit)
+              CHANGELOG=$(git log --oneline --pretty=format:"* %s (%h)" 2>/dev/null || echo "* Initial release")
+            fi
+          fi
+
+          # Write changelog to file for multiline handling
+          echo "$CHANGELOG" > changelog_body.md
+
+          # Validate changelog was generated
+          if [ ! -s changelog_body.md ]; then
+            echo "Error: Changelog generation failed or produced empty output"
+            exit 1
+          fi
+
+          echo "Changelog generated successfully ($(wc -l < changelog_body.md) lines)"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate CLI help output
+        id: cli_help
+        run: |
+          set -euo pipefail
+
+          # Generate CLI help from the built binary
+          node dist/cli.js --help > cli_help.txt
+
+          # Validate CLI help was generated
+          if [ ! -s cli_help.txt ]; then
+            echo "Error: CLI help generation failed or produced empty output"
+            exit 1
+          fi
+
+          echo "CLI help generated ($(wc -l < cli_help.txt) lines):"
+          cat cli_help.txt
+
+      - name: Create Release Notes
+        id: release_notes
+        env:
+          VERSION: ${{ needs.bump-version.outputs.version }}
+          VERSION_NUMBER: ${{ needs.bump-version.outputs.version_number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Use Node.js script for safe template substitution
+          # (avoids shell injection issues with special characters)
+          node scripts/generate-release-notes.js \
+            changelog_body.md \
+            cli_help.txt \
+            release_notes.md
+
+          # Validate output was generated
+          if [ ! -s release_notes.md ]; then
+            echo "Error: Release notes generation failed"
+            exit 1
+          fi
+
+          # Cleanup temp files
+          rm -f changelog_body.md cli_help.txt
+
+          echo "Release notes preview (first 20 lines):"
+          head -20 release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
+        with:
+          tag_name: ${{ needs.bump-version.outputs.version }}
+          name: Release ${{ needs.bump-version.outputs.version }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: ${{ contains(needs.bump-version.outputs.version, 'alpha') || contains(needs.bump-version.outputs.version, 'beta') || contains(needs.bump-version.outputs.version, 'rc') }}
+          files: |
+            release/awf-linux-x64
+            release/awf-linux-arm64
+            release/awf-darwin-x64
+            release/awf-darwin-arm64
+            release/awf-bundle.js
+            release/awf.tgz
+            release/cloud-hypervisor-test-x86_64.tar.gz
+            release/cloud-hypervisor-test-x86_64.SHA256SUMS
+            release/cloud-hypervisor-test-x86_64.manifest.json
+            release/cloud-hypervisor-test-x86_64.sbom.spdx.json
+            release/containers.txt
+            release/awf-config.schema.json
+            release/awf-config.v1.schema.json
+            release/audit.schema.json
+            release/token-usage.schema.json
+            release/checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts (for debugging)
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: release-artifacts
+          path: release/
+          retention-days: 7
+
+  build-cloud-hypervisor-test-artifacts:
+    name: Build Cloud Hypervisor Preview Test Artifacts
+    runs-on: ubuntu-24.04
+    needs: [bump-version, build-build-tools]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+        with:
+          ref: ${{ needs.bump-version.outputs.version }}
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.25.0'
+          cache-dependency-path: guest/firecracker-supervisor/go.mod
+
+      - name: Install guest build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            bc binutils bison build-essential ca-certificates cpio e2fsprogs \
+            file flex libelf-dev libssl-dev rsync virtiofsd xz-utils
+
+      - name: Build and verify pinned test artifacts
+        run: |
+          BUILD_TOOLS_IMAGE="ghcr.io/${{ github.repository }}/build-tools@${{ needs.build-build-tools.outputs.digest }}" \
+            VERSION="${{ needs.bump-version.outputs.version }}" \
+            ./guest/cloud-hypervisor/build-test-artifacts.sh
+          ./guest/cloud-hypervisor/verify-test-artifacts.sh \
+            release/cloud-hypervisor-test-x86_64
+
+      - name: Attest guest artifact provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: release/cloud-hypervisor-test-x86_64/awf-cloud-hypervisor-test-x86_64.tar.gz
+
+      - name: Upload Cloud Hypervisor test artifacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: release-cloud-hypervisor-test-x86_64
+          path: release/cloud-hypervisor-test-x86_64/
+          if-no-files-found: error
+          retention-days: 7

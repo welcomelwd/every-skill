@@ -1,0 +1,368 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-domain:
+    name: Domain Tests
+    if: github.event_name != 'pull_request' || github.event.label.name == 'ready-for-aw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build project
+        run: npm run build
+
+      - name: Build local containers
+        run: |
+          echo "=== Building local containers ==="
+          retry_docker_build() {
+            local image="$1"
+            local context="$2"
+            local attempt
+            for attempt in 1 2 3; do
+              if docker build -t "$image" "$context"; then
+                return 0
+              fi
+              if [ "$attempt" -lt 3 ]; then
+                sleep $((attempt * 10))
+              fi
+            done
+            return 1
+          }
+          retry_docker_build ghcr.io/github/gh-aw-firewall/squid:latest containers/squid/
+          retry_docker_build ghcr.io/github/gh-aw-firewall/agent:latest containers/agent/
+
+      - name: Pre-test cleanup
+        run: |
+          echo "=== Pre-test cleanup ==="
+          ./scripts/ci/cleanup.sh || true
+
+      - name: Run domain tests
+        run: |
+          echo "=== Running domain tests ==="
+          npm run test:integration -- \
+            --testPathPatterns="(blocked-domains|dns-servers|empty-domains|wildcard-patterns)" \
+            --verbose
+        env:
+          JEST_TIMEOUT: 180000
+
+      - name: Post-test cleanup
+        if: always()
+        run: |
+          echo "=== Post-test cleanup ==="
+          ./scripts/ci/cleanup.sh || true
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Collecting failure logs ==="
+          docker ps -a || true
+          docker logs awf-squid 2>&1 || true
+          docker logs awf-agent 2>&1 || true
+          ls -la /tmp/awf-* 2>/dev/null || true
+          sudo cat /tmp/awf-*/squid-logs/access.log 2>/dev/null || true
+
+  test-network:
+    name: Network Tests
+    if: github.event_name != 'pull_request' || github.event.label.name == 'ready-for-aw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build project
+        run: npm run build
+
+      - name: Build local containers
+        run: |
+          echo "=== Building local containers ==="
+          retry_docker_build() {
+            local image="$1"
+            local context="$2"
+            local attempt
+            for attempt in 1 2 3; do
+              if docker build -t "$image" "$context"; then
+                return 0
+              fi
+              if [ "$attempt" -lt 3 ]; then
+                sleep $((attempt * 10))
+              fi
+            done
+            return 1
+          }
+          retry_docker_build ghcr.io/github/gh-aw-firewall/squid:latest containers/squid/
+          retry_docker_build ghcr.io/github/gh-aw-firewall/agent:latest containers/agent/
+
+      - name: Pre-test cleanup
+        run: |
+          echo "=== Pre-test cleanup ==="
+          ./scripts/ci/cleanup.sh || true
+
+      - name: Run network tests
+        run: |
+          echo "=== Running network tests ==="
+          npm run test:integration -- \
+            --testPathPatterns="(ipv6|localhost-access|network-security)" \
+            --verbose
+        env:
+          JEST_TIMEOUT: 180000
+
+      - name: Post-test cleanup
+        if: always()
+        run: |
+          echo "=== Post-test cleanup ==="
+          ./scripts/ci/cleanup.sh || true
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Collecting failure logs ==="
+          docker ps -a || true
+          docker logs awf-squid 2>&1 || true
+          docker logs awf-agent 2>&1 || true
+          ls -la /tmp/awf-* 2>/dev/null || true
+          sudo cat /tmp/awf-*/squid-logs/access.log 2>/dev/null || true
+
+  test-protocol-security:
+    name: Protocol & Security Tests
+    if: github.event_name != 'pull_request' || github.event.label.name == 'ready-for-aw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build project
+        run: npm run build
+
+      - name: Build local containers
+        run: |
+          echo "=== Building local containers ==="
+          retry_docker_build() {
+            local image="$1"
+            local context="$2"
+            local attempt
+            for attempt in 1 2 3; do
+              if docker build -t "$image" "$context"; then
+                return 0
+              fi
+              if [ "$attempt" -lt 3 ]; then
+                sleep $((attempt * 10))
+              fi
+            done
+            return 1
+          }
+          retry_docker_build ghcr.io/github/gh-aw-firewall/squid:latest containers/squid/
+          retry_docker_build ghcr.io/github/gh-aw-firewall/agent:latest containers/agent/
+
+      - name: Pre-test cleanup
+        run: |
+          echo "=== Pre-test cleanup ==="
+          ./scripts/ci/cleanup.sh || true
+
+      - name: Run protocol & security tests
+        run: |
+          echo "=== Running protocol & security tests ==="
+          npm run test:integration -- \
+            --testPathPatterns="(protocol-support|credential-hiding|one-shot-tokens|token-unset|git-operations)" \
+            --verbose
+        env:
+          JEST_TIMEOUT: 180000
+
+      - name: Post-test cleanup
+        if: always()
+        run: |
+          echo "=== Post-test cleanup ==="
+          ./scripts/ci/cleanup.sh || true
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Collecting failure logs ==="
+          docker ps -a || true
+          docker logs awf-squid 2>&1 || true
+          docker logs awf-agent 2>&1 || true
+          ls -la /tmp/awf-* 2>/dev/null || true
+          sudo cat /tmp/awf-*/squid-logs/access.log 2>/dev/null || true
+
+  test-container-ops:
+    name: Container & Ops Tests
+    if: github.event_name != 'pull_request' || github.event.label.name == 'ready-for-aw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build project
+        run: npm run build
+
+      - name: Build local containers
+        run: |
+          echo "=== Building local containers ==="
+          for image in squid agent; do
+            for attempt in 1 2 3; do
+              if docker build -t "ghcr.io/github/gh-aw-firewall/${image}:latest" "containers/${image}/"; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                exit 1
+              fi
+              sleep $((attempt * 10))
+            done
+          done
+
+      - name: Pre-test cleanup
+        run: |
+          echo "=== Pre-test cleanup ==="
+          ./scripts/ci/cleanup.sh || true
+
+      - name: Run container & ops tests
+        run: |
+          echo "=== Running container & ops tests ==="
+          npm run test:integration -- \
+            --testPathPatterns="(container-workdir|environment-variables|error-handling|exit-code-propagation|log-commands|no-docker|volume-mounts|skip-pull)" \
+            --verbose
+        env:
+          JEST_TIMEOUT: 180000
+
+      - name: Post-test cleanup
+        if: always()
+        run: |
+          echo "=== Post-test cleanup ==="
+          ./scripts/ci/cleanup.sh || true
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Collecting failure logs ==="
+          docker ps -a || true
+          docker logs awf-squid 2>&1 || true
+          docker logs awf-agent 2>&1 || true
+          ls -la /tmp/awf-* 2>/dev/null || true
+          sudo cat /tmp/awf-*/squid-logs/access.log 2>/dev/null || true
+
+  test-api-proxy:
+    name: API Proxy Tests
+    if: github.event_name != 'pull_request' || github.event.label.name == 'ready-for-aw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build project
+        run: npm run build
+
+      - name: Build local containers
+        run: |
+          echo "=== Building local containers ==="
+          retry_docker_build() {
+            local image="$1"
+            local context="$2"
+            local attempt
+            for attempt in 1 2 3; do
+              if docker build -t "$image" "$context"; then
+                return 0
+              fi
+              if [ "$attempt" -lt 3 ]; then
+                sleep $((attempt * 10))
+              fi
+            done
+            return 1
+          }
+          retry_docker_build ghcr.io/github/gh-aw-firewall/squid:latest containers/squid/
+          retry_docker_build ghcr.io/github/gh-aw-firewall/agent:latest containers/agent/
+
+      - name: Pre-test cleanup
+        run: |
+          echo "=== Pre-test cleanup ==="
+          ./scripts/ci/cleanup.sh || true
+
+      - name: Run API proxy tests
+        run: |
+          echo "=== Running API proxy tests ==="
+          npm run test:integration -- \
+            --testPathPatterns="api-proxy" \
+            --verbose
+        env:
+          JEST_TIMEOUT: 180000
+
+      - name: Post-test cleanup
+        if: always()
+        run: |
+          echo "=== Post-test cleanup ==="
+          ./scripts/ci/cleanup.sh || true
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Collecting failure logs ==="
+          docker ps -a || true
+          docker logs awf-squid 2>&1 || true
+          docker logs awf-agent 2>&1 || true
+          ls -la /tmp/awf-* 2>/dev/null || true
+          sudo cat /tmp/awf-*/squid-logs/access.log 2>/dev/null || true

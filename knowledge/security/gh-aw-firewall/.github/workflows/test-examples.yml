@@ -1,0 +1,91 @@
+name: Examples Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-examples:
+    name: Test Examples
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build project
+        run: npm run build
+
+      - name: Install awf globally
+        run: sudo npm link
+
+      - name: Build Docker images locally
+        run: |
+          # Build agent and squid images from source and tag as GHCR images
+          # so examples that use default GHCR images get the PR's code
+          docker build -t ghcr.io/github/gh-aw-firewall/agent:latest containers/agent/
+          docker build -t ghcr.io/github/gh-aw-firewall/squid:latest containers/squid/
+
+      - name: Pre-test cleanup
+        run: sudo ./scripts/ci/cleanup.sh
+
+      - name: Make examples executable
+        run: chmod +x examples/*.sh
+
+      - name: Test basic-curl.sh
+        run: |
+          echo "=== Testing basic-curl.sh ==="
+          sudo ./examples/basic-curl.sh
+
+      - name: Test using-domains-file.sh
+        run: |
+          echo "=== Testing using-domains-file.sh ==="
+          sudo ./examples/using-domains-file.sh
+
+      - name: Test debugging.sh
+        run: |
+          echo "=== Testing debugging.sh ==="
+          sudo ./examples/debugging.sh
+
+      - name: Test blocked-domains.sh
+        run: |
+          echo "=== Testing blocked-domains.sh ==="
+          sudo ./examples/blocked-domains.sh
+
+      # Note: github-copilot.sh is skipped as it requires GITHUB_TOKEN for Copilot CLI
+      # To test it, you would need to set up a secret with a valid Copilot token
+
+      - name: Post-test cleanup
+        if: always()
+        run: sudo ./scripts/ci/cleanup.sh
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: examples-test-logs
+          path: |
+            /tmp/*-test.log
+            /tmp/awf-*/
+            /tmp/awf-agent-logs-*/
+            /tmp/squid-logs-*/
+          retention-days: 7

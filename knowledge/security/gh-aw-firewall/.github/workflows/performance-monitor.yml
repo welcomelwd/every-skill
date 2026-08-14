@@ -1,0 +1,269 @@
+name: Performance Monitor
+
+on:
+  schedule:
+    # Run daily at 06:00 UTC
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: "Number of iterations per metric"
+        required: false
+        default: "30"
+
+concurrency:
+  group: performance-benchmark
+  cancel-in-progress: false  # Let the running benchmark finish; queue the next one
+
+permissions:
+  contents: write  # Required to push to benchmark-data branch
+  issues: write
+
+jobs:
+  benchmark:
+    name: Run Performance Benchmarks
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Install AWF locally
+        run: |
+          sudo tee /usr/local/bin/awf > /dev/null <<'WRAPPER'
+          #!/bin/bash
+          exec node "${{ github.workspace }}/dist/cli.js" "$@"
+          WRAPPER
+          sudo chmod +x /usr/local/bin/awf
+
+      - name: Fetch benchmark history
+        run: |
+          mkdir -p benchmarks
+          if git fetch origin benchmark-data 2>/dev/null; then
+            git show origin/benchmark-data:benchmarks/history.json > benchmarks/history.json 2>/dev/null || echo '[]' > benchmarks/history.json
+          else
+            echo '[]' > benchmarks/history.json
+          fi
+          # Validate JSON; fall back to empty array if corrupted
+          if ! jq empty benchmarks/history.json 2>/dev/null; then
+            echo "WARNING: history.json is corrupted, resetting to empty"
+            echo '[]' > benchmarks/history.json
+          fi
+          echo "History entries: $(jq 'length' benchmarks/history.json)"
+
+      - name: Run benchmarks
+        id: benchmark
+        env:
+          AWF_BENCHMARK_ITERATIONS: ${{ github.event.inputs.iterations || '30' }}
+        run: |
+          npx tsx scripts/ci/benchmark-performance.ts > benchmark-results.json 2>benchmark-progress.log || true
+          cat benchmark-progress.log
+          echo "--- JSON output ---"
+          cat benchmark-results.json
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ github.sha }}
+          path: |
+            benchmark-results.json
+            benchmark-progress.log
+          retention-days: 90
+
+      - name: Validate benchmark JSON
+        run: |
+          if [ ! -s benchmark-results.json ]; then
+            echo "ERROR: benchmark-results.json is empty"
+            exit 1
+          fi
+          if ! jq empty benchmark-results.json 2>/dev/null; then
+            echo "ERROR: benchmark-results.json is not valid JSON"
+            cat benchmark-results.json
+            exit 1
+          fi
+
+      - name: Append to benchmark history
+        run: |
+          HISTORY_FILE="benchmarks/history.json"
+          if ! jq -e '.results' benchmark-results.json > /dev/null 2>&1; then
+            echo "Invalid or missing benchmark results — skipping history update"
+            exit 0
+          fi
+          ENTRY=$(jq '{timestamp, commitSha, iterations, results, regressions}' benchmark-results.json)
+          UPDATED=$(jq --argjson entry "$ENTRY" '. + [$entry]' "$HISTORY_FILE")
+          # Keep only last 50 entries
+          echo "$UPDATED" | jq '.[-50:]' > "$HISTORY_FILE"
+          echo "History now has $(jq 'length' "$HISTORY_FILE") entries"
+
+      - name: Commit benchmark history
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          cp benchmarks/history.json /tmp/history.json
+          cp benchmark-results.json /tmp/benchmark-results.json
+          if git fetch origin benchmark-data 2>/dev/null; then
+            git checkout benchmark-data
+          else
+            git checkout --orphan benchmark-data
+            git rm -rf . 2>/dev/null || true
+          fi
+          mkdir -p benchmarks
+          cp /tmp/history.json benchmarks/history.json
+          git add benchmarks/history.json
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: update benchmark history [skip ci]"
+            git push origin benchmark-data
+          fi
+
+      - name: Restore main branch
+        run: |
+          git checkout ${{ github.sha }}
+          cp /tmp/history.json benchmarks/history.json
+          cp /tmp/benchmark-results.json benchmark-results.json
+
+      - name: Generate trend report
+        run: npx tsx scripts/ci/benchmark-trend.ts >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check for regressions
+        id: check
+        run: |
+          if [ ! -f benchmark-results.json ]; then
+            echo "No benchmark results found"
+            exit 1
+          fi
+
+          REGRESSIONS=$(jq -r '.regressions | length' benchmark-results.json)
+          echo "regression_count=$REGRESSIONS" >> "$GITHUB_OUTPUT"
+
+          if [ "$REGRESSIONS" -gt 0 ]; then
+            echo "## ⚠️ Performance Regressions Detected" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            jq -r '.regressions[]' benchmark-results.json | while read -r line; do
+              echo "- $line" >> "$GITHUB_STEP_SUMMARY"
+            done
+          else
+            echo "## ✅ All Metrics Within Thresholds" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Metric | Mean | Median | P95 | P99 | Target | Critical |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|------|--------|-----|-----|--------|----------|" >> "$GITHUB_STEP_SUMMARY"
+
+          jq -r '.results[] as $r | .thresholds[$r.metric] as $t |
+            "| \($r.metric) | \($r.mean)\($r.unit) | \($r.median)\($r.unit) | \($r.p95)\($r.unit) | \($r.p99)\($r.unit) | \($t.target // "N/A")\(if $t then $r.unit else "" end) | \($t.critical // "N/A")\(if $t then $r.unit else "" end) |"' \
+            benchmark-results.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Ensure labels exist
+        if: steps.check.outputs.regression_count != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const labels = [
+              { name: 'needs-investigation', color: 'e4e669', description: 'Requires further investigation' },
+              { name: 'performance', color: 'd4c5f9', description: 'Performance related' },
+            ];
+            for (const label of labels) {
+              try {
+                await github.rest.issues.createLabel({ owner: context.repo.owner, repo: context.repo.repo, ...label });
+                core.info(`Created label: ${label.name}`);
+              } catch (e) {
+                if (e.status === 422) {
+                  core.info(`Label already exists: ${label.name}`);
+                } else {
+                  throw e;
+                }
+              }
+            }
+
+      - name: Create regression issue
+        if: steps.check.outputs.regression_count != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('benchmark-results.json', 'utf-8'));
+
+            const body = [
+              `## Performance Regression Detected`,
+              ``,
+              `**Commit:** ${report.commitSha}`,
+              `**Timestamp:** ${report.timestamp}`,
+              `**Iterations:** ${report.iterations}`,
+              ``,
+              `### Regressions`,
+              ``,
+              ...report.regressions.map(r => `- ${r}`),
+              ``,
+              `### Full Results`,
+              ``,
+              `| Metric | Mean | Median | P95 | P99 |`,
+              `|--------|------|--------|-----|-----|`,
+              ...report.results.map(r =>
+                `| ${r.metric} | ${r.mean}${r.unit} | ${r.median}${r.unit} | ${r.p95}${r.unit} | ${r.p99}${r.unit} |`
+              ),
+              ``,
+              `<details><summary>Raw JSON</summary>`,
+              ``,
+              '```json',
+              JSON.stringify(report, null, 2),
+              '```',
+              `</details>`,
+            ].join('\n');
+
+            try {
+              // Check for existing open regression issue to avoid duplicates on daily runs
+              const existing = await github.rest.issues.listForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                labels: 'performance,needs-investigation',
+                state: 'open',
+                per_page: 5,
+              });
+
+              // Filter out PRs (listForRepo returns both issues and PRs)
+              const existingIssues = existing.data.filter(item => !item.pull_request);
+
+              if (existingIssues.length > 0) {
+                // Comment on existing issue with a short summary (link to run for full details)
+                const issueNumber = existingIssues[0].number;
+                const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+                const regressionList = report.regressions.map(r => `- ${r}`).join('\n');
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  body: `## Updated Regression Data (${new Date().toISOString().split('T')[0]})\n\n**Run:** [${context.runId}](${runUrl})\n**Commit:** ${report.commitSha}\n\n### Regressions\n${regressionList}\n\nSee the [workflow run](${runUrl}) for full results and artifacts.`,
+                });
+                core.info(`Updated existing regression issue #${issueNumber}`);
+              } else {
+                const issue = await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: `Performance regression detected (${new Date().toISOString().split('T')[0]})`,
+                  body,
+                  labels: ['performance', 'needs-investigation'],
+                });
+                core.info(`Created regression issue: ${issue.data.html_url}`);
+              }
+            } catch (error) {
+              core.setFailed(`Failed to create/update regression issue: ${error.message}`);
+            }

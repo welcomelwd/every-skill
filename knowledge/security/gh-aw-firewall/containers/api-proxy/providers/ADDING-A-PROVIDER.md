@@ -1,0 +1,193 @@
+# Adding a New LLM Provider to the AWF API Proxy
+
+This guide explains how to wire a new LLM provider into the AWF API proxy in three steps:
+
+1. Create an adapter file in this directory (`providers/<name>.js`)
+2. Register it in `providers/index.js`
+3. Update the Dockerfile COPY list
+
+The core proxy engine (`server.js`) is completely agnostic of provider details — it only calls the methods defined on the `ProviderAdapter` interface. You never need to touch the core to add a new provider.
+
+---
+
+## Step 1 — Create the adapter file
+
+Create `providers/<name>.js`. The adapter is a plain JS object (no class syntax required) returned by a factory function:
+
+```js
+'use strict';
+
+const { createBaseAdapterConfig, createAdapterMethods, buildProviderAdapter } = require('../adapter-factory');
+
+function createMyProviderAdapter(env, deps = {}) {
+  // Read credentials and config from env at construction time
+  const { apiKey, rawTarget: target, basePath } = createBaseAdapterConfig(env, {
+    keyEnvVar: 'MY_PROVIDER_API_KEY',
+    targetEnvVar: 'MY_PROVIDER_API_TARGET',
+    basePathEnvVar: 'MY_PROVIDER_API_BASE_PATH',
+    defaultTarget: 'api.myprovider.com',
+  });
+  const adapterMethods = createAdapterMethods({
+    apiKey,
+    rawTarget: target,
+    basePath,
+    provider: 'my-provider',
+    port: 10005,
+    defaultTarget: 'api.myprovider.com',
+    validationPath: '/v1/models',
+    validationHeaders: () => ({ 'Authorization': `Bearer ${apiKey}` }),
+    modelsPath: '/v1/models',
+    modelsFetchHeaders: () => ({ 'Authorization': `Bearer ${apiKey}` }),
+  });
+
+  const bodyTransform = deps.bodyTransform || null;   // model-alias rewriting etc.
+
+  return buildProviderAdapter({
+    // ── Identity ─────────────────────────────────────────────────────────────
+    name: 'my-provider',   // unique lowercase slug
+    port: 10005,           // next available port (update Dockerfile EXPOSE too)
+    isManagementPort: false,   // true only for port 10000 (OpenAI)
+    alwaysBind: false,         // set true to start a 503-stub when not configured
+
+    adapterMethods,
+
+    // ── Credentials ──────────────────────────────────────────────────────────
+    isEnabled() { return !!apiKey; },
+
+    // ── Per-request auth headers ──────────────────────────────────────────────
+    // `req` is the incoming http.IncomingMessage — inspect it for request-specific logic.
+    getAuthHeaders(req) {
+      return { 'Authorization': ['Bearer', apiKey].join(' ') };
+    },
+
+    // ── Optional: URL transform ───────────────────────────────────────────────
+    // Return the (possibly modified) URL string, or omit this parameter entirely.
+    transformRequestUrl(url) { return url; },
+
+    // ── Optional: body transform ──────────────────────────────────────────────
+    // Wrapped automatically in getBodyTransform(); pass null for no transform.
+    bodyTransform,
+
+    // ── Optional: not-configured responses ───────────────────────────────────
+    getUnconfiguredResponse() {
+      return { statusCode: 503, body: { error: 'my-provider not configured' } };
+    },
+
+    // ── Optional: extra fields (OIDC runtime methods, introspection, overrides)
+    // These are spread into the adapter object last, after adapterMethods,
+    // so they can override any field set earlier (e.g. participatesInValidation).
+    // extra: { ...oidcRuntimeMethods, _someIntrospectionField: value },
+  });
+}
+
+module.exports = { createMyProviderAdapter };
+```
+
+### Provider adapter reference
+
+| Method / property | Required? | Description |
+|---|---|---|
+| `name` | ✅ | Unique lowercase slug (matches cache key and log labels) |
+| `port` | ✅ | Port to listen on; must be unique across all adapters |
+| `isManagementPort` | ✅ | `true` only for the one port that serves `/health`, `/metrics`, `/reflect` |
+| `alwaysBind` | ✅ | `true` to start a stub server even when `isEnabled()` returns false |
+| `participatesInValidation` | ✅ | `true` when this adapter should count in the startup latch |
+| `isEnabled()` | ✅ | Returns `true` when credentials are present |
+| `getTargetHost(req?)` | ✅ | Returns the upstream hostname |
+| `getBasePath(req?)` | ✅ | Returns the URL path prefix (empty string for none) |
+| `getAuthHeaders(req)` | ✅ | Returns headers to inject (auth, version, integration ID, …) |
+| `transformRequestUrl(url)` | ➖ optional | Mutate the request URL before forwarding (e.g. strip query params) |
+| `getBodyTransform()` | ✅ | Returns `(Buffer) => Buffer\|null` or `null` |
+| `getValidationProbe()` | ✅ | Returns probe config, `{ skip, reason }`, or `null` |
+| `getModelsFetchConfig()` | ✅ | Returns fetch config or `null` |
+| `getReflectionInfo()` | ✅ | Returns endpoint metadata for `/reflect` and `models.json` |
+| `getUnconfiguredResponse()` | ➖ optional | Response for proxy requests when `alwaysBind=true` & not enabled |
+| `getUnconfiguredHealthResponse()` | ➖ optional | `/health` response when not enabled — prefer the declarative form below |
+| `healthServiceName` | ➖ optional | Service name for auto-generated `/health` response (e.g. `'awf-api-proxy-myprovider'`); requires `missingCredentialMessage` |
+| `missingCredentialMessage` | ➖ optional | Default error message when credentials are absent (requires `healthServiceName`) |
+| `unavailableWhen` | ➖ optional | `() => ({ message: 'OIDC token unavailable', status: 'unavailable' })` or `() => null` — when non-null the auto-generated `/health` response uses the returned message/status (e.g. for OIDC token-not-yet-available states) |
+
+> **Tip:** Pass `healthServiceName` + `missingCredentialMessage` (and optionally `unavailableWhen`) to `buildProviderAdapter` instead of writing a `getUnconfiguredHealthResponse()` method. The factory auto-generates the method from those values, keeping provider files free of repetitive boilerplate.
+
+---
+
+## Step 2 — Register in `providers/index.js`
+
+```js
+// 1. Import your factory
+const { createMyProviderAdapter } = require('./my-provider');
+
+// 2. Construct the adapter alongside the others in createAllAdapters():
+function createAllAdapters(env, deps = {}) {
+  const openai    = createOpenAIAdapter(env,    { bodyTransform: deps.openaiBodyTransform    });
+  const anthropic = createAnthropicAdapter(env, { bodyTransform: deps.anthropicBodyTransform });
+  const copilot   = createCopilotAdapter(env,   { bodyTransform: deps.copilotBodyTransform   });
+  const gemini    = createGeminiAdapter(env,    { bodyTransform: deps.geminiBodyTransform    });
+  const myProvider = createMyProviderAdapter(env, { bodyTransform: deps.myProviderBodyTransform }); // ← add here
+
+  return [openai, anthropic, copilot, gemini, myProvider]; // ← include in return
+}
+
+// 3. Export it alongside the others
+module.exports = {
+  createAllAdapters,
+  // ...existing exports...
+  createMyProviderAdapter,
+};
+```
+
+If your provider needs model-alias rewriting, also add a corresponding
+`myProviderBodyTransform` in server.js (mirroring how the existing transforms
+are built and passed into `createAllAdapters`).
+
+## Step 3 — Update the Dockerfile
+
+Add the new adapter file to the explicit `COPY` list in `containers/api-proxy/Dockerfile`:
+
+```dockerfile
+COPY server.js logging.js metrics.js rate-limiter.js token-tracker.js \
+     model-resolver.js proxy-utils.js anthropic-cache.js anthropic-transforms.js ./
+COPY providers/ ./providers/
+```
+
+Also update the `EXPOSE` directive to include the new port:
+
+```dockerfile
+EXPOSE 10000 10001 10002 10003 <NEW_PORT>
+```
+
+---
+
+## Checklist
+
+- [ ] `providers/<name>.js` created and exports `create<Name>Adapter`
+- [ ] Adapter registered in `providers/index.js` (`createAllAdapters` + exports)
+- [ ] `Dockerfile` updated: `providers/` in COPY list, port in EXPOSE
+- [ ] `src/types/ports.ts` updated with the new provider port constant
+- [ ] `src/host-iptables-rules.ts` updated if port-allowlisting logic needs changes
+- [ ] Add provider env vars to `src/docker-manager.ts` if they need forwarding from the host
+- [ ] Add domain to `docs/allowed-domains.md` or equivalent if the upstream is new
+- [ ] Write adapter unit tests in `providers/<name>.test.js`
+
+---
+
+## Testing your adapter in isolation
+
+Because each adapter is a plain object, you can unit-test it without starting any HTTP servers:
+
+```js
+const { createMyProviderAdapter } = require('./my-provider');
+
+describe('MyProvider adapter', () => {
+  it('returns correct auth headers', () => {
+    const adapter = createMyProviderAdapter({ MY_PROVIDER_API_KEY: 'test-key' });
+    const fakeReq = { headers: {}, method: 'POST', url: '/v1/chat' };
+    expect(adapter.getAuthHeaders(fakeReq)).toEqual({ Authorization: 'Bearer test-key' });
+  });
+
+  it('reports not configured when key is absent', () => {
+    const adapter = createMyProviderAdapter({});
+    expect(adapter.isEnabled()).toBe(false);
+  });
+});
+```

@@ -1,0 +1,101 @@
+import * as fs from 'fs';
+import * as path from 'path';
+
+const workflowsDir = path.resolve(__dirname, '../../.github/workflows');
+const sourcePath = path.join(workflowsDir, 'test-coverage-improver.md');
+const lockPath = path.join(workflowsDir, 'test-coverage-improver.lock.yml');
+
+describe('test coverage improver workflow token optimization config', () => {
+  it('preselects target file and trims prompt/tool surface in source workflow', () => {
+    const source = fs.readFileSync(sourcePath, 'utf-8');
+
+    expect(source).toContain('toolsets: [repos]');
+    expect(source).not.toContain('toolsets: [repos, pull_requests]');
+    expect(source).toContain('COPILOT_MODEL: claude-haiku-4-5');
+    expect(source).toContain('node:*');
+    expect(source).toContain('./node_modules/.bin/jest:*');
+    expect(source).toContain('./node_modules/.bin/eslint:*');
+    expect(source).toContain('Select target file and inject content');
+    expect(source).toContain('target-file.txt');
+    expect(source).toContain('target-test-file.txt');
+    expect(source).toContain('source-content.txt');
+    expect(source).toContain('test-content.txt');
+    expect(source).toContain('Verify injected context');
+    expect(source).toContain('target-test-file.txt');
+    expect(source).toContain('## Turn Budget');
+    expect(source).toContain('Complete this task in ≤ 7 tool calls.');
+    expect(source).toContain('Start with one batched read of all staged files');
+    expect(source).toContain('./node_modules/.bin/jest --testPathPattern=<file> --no-coverage 2>&1 | tail -60');
+    expect(source).toContain('./node_modules/.bin/eslint <file> --max-warnings=0');
+    expect(source).toContain('## Target File (pre-selected)');
+    expect(source).toContain('/tmp/gh-aw/agent/target-file.txt');
+    expect(source).toContain('/tmp/gh-aw/agent/target-test-file.txt');
+    expect(source).toContain('/tmp/gh-aw/agent/source-content.txt');
+    expect(source).toContain('/tmp/gh-aw/agent/test-content.txt');
+    expect(source).toContain('cat:/tmp/gh-aw/agent/source-content.txt');
+    expect(source).toContain('cat:/tmp/gh-aw/agent/test-content.txt');
+    expect(source).toContain('cat:/tmp/gh-aw/agent/target-file.txt');
+    expect(source).toContain('cat:/tmp/gh-aw/agent/coverage-md.txt');
+    expect(source).toContain('cat:/tmp/gh-aw/agent/low-coverage.txt');
+    expect(source).toContain('Do not glob-read `src/*.test.ts` for style reference.');
+    expect(source).toContain('Run targeted Jest reruns only when fixing failures');
+    expect(source).toContain('do not run full-suite `npm run test` or `npm run lint`');
+
+    expect(source).not.toContain('cat:src/docker-manager.ts');
+    expect(source).not.toContain('cat:src/cli.ts');
+    expect(source).not.toContain('cat:src/host-iptables.ts');
+    expect(source).not.toContain('cat:src/squid-config.ts');
+    expect(source).not.toContain('cat:src/domain-patterns.ts');
+    expect(source).not.toContain('cat:src/*.test.ts');
+    expect(source).not.toContain('cat:tests/integration/*docker*.test.ts');
+    expect(source).not.toContain('cat:tests/integration/blocked-domains.test.ts');
+    expect(source).not.toContain('ls:src');
+    expect(source).not.toContain('ls:tests');
+    expect(source).not.toContain('ls:coverage');
+    expect(source).not.toContain('### Phase 1: Review Pre-Computed Coverage');
+    expect(source).not.toContain('### Phase 2: Identify Security-Critical Gaps');
+    expect(source).not.toContain('### Phase 3: Write Tests');
+    expect(source).not.toContain('### Phase 4: Validate and Submit');
+  });
+
+  it('compiles reduced tool permissions and target injection into lock workflow', () => {
+    const lock = fs.readFileSync(lockPath, 'utf-8');
+
+    expect(lock).toContain('COPILOT_MODEL: claude-haiku-4-5');
+    expect(lock).toContain("shell(node:*)");
+    expect(lock).toContain("shell(./node_modules/.bin/jest:*)");
+    expect(lock).toContain("shell(./node_modules/.bin/eslint:*)");
+    expect(lock).toContain("shell(cat:/tmp/gh-aw/agent/source-content.txt)");
+    expect(lock).toContain("shell(cat:/tmp/gh-aw/agent/test-content.txt)");
+    expect(lock).toContain("shell(cat:/tmp/gh-aw/agent/target-file.txt)");
+    expect(lock).toContain("shell(cat:/tmp/gh-aw/agent/coverage-md.txt)");
+    expect(lock).toContain("shell(cat:/tmp/gh-aw/agent/low-coverage.txt)");
+    expect(lock).toContain('name: Select target file and inject content');
+    expect(lock).toContain('target-file.txt');
+    expect(lock).toContain('target-test-file.txt');
+    expect(lock).toContain('source-content.txt');
+    expect(lock).toContain('test-content.txt');
+    expect(lock).toContain('name: Verify injected context');
+    expect(lock).toContain('target-test-file.txt');
+    expect(lock).toContain('test-content.txt empty');
+    expect(lock).toContain("COPILOT_MODEL: ${{ vars.GH_AW_MODEL_AGENT_COPILOT || vars.GH_AW_DEFAULT_MODEL_COPILOT || 'auto' }}");
+    expect(lock).not.toContain('pull_requests');
+    expect(lock).not.toContain("shell(cat:src/*.test.ts)");
+    expect(lock).not.toContain("shell(npm run lint)");
+    expect(lock).not.toContain("shell(npm run test)");
+    expect(lock).toMatch(/github\/gh-aw(?:-actions\/|\/actions\/)setup@[a-f0-9]{40}/);
+    expect(lock).not.toContain('github/gh-aw-actions/setup@v0.80.6');
+    expect(lock).toContain('ghcr.io/github/github-mcp-server:v1.9.0');
+
+    expect(lock).not.toContain("shell(cat:src/docker-manager.ts)");
+    expect(lock).not.toContain("shell(cat:src/cli.ts)");
+    expect(lock).not.toContain("shell(cat:src/host-iptables.ts)");
+    expect(lock).not.toContain("shell(cat:src/squid-config.ts)");
+    expect(lock).not.toContain("shell(cat:src/domain-patterns.ts)");
+    expect(lock).not.toContain("shell(cat:tests/integration/*docker*.test.ts)");
+    expect(lock).not.toContain("shell(cat:tests/integration/blocked-domains.test.ts)");
+    expect(lock).not.toContain('shell(ls:src)');
+    expect(lock).not.toContain('shell(ls:tests)');
+    expect(lock).not.toContain('shell(ls:coverage)');
+  });
+});

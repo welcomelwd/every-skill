@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "repository": "github/gh-aw-firewall",
+  "source_url": "https://github.com/github/gh-aw-firewall",
+  "ref": "main",
+  "resolved_commit": "3a3dd6891fd8956429609343f956db64165afdaa",
+  "category": "knowledge",
+  "subcategory": "security",
+  "slug": "gh-aw-firewall",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-14T10:01:36+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 1246,
+  "copied_bytes": 18951349,
+  "excluded_files": [
+    ".npmrc: sensitive filename",
+    "AGENTS.md: symlink"
+  ],
+  "execution": "never run by this importer"
+}

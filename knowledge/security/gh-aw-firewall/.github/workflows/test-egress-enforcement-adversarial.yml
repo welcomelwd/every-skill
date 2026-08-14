@@ -1,0 +1,777 @@
+name: "Test: Adversarial Egress Enforcement (iptables vs topology + mcpg)"
+
+# Adversarial feasibility experiment for PR #5237.
+#
+# Question: can we drop AWF's iptables-based egress enforcement (which needs
+# NET_ADMIN / `sudo awf`, often unavailable inside ARC/Kubernetes runner
+# containers) and get *equivalent or stricter* containment from pure Docker
+# network topology -- an `--internal` agent network whose only gateway is a
+# dual-homed Squid sidecar?
+#
+# Topology mode also dual-homes the *trusted* sidecars (the MCP gateway and the
+# gh-CLI DIFC integrity proxy) onto the agent's internal network so the agent
+# can reach them at internal IPs (see docs/network-isolation-design.md). Those
+# sidecars egress freely (they are trusted, not forced through Squid), which
+# raises one new question this experiment must answer: does putting a
+# freely-egressing trusted neighbor on the agent's internal segment create a NEW
+# exfiltration relay? The candidate job below stands up both dual-homed sidecars
+# and the battery asserts the agent can reach their *service ports only* while it
+# CANNOT pivot through them to a blocked destination.
+#
+# Method (one variable changed): Squid (the L7 filter) is held constant. We
+# compare two enforcement mechanisms against the SAME adversarial battery, run
+# at TWO privilege levels (unprivileged user, and root WITHOUT NET_ADMIN):
+#
+#   baseline  = iptables-DNAT + DROP in a netns-holder the agent shares
+#               (faithfully mirrors awf's iptables-init + agent sharing a netns)
+#   candidate = agent on a Docker `--internal` network with no route to the
+#               internet; a dual-homed Squid is the sole egress. No NET_ADMIN.
+#
+# Equivalence criterion: for every attack, Blocked_candidate must be a superset
+# of Blocked_baseline (the gate fails only if the baseline BLOCKS something the
+# candidate ALLOWS). All legitimate traffic must still work in the candidate.
+# Attacks blocked by neither model are documented shared residual risks, not
+# regressions.
+
+on:
+  workflow_dispatch:
+    inputs:
+      allowed_domain:
+        description: "Domain the proxy ACL permits"
+        default: "github.com"
+        required: false
+      blocked_domain:
+        description: "Domain that must be blocked"
+        default: "example.com"
+        required: false
+  # Temporary: lets the experiment run on its own feature branch before the
+  # file reaches the default branch (workflow_dispatch only dispatches from
+  # default). Remove before merge.
+  push:
+    branches: [fix/gvisor-workflow-healthchecks]
+    paths: [".github/workflows/test-egress-enforcement-adversarial.yml"]
+
+permissions:
+  contents: read
+
+env:
+  ADVERSARY_IMAGE: "nicolaka/netshoot:latest"
+  SQUID_IMAGE: "ubuntu/squid:latest"
+  ALLOWED_DOMAIN: ${{ github.event.inputs.allowed_domain || 'github.com' }}
+  BLOCKED_DOMAIN: ${{ github.event.inputs.blocked_domain || 'example.com' }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build the shared assets once so baseline and candidate run the IDENTICAL
+  # adversarial battery and the IDENTICAL Squid policy.
+  # ---------------------------------------------------------------------------
+  build-battery:
+    name: Build shared battery + policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Write Squid policy (constant across both architectures)
+        run: |
+          mkdir -p assets
+          cat > assets/squid.conf <<'EOF'
+          http_port 3128
+
+          # L7 allow-list: the approved domain and its subdomains only.
+          # (leading dot matches the apex domain and all subdomains)
+          acl approved dstdomain .${ALLOWED_DOMAIN_PLACEHOLDER}
+
+          # CONNECT is only allowed to 443 -> a tunnel to github.com:22 is denied
+          # even though the domain is approved (covers attack A5).
+          acl SSL_ports port 443
+          acl CONNECT method CONNECT
+          http_access deny CONNECT !SSL_ports
+
+          http_access allow approved
+          http_access deny all
+
+          access_log /var/log/squid/access.log
+          EOF
+          # Inject the configured allowed domain (kept out of the heredoc so the
+          # GitHub Actions env var is substituted exactly once, here).
+          sed -i "s/\${ALLOWED_DOMAIN_PLACEHOLDER}/${ALLOWED_DOMAIN}/g" assets/squid.conf
+          echo "----- squid.conf -----"
+          cat assets/squid.conf
+
+      - name: Write baseline iptables setup (mirrors awf's in-netns rules)
+        run: |
+          # Runs inside the netns-holder (which HAS NET_ADMIN). The agent later
+          # joins this netns WITHOUT NET_ADMIN, exactly like awf's iptables-init
+          # + agent split. SQUID_IP and DNS_SERVER are passed via env.
+          cat > assets/baseline-iptables.sh <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          SQUID_IP="${SQUID_IP:?}"
+          DNS_SERVER="${DNS_SERVER:-8.8.8.8}"
+
+          echo "[baseline] configuring iptables (SQUID_IP=$SQUID_IP DNS=$DNS_SERVER)"
+
+          # --- nat OUTPUT: mirror awf's setup-iptables.sh exactly --------------
+          # Preserve Docker's embedded-DNS DNAT (127.0.0.11) across the flush so
+          # container name resolution keeps working, then transparently redirect
+          # any escaping 80/443 to Squid (defense-in-depth fallback).
+          DOCKER_DNS_RULES=$(iptables-save -t nat 2>/dev/null | grep -- "-A OUTPUT.*127.0.0.11" || true)
+          iptables -t nat -F OUTPUT 2>/dev/null || true
+          if [ -n "$DOCKER_DNS_RULES" ]; then
+            while IFS= read -r rule; do
+              [ -z "$rule" ] && continue
+              # shellcheck disable=SC2086
+              iptables -t nat $rule 2>/dev/null || true
+            done <<< "$DOCKER_DNS_RULES"
+          fi
+          iptables -t nat -A OUTPUT -o lo -j RETURN
+          iptables -t nat -A OUTPUT -d 127.0.0.0/8 -j RETURN
+          iptables -t nat -A OUTPUT -d "$SQUID_IP" -j RETURN
+          iptables -t nat -A OUTPUT -p tcp --dport 80  -j DNAT --to-destination "$SQUID_IP:3128"
+          iptables -t nat -A OUTPUT -p tcp --dport 443 -j DNAT --to-destination "$SQUID_IP:3128"
+
+          # --- filter OUTPUT: default-deny egress ------------------------------
+          iptables -F OUTPUT 2>/dev/null || true
+          iptables -P OUTPUT DROP
+          iptables -P FORWARD DROP
+
+          # Loopback (covers embedded resolver on 127.0.0.11 + stdio MCP).
+          iptables -A OUTPUT -o lo -j ACCEPT
+          # Established/related return traffic.
+          iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+          # Reach Squid (proxy path + DNAT target).
+          iptables -A OUTPUT -d "$SQUID_IP" -p tcp -j ACCEPT
+          # Approved DNS resolver only (block DNS exfiltration to others).
+          iptables -A OUTPUT -d "$DNS_SERVER" -p udp --dport 53 -j ACCEPT
+          iptables -A OUTPUT -d "$DNS_SERVER" -p tcp --dport 53 -j ACCEPT
+
+          # Explicit drops for link-local (cloud metadata) and RFC1918 -- these
+          # matter for ports other than 80/443 (which are DNAT'd to Squid above).
+          for net in 169.254.0.0/16 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16; do
+            iptables -A OUTPUT -d "$net" -j DROP
+          done
+
+          echo "[baseline] iptables ready"
+          iptables -S
+          iptables -t nat -S OUTPUT
+          EOF
+          chmod +x assets/baseline-iptables.sh
+
+      - name: Write adversarial battery (identical for both architectures)
+        run: |
+          cat > assets/battery.sh <<'EOF'
+          #!/usr/bin/env bash
+          # Adversarial egress battery. Emits machine-readable lines:
+          #   AWFTEST|<ARCH>|<PRIV>|<ID>|<CATEGORY>|<VERDICT>|<DETAIL>
+          # CATEGORY: legit | attack | info
+          # VERDICT : ALLOWED | BLOCKED | ERROR
+          #
+          # Honesty rule: every reachability test is at the APPLICATION layer.
+          # A bare TCP connect is NOT trusted as "allowed" because the baseline
+          # DNATs raw 443 into Squid, which accepts the TCP then rejects the
+          # non-CONNECT TLS -- a TCP-only probe would falsely read as ALLOWED.
+
+          ARCH="${ARCH:-unknown}"
+          PRIV="${PRIV:-unknown}"
+          SQUID="${SQUID:?SQUID ip:host required}"
+          ALLOWED="${ALLOWED_DOMAIN:-github.com}"
+          BLOCKED="${BLOCKED_DOMAIN:-example.com}"
+          PROXY="http://${SQUID}:3128"
+          MAXT=8
+
+          emit() { echo "AWFTEST|${ARCH}|${PRIV}|$1|$2|$3|$4"; }
+
+          # HTTP code via the explicit proxy (CONNECT for https).
+          proxy_code() { curl -s -o /dev/null -w '%{http_code}' --max-time "$MAXT" -x "$PROXY" "$1" 2>/dev/null || echo 000; }
+          # HTTP code with the proxy explicitly disabled (raw egress attempt).
+          direct_code() { curl -s -k -g --noproxy '*' -o /dev/null -w '%{http_code}' --max-time "$MAXT" "$1" 2>/dev/null || echo 000; }
+          ok_code() { case "$1" in 200|201|204|301|302|303|307|308|401|403) return 0;; *) return 1;; esac; }
+
+          echo "===== battery ARCH=$ARCH PRIV=$PRIV SQUID=$SQUID ====="
+          emit CTX info INFO "id=$(id 2>/dev/null | tr -d '\n')"
+          emit CTX info INFO "routes=$(ip -4 route 2>/dev/null | paste -sd';' - | tr -d '\n')"
+
+          ###########################################################################
+          # Legitimate traffic -- MUST keep working in the candidate.
+          ###########################################################################
+
+          # L1: HTTPS to approved domain via the proxy.
+          c=$(proxy_code "https://${ALLOWED}")
+          if ok_code "$c"; then emit L1 legit ALLOWED "https proxy approved code=$c"; else emit L1 legit BLOCKED "code=$c"; fi
+
+          # L2: HTTP to approved domain via the proxy.
+          c=$(proxy_code "http://${ALLOWED}")
+          if ok_code "$c"; then emit L2 legit ALLOWED "http proxy approved code=$c"; else emit L2 legit BLOCKED "code=$c"; fi
+
+          # L3: name-based egress to the approved domain works through the
+          # enforcement path. In the proxy model the agent does NOT resolve names
+          # itself -- Squid does -- so we verify a proxied fetch of a DISTINCT
+          # approved name (a subdomain) succeeds, exercising proxy-side DNS.
+          c=$(proxy_code "https://api.${ALLOWED}")
+          if ok_code "$c"; then emit L3 legit ALLOWED "proxy resolved+fetched api.${ALLOWED} code=$c"; else emit L3 legit BLOCKED "code=$c"; fi
+
+          ###########################################################################
+          # Attacks -- candidate must block a superset of what the baseline blocks.
+          ###########################################################################
+
+          # A1: CONNECT to a non-approved domain via the proxy (policy bypass).
+          c=$(proxy_code "https://${BLOCKED}")
+          if ok_code "$c"; then emit A1 attack ALLOWED "proxy reached ${BLOCKED} code=$c"; else emit A1 attack BLOCKED "code=$c"; fi
+
+          # A2: direct HTTPS to a non-approved domain, proxy disabled.
+          c=$(direct_code "https://${BLOCKED}")
+          if ok_code "$c"; then emit A2 attack ALLOWED "raw https ${BLOCKED} code=$c"; else emit A2 attack BLOCKED "code=$c"; fi
+
+          # A3: direct HTTPS to the APPROVED domain, proxy disabled (fail-closed:
+          # proxy-unaware tools must NOT get raw egress even to approved hosts).
+          c=$(direct_code "https://${ALLOWED}")
+          if ok_code "$c"; then emit A3 attack ALLOWED "raw https approved bypassed proxy code=$c"; else emit A3 attack BLOCKED "code=$c"; fi
+
+          # A4: direct HTTPS to a raw IP (no SNI), proxy disabled.
+          c=$(direct_code "https://1.1.1.1")
+          if ok_code "$c"; then emit A4 attack ALLOWED "raw https to 1.1.1.1 code=$c"; else emit A4 attack BLOCKED "code=$c"; fi
+
+          # A5: CONNECT to approved domain on a forbidden port (SSH via tunnel).
+          c=$(proxy_code "https://${ALLOWED}:22")
+          if ok_code "$c"; then emit A5 attack ALLOWED "proxy CONNECT ${ALLOWED}:22 code=$c"; else emit A5 attack BLOCKED "code=$c"; fi
+
+          # A6: DNS query to an arbitrary (non-approved) resolver -> exfil channel.
+          # Score by dig's exit status AND a real A-record: dig prints its
+          # "network unreachable" diagnostic to stdout, so a non-empty check
+          # alone would misread a blocked query as an answer.
+          ans=$(dig +short +time=3 +tries=1 @1.1.1.1 "${ALLOWED}" 2>/dev/null \
+            | grep -Eo '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)
+          if [ -n "$ans" ]; then emit A6 attack ALLOWED "dig @1.1.1.1 -> $ans"; else emit A6 attack BLOCKED "no A-record from non-approved resolver"; fi
+
+          # A7: cloud instance metadata (Azure IMDS on GitHub-hosted runners) ->
+          # genuine credential-theft probe. Proxy disabled. Honesty: in the
+          # baseline a port-80 request is DNAT'd to Squid, whose 403 error page
+          # is non-empty -- so require the body to actually look like Azure IMDS
+          # JSON (and not a proxy/HTML error) before scoring it as a leak.
+          imds=$(curl -s --noproxy '*' -H 'Metadata: true' --max-time 5 \
+            "http://169.254.169.254/metadata/instance?api-version=2021-02-01" 2>/dev/null)
+          if echo "$imds" | grep -q '"compute"'; then
+            emit A7 attack ALLOWED "real IMDS doc: $(echo "$imds" | tr -d '\n"' | head -c 60)"
+          else
+            emit A7 attack BLOCKED "no IMDS doc ($(echo "$imds" | tr -d '\n"<>' | head -c 30))"
+          fi
+
+          # A8: RFC1918 reachability (lateral movement to host/LAN). Honesty: do
+          # NOT probe port 80/443 -- the baseline DNATs those to Squid, so a
+          # connect would succeed against Squid, not the private host. Probe
+          # ports that are never redirected so a success means real reachability.
+          gw=$(ip -4 route | awk '/default/{print $3; exit}')
+          a8="BLOCKED"; a8d="gw=$gw"
+          for tgt in "$gw" 10.0.0.1 192.168.0.1 172.17.0.1; do
+            [ -z "$tgt" ] && continue
+            for port in 22 8080 3306 6379; do
+              if timeout 3 bash -c "exec 3<>/dev/tcp/${tgt}/${port}" 2>/dev/null; then a8="ALLOWED"; a8d="tcp${port} open to $tgt"; break 2; fi
+            done
+          done
+          emit A8 attack "$a8" "$a8d"
+
+          # A9: non-HTTP protocol to the approved domain -- raw SSH on port 22.
+          # github.com:22 is a real SSH service that answers if reachable.
+          banner=$(timeout 6 bash -c "exec 3<>/dev/tcp/${ALLOWED}/22; head -c 8 <&3" 2>/dev/null | tr -d '\0')
+          if echo "$banner" | grep -qi ssh; then emit A9 attack ALLOWED "ssh banner: $(echo "$banner" | tr -d '\n')"; else emit A9 attack BLOCKED "no banner"; fi
+
+          # A10: UDP / QUIC egress (best effort -- shells detect this weakly).
+          if command -v nc >/dev/null 2>&1; then
+            # Send a byte to 1.1.1.1:443/udp; we cannot confirm receipt, so this
+            # is informational unless the runtime reports an immediate error.
+            if timeout 4 bash -c "echo -n x | nc -u -w2 1.1.1.1 443" >/dev/null 2>&1; then emit A10 info INFO "udp send to 1.1.1.1:443 returned 0 (unconfirmed)"; else emit A10 info INFO "udp send errored/blocked"; fi
+          else
+            emit A10 info INFO "nc unavailable"
+          fi
+
+          # A11: ICMP egress to a public IP.
+          if ping -c1 -W2 1.1.1.1 >/dev/null 2>&1; then emit A11 attack ALLOWED "icmp 1.1.1.1 reachable"; else emit A11 attack BLOCKED "no icmp"; fi
+
+          # A12: IPv6 egress (the current iptables baseline is v4-only -> likely a
+          # real gap; the internal-net candidate has no v6 route -> blocked).
+          c=$(direct_code "https://[2606:4700:4700::1111]/")
+          if ok_code "$c"; then emit A12 attack ALLOWED "ipv6 https code=$c"; else emit A12 attack BLOCKED "code=$c"; fi
+
+          ###########################################################################
+          # Candidate "money shot": with no NET_ADMIN there are no iptables to
+          # subvert; even root cannot re-route around the topology. Informational
+          # (not equivalence-gating) but it is the core claim of the candidate.
+          ###########################################################################
+          if ip route add 10.123.123.0/24 dev eth0 2>/tmp/iperr; then
+            ip route del 10.123.123.0/24 dev eth0 2>/dev/null || true
+            emit TAMPER info INFO "ip route add SUCCEEDED (NET_ADMIN present)"
+          else
+            emit TAMPER info INFO "ip route add denied: $(tr -d '\n' </tmp/iperr | tail -c 80)"
+          fi
+
+          ###########################################################################
+          # Dual-homed trusted-sidecar checks (CANDIDATE topology only). These run
+          # only when MCPG_GW / MCPG_DIFC are exported, so the iptables baseline --
+          # which has no such sidecars -- naturally skips them. They prove that
+          # bringing the trusted MCP gateway + DIFC proxy onto the agent's internal
+          # network gives the agent reachability to their SERVICE PORTS ONLY, and
+          # does NOT turn those freely-egressing neighbors into an exfil relay.
+          #
+          # Honesty rule (mirrors the rest of the battery): a forward-proxy pivot is
+          # scored ALLOWED only if the body is real external content -- i.e. it does
+          # NOT contain the sidecar's own local marker. The stand-in sidecars always
+          # serve their marker, so the only way M2/M5 flip to ALLOWED is if a real
+          # open proxy returned blocked-origin content, which must fail the gate.
+          ###########################################################################
+          if [ -n "${MCPG_GW:-}" ]; then
+            GW_MARK="${MCPG_GW_MARKER:-MCPGOK}"
+            gw_host="${MCPG_GW%%:*}"
+
+            # M1 legit: agent reaches the gateway service port over the internal net.
+            if curl -s --noproxy '*' --max-time "$MAXT" "http://${MCPG_GW}/" 2>/dev/null | grep -q "$GW_MARK"; then
+              emit M1 mcpg-legit ALLOWED "agent reached mcpg gateway ${MCPG_GW}"
+            else
+              emit M1 mcpg-legit BLOCKED "mcpg gateway ${MCPG_GW} unreachable"
+            fi
+
+            # M2 attack: gateway must NOT act as an HTTP forward proxy to a blocked host.
+            pb=$(curl -s --max-time "$MAXT" -x "http://${MCPG_GW}" "http://${BLOCKED}/" 2>/dev/null)
+            if [ -n "$pb" ] && ! echo "$pb" | grep -q "$GW_MARK"; then
+              emit M2 mcpg-attack ALLOWED "pivoted ${BLOCKED} via gateway: $(echo "$pb" | tr -d '\n' | head -c 40)"
+            else
+              emit M2 mcpg-attack BLOCKED "gateway did not forward (served local marker / errored)"
+            fi
+
+            # M3 attack: no relay/forward-proxy port is open on the gateway besides
+            # its service port -- a listening proxy here would be an open exfil path.
+            m3="BLOCKED"; m3d="no relay port open on ${gw_host}"
+            for rp in 3128 3129 1080 8888 9050 8000 443; do
+              if timeout 3 bash -c "exec 3<>/dev/tcp/${gw_host}/${rp}" 2>/dev/null; then m3="ALLOWED"; m3d="relay-ish port ${rp} open on ${gw_host}"; break; fi
+            done
+            emit M3 mcpg-attack "$m3" "$m3d"
+          fi
+
+          if [ -n "${MCPG_DIFC:-}" ]; then
+            DIFC_MARK="${MCPG_DIFC_MARKER:-DIFCOK}"
+
+            # M4 legit: agent reaches the DIFC proxy service port over the internal net.
+            if curl -s --noproxy '*' --max-time "$MAXT" "http://${MCPG_DIFC}/" 2>/dev/null | grep -q "$DIFC_MARK"; then
+              emit M4 mcpg-legit ALLOWED "agent reached DIFC ${MCPG_DIFC}"
+            else
+              emit M4 mcpg-legit BLOCKED "DIFC ${MCPG_DIFC} unreachable"
+            fi
+
+            # M5 attack: DIFC must NOT forward arbitrary traffic to a blocked host.
+            db=$(curl -s --max-time "$MAXT" -x "http://${MCPG_DIFC}" "http://${BLOCKED}/" 2>/dev/null)
+            if [ -n "$db" ] && ! echo "$db" | grep -q "$DIFC_MARK"; then
+              emit M5 mcpg-attack ALLOWED "pivoted ${BLOCKED} via DIFC"
+            else
+              emit M5 mcpg-attack BLOCKED "DIFC did not forward (served local marker / errored)"
+            fi
+          fi
+
+          echo "===== battery complete ARCH=$ARCH PRIV=$PRIV ====="
+          EOF
+          chmod +x assets/battery.sh
+
+      - name: Write equivalence comparator
+        run: |
+          cat > assets/compare.py <<'EOF'
+          #!/usr/bin/env python3
+          """Ingest baseline + candidate battery output and prove equivalence.
+
+          Gate fails iff (a) an ATTACK the baseline BLOCKED is ALLOWED by the
+          candidate, or (b) a LEGIT case is BLOCKED by the candidate. Attacks
+          blocked by neither are reported as shared residual risks.
+          """
+          import glob, os, sys
+          from collections import defaultdict
+
+          rows = []
+          for path in glob.glob("results/**/*.txt", recursive=True):
+              with open(path) as fh:
+                  for line in fh:
+                      line = line.strip()
+                      if not line.startswith("AWFTEST|"):
+                          continue
+                      parts = line.split("|", 6)
+                      if len(parts) != 7:
+                          continue
+                      _, arch, priv, tid, cat, verdict, detail = parts
+                      rows.append((arch, priv, tid, cat, verdict, detail))
+
+          # key = (priv, test_id) -> {arch: (verdict, cat, detail)}
+          table = defaultdict(dict)
+          cats = {}
+          for arch, priv, tid, cat, verdict, detail in rows:
+              table[(priv, tid)][arch] = (verdict, detail)
+              cats[tid] = cat
+
+          privs = sorted({p for (p, _t) in table})
+          regressions = []
+          legit_fail = []
+          shared_residual = []
+          mcpg_fail = []
+
+          out = []
+          out.append("## Adversarial Egress Enforcement: equivalence matrix\n")
+          out.append("Gate fails only if the **baseline blocks** an attack that the "
+                     "**candidate allows**, or if legit traffic breaks in the candidate.\n")
+
+          for priv in privs:
+              out.append(f"\n### Privilege: `{priv}`\n")
+              out.append("| Test | Category | Baseline | Candidate | Verdict |")
+              out.append("|------|----------|----------|-----------|---------|")
+              for (p, tid) in sorted(table):
+                  if p != priv:
+                      continue
+                  cat = cats.get(tid, "?")
+                  b = table[(p, tid)].get("baseline", ("MISSING", ""))
+                  c = table[(p, tid)].get("candidate", ("MISSING", ""))
+                  bv, cv = b[0], c[0]
+                  status = "✅"
+                  if cat == "attack":
+                      if bv == "BLOCKED" and cv == "ALLOWED":
+                          status = "❌ REGRESSION"
+                          regressions.append((priv, tid, b[1], c[1]))
+                      elif bv == "ALLOWED" and cv == "BLOCKED":
+                          status = "🟢 stricter"
+                      elif bv == "ALLOWED" and cv == "ALLOWED":
+                          status = "⚠️ shared-residual"
+                          shared_residual.append((priv, tid, c[1]))
+                  elif cat == "legit":
+                      if cv != "ALLOWED":
+                          status = "❌ LEGIT BROKEN"
+                          legit_fail.append((priv, tid, c[1]))
+                  elif cat == "mcpg-legit":
+                      # Candidate-only: the agent MUST reach the dual-homed sidecar.
+                      if cv != "ALLOWED":
+                          status = "❌ SIDECAR UNREACHABLE"
+                          mcpg_fail.append((priv, tid, "unreachable: " + c[1]))
+                  elif cat == "mcpg-attack":
+                      # Candidate-only: the agent must NOT pivot through the sidecar.
+                      if cv == "ALLOWED":
+                          status = "❌ RELAY BYPASS"
+                          mcpg_fail.append((priv, tid, "relayed: " + c[1]))
+                      else:
+                          status = "🟢 no relay"
+                  else:
+                      status = "ℹ️ info"
+                  out.append(f"| {tid} | {cat} | {bv} | {cv} | {status} |")
+
+          out.append("\n### Summary\n")
+          out.append(f"- Regressions (baseline blocks, candidate allows): **{len(regressions)}**")
+          out.append(f"- Legit traffic broken in candidate: **{len(legit_fail)}**")
+          out.append(f"- Dual-homed sidecar failures (unreachable or relay bypass): **{len(mcpg_fail)}**")
+          out.append(f"- Shared residual risks (neither blocks): **{len(shared_residual)}**")
+          if regressions:
+              out.append("\n**Regressions:**")
+              for priv, tid, bd, cd in regressions:
+                  out.append(f"- `{priv}` {tid}: candidate allowed (`{cd}`)")
+          if legit_fail:
+              out.append("\n**Broken legit traffic:**")
+              for priv, tid, cd in legit_fail:
+                  out.append(f"- `{priv}` {tid}: {cd}")
+          if mcpg_fail:
+              out.append("\n**Dual-homed sidecar failures:**")
+              for priv, tid, cd in mcpg_fail:
+                  out.append(f"- `{priv}` {tid}: {cd}")
+          if shared_residual:
+              out.append("\n**Shared residual risks (present in BOTH models):**")
+              for priv, tid, cd in shared_residual:
+                  out.append(f"- `{priv}` {tid}: {cd}")
+
+          text = "\n".join(out) + "\n"
+          print(text)
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a") as fh:
+                  fh.write(text)
+
+          if regressions or legit_fail or mcpg_fail:
+              print("EQUIVALENCE FAILED", file=sys.stderr)
+              sys.exit(1)
+          print("EQUIVALENCE HOLDS: candidate >= baseline containment; "
+                "dual-homed sidecars reachable and non-relaying.")
+          EOF
+          chmod +x assets/compare.py
+
+      - name: Upload shared assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: egress-battery-assets
+          path: assets/
+          retention-days: 3
+
+  # ---------------------------------------------------------------------------
+  # BASELINE: iptables-DNAT + DROP in a netns-holder; agent shares the netns
+  # WITHOUT NET_ADMIN. This is the current awf enforcement model.
+  # ---------------------------------------------------------------------------
+  baseline:
+    name: Baseline (iptables + Squid)
+    runs-on: ubuntu-latest
+    needs: build-battery
+    timeout-minutes: 15
+    steps:
+      - name: Download shared assets
+        uses: actions/download-artifact@v4
+        with:
+          name: egress-battery-assets
+          path: assets
+
+      - name: Pull images
+        run: |
+          docker pull "$SQUID_IMAGE"
+          docker pull "$ADVERSARY_IMAGE"
+
+      - name: Set up baseline topology
+        run: |
+          set -euo pipefail
+          NET=adv-base-net
+          docker network create --subnet 172.31.0.0/24 "$NET"
+
+          # Squid: full network access, hosts the L7 allow-list.
+          docker run -d --name adv-base-squid --network "$NET" --ip 172.31.0.10 \
+            -v "$PWD/assets/squid.conf:/etc/squid/squid.conf:ro" \
+            "$SQUID_IMAGE"
+
+          # netns-holder: HAS NET_ADMIN, installs the iptables rules, then sleeps.
+          docker run -d --name adv-base-holder --network "$NET" --ip 172.31.0.20 \
+            --cap-add NET_ADMIN \
+            -e SQUID_IP=172.31.0.10 -e DNS_SERVER=8.8.8.8 \
+            -v "$PWD/assets:/assets:ro" \
+            --entrypoint bash "$ADVERSARY_IMAGE" \
+            -c "bash /assets/baseline-iptables.sh && echo HOLDER_READY && sleep infinity"
+
+          echo "Waiting for Squid..."
+          for i in $(seq 1 30); do
+            if docker run --rm --network "$NET" "$ADVERSARY_IMAGE" \
+                 bash -c "nc -z 172.31.0.10 3128" 2>/dev/null; then echo "squid up"; break; fi
+            sleep 2
+          done
+          echo "Waiting for holder iptables..."
+          for i in $(seq 1 30); do
+            docker logs adv-base-holder 2>&1 | grep -q HOLDER_READY && { echo "holder ready"; break; }
+            sleep 2
+          done
+          docker logs adv-base-holder
+
+      - name: Run battery (root, no NET_ADMIN)
+        run: |
+          mkdir -p results
+          docker run --rm --network container:adv-base-holder --cap-drop NET_ADMIN \
+            -e ARCH=baseline -e PRIV=root -e SQUID=172.31.0.10 \
+            -e ALLOWED_DOMAIN="$ALLOWED_DOMAIN" -e BLOCKED_DOMAIN="$BLOCKED_DOMAIN" \
+            -v "$PWD/assets:/assets:ro" \
+            --entrypoint bash "$ADVERSARY_IMAGE" /assets/battery.sh \
+            2>&1 | tee results/baseline-root.log
+          grep '^AWFTEST|' results/baseline-root.log > results/baseline-root.txt || true
+
+      - name: Run battery (unprivileged user)
+        run: |
+          docker run --rm --network container:adv-base-holder --cap-drop NET_ADMIN \
+            --user 1000:1000 \
+            -e ARCH=baseline -e PRIV=user -e SQUID=172.31.0.10 \
+            -e ALLOWED_DOMAIN="$ALLOWED_DOMAIN" -e BLOCKED_DOMAIN="$BLOCKED_DOMAIN" \
+            -v "$PWD/assets:/assets:ro" \
+            --entrypoint bash "$ADVERSARY_IMAGE" /assets/battery.sh \
+            2>&1 | tee results/baseline-user.log
+          grep '^AWFTEST|' results/baseline-user.log > results/baseline-user.txt || true
+
+      - name: Show Squid access log
+        if: always()
+        run: docker logs adv-base-squid 2>&1 | tail -n 50 || true
+
+      - name: Teardown
+        if: always()
+        run: |
+          docker rm -f adv-base-squid adv-base-holder 2>/dev/null || true
+          docker network rm adv-base-net 2>/dev/null || true
+
+      - name: Upload baseline results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: egress-results-baseline
+          path: results/
+          retention-days: 3
+
+  # ---------------------------------------------------------------------------
+  # CANDIDATE: agent on a Docker `--internal` network with no internet route.
+  # A dual-homed Squid (external + internal) is the sole egress. No NET_ADMIN
+  # anywhere on the agent; no awf-managed iptables.
+  #
+  # Additionally dual-homes two TRUSTED sidecars onto the internal net, mirroring
+  # docs/network-isolation-design.md:
+  #   - mcpg gateway  (172.32.0.30:8080)  -- serves MCP tools to the agent
+  #   - DIFC proxy    (172.32.0.40:18443) -- gh-CLI integrity proxy; also PUBLISHED
+  #                                           on the host (127.0.0.1:18443) so the
+  #                                           runner's pre-agent `gh` steps reach it
+  # Both are stood up on the external net (free egress) and then `network connect`-ed
+  # to the internal net late, exactly like the proposed lifecycle handshake. They
+  # are plain non-forwarding listeners, so the battery can prove the agent reaches
+  # their service ports but cannot pivot through them.
+  # ---------------------------------------------------------------------------
+  candidate:
+    name: Candidate (internal-net topology + Squid + dual-homed mcpg)
+    runs-on: ubuntu-latest
+    needs: build-battery
+    timeout-minutes: 15
+    steps:
+      - name: Download shared assets
+        uses: actions/download-artifact@v4
+        with:
+          name: egress-battery-assets
+          path: assets
+
+      - name: Pull images
+        run: |
+          docker pull "$SQUID_IMAGE"
+          docker pull "$ADVERSARY_IMAGE"
+
+      - name: Set up candidate topology
+        run: |
+          set -euo pipefail
+          # External bridge (has a route to the internet) and an INTERNAL net
+          # (no gateway to the internet for its members).
+          docker network create --subnet 172.33.0.0/24 adv-ext
+          docker network create --internal --subnet 172.32.0.0/24 adv-int
+
+          # Create Squid on the EXTERNAL net first so its default route stays
+          # external, THEN attach it to the internal net as the agents' gateway.
+          docker run -d --name adv-cand-squid --network adv-ext \
+            -v "$PWD/assets/squid.conf:/etc/squid/squid.conf:ro" \
+            "$SQUID_IMAGE"
+          docker network connect --ip 172.32.0.10 adv-int adv-cand-squid
+
+          # ---- Dual-homed TRUSTED sidecars (gateway + DIFC) ------------------
+          # Plain non-forwarding HTTP listeners: each answers any request on its
+          # service port with a fixed marker and never proxies. The canned response
+          # is served from a mounted file via `cat` to avoid any shell-quoting of
+          # the HTTP/CRLF payload. Started on the EXTERNAL net (free egress, like
+          # the real trusted services), then `network connect`-ed onto the internal
+          # net -- mirroring the proposed "bridge + late docker network connect".
+          printf 'HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 6\r\n\r\nMCPGOK' > assets/marker-gw.http
+          printf 'HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 6\r\n\r\nDIFCOK' > assets/marker-difc.http
+
+          docker run -d --name adv-cand-mcpg --network adv-ext \
+            -v "$PWD/assets:/assets:ro" \
+            --entrypoint socat "$ADVERSARY_IMAGE" \
+            TCP-LISTEN:8080,reuseaddr,fork \
+            SYSTEM:"cat /assets/marker-gw.http"
+
+          # DIFC also PUBLISHES its port on the host loopback so the runner's own
+          # pre-agent gh steps could reach it -- the dual-plane the design calls out.
+          docker run -d --name adv-cand-difc --network adv-ext \
+            -p 127.0.0.1:18443:18443 \
+            -v "$PWD/assets:/assets:ro" \
+            --entrypoint socat "$ADVERSARY_IMAGE" \
+            TCP-LISTEN:18443,reuseaddr,fork \
+            SYSTEM:"cat /assets/marker-difc.http"
+
+          docker network connect --ip 172.32.0.30 adv-int adv-cand-mcpg
+          docker network connect --ip 172.32.0.40 adv-int adv-cand-difc
+
+          echo "Waiting for Squid on the internal net..."
+          for i in $(seq 1 30); do
+            if docker run --rm --network adv-int "$ADVERSARY_IMAGE" \
+                 bash -c "nc -z 172.32.0.10 3128" 2>/dev/null; then echo "squid up"; break; fi
+            sleep 2
+          done
+          echo "Waiting for dual-homed sidecars on the internal net..."
+          for i in $(seq 1 30); do
+            if docker run --rm --network adv-int "$ADVERSARY_IMAGE" \
+                 bash -c "nc -z 172.32.0.30 8080 && nc -z 172.32.0.40 18443" 2>/dev/null; then echo "sidecars up"; break; fi
+            sleep 2
+          done
+          docker logs adv-cand-squid 2>&1 | tail -n 20 || true
+
+      - name: Verify DIFC reachable from host (published port, dual-plane)
+        run: |
+          # Proves the DIFC proxy is reachable on the HOST loopback -- i.e. the
+          # runner's uncontainerized pre-agent gh steps can use it -- at the same
+          # time it is dual-homed onto the agent's internal net.
+          ok=0
+          for i in $(seq 1 15); do
+            if curl -s --max-time 3 http://127.0.0.1:18443/ | grep -q DIFCOK; then ok=1; echo "host -> DIFC ok"; break; fi
+            sleep 1
+          done
+          [ "$ok" = 1 ] || { echo "::error::DIFC not reachable on published host port"; docker logs adv-cand-difc 2>&1 | tail -n 30; exit 1; }
+
+      - name: Run battery (root, no NET_ADMIN)
+        run: |
+          mkdir -p results
+          docker run --rm --network adv-int --cap-drop NET_ADMIN \
+            -e ARCH=candidate -e PRIV=root -e SQUID=172.32.0.10 \
+            -e ALLOWED_DOMAIN="$ALLOWED_DOMAIN" -e BLOCKED_DOMAIN="$BLOCKED_DOMAIN" \
+            -e MCPG_GW=172.32.0.30:8080 -e MCPG_DIFC=172.32.0.40:18443 \
+            -e MCPG_GW_MARKER=MCPGOK -e MCPG_DIFC_MARKER=DIFCOK \
+            -v "$PWD/assets:/assets:ro" \
+            --entrypoint bash "$ADVERSARY_IMAGE" /assets/battery.sh \
+            2>&1 | tee results/candidate-root.log
+          grep '^AWFTEST|' results/candidate-root.log > results/candidate-root.txt || true
+
+      - name: Run battery (unprivileged user)
+        run: |
+          docker run --rm --network adv-int --cap-drop NET_ADMIN \
+            --user 1000:1000 \
+            -e ARCH=candidate -e PRIV=user -e SQUID=172.32.0.10 \
+            -e ALLOWED_DOMAIN="$ALLOWED_DOMAIN" -e BLOCKED_DOMAIN="$BLOCKED_DOMAIN" \
+            -e MCPG_GW=172.32.0.30:8080 -e MCPG_DIFC=172.32.0.40:18443 \
+            -e MCPG_GW_MARKER=MCPGOK -e MCPG_DIFC_MARKER=DIFCOK \
+            -v "$PWD/assets:/assets:ro" \
+            --entrypoint bash "$ADVERSARY_IMAGE" /assets/battery.sh \
+            2>&1 | tee results/candidate-user.log
+          grep '^AWFTEST|' results/candidate-user.log > results/candidate-user.txt || true
+
+      - name: Confirm trusted sidecar free egress (by-design, informational)
+        if: always()
+        run: |
+          # Documents the trust boundary: the dual-homed sidecars themselves egress
+          # freely (they are trusted, NOT forced through Squid). The ONLY thing that
+          # keeps this safe is that they do not relay for the agent -- which M2/M3/M5
+          # in the battery enforce. This line is informational, not gating.
+          mkdir -p results
+          code=$(docker exec adv-cand-mcpg curl -s -o /dev/null -w '%{http_code}' --max-time 8 "https://${BLOCKED_DOMAIN}" 2>/dev/null || echo 000)
+          echo "trusted gateway egress to ${BLOCKED_DOMAIN} -> $code"
+          echo "AWFTEST|candidate|sidecar|M6|info|INFO|trusted gateway free egress to ${BLOCKED_DOMAIN} code=$code" > results/candidate-mcpg-egress.txt
+
+      - name: Show Squid access log
+        if: always()
+        run: docker logs adv-cand-squid 2>&1 | tail -n 50 || true
+
+      - name: Teardown
+        if: always()
+        run: |
+          docker rm -f adv-cand-squid adv-cand-mcpg adv-cand-difc 2>/dev/null || true
+          docker network rm adv-int adv-ext 2>/dev/null || true
+
+      - name: Upload candidate results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: egress-results-candidate
+          path: results/
+          retention-days: 3
+
+  # ---------------------------------------------------------------------------
+  # COMPARE: prove candidate containment >= baseline containment.
+  # ---------------------------------------------------------------------------
+  compare:
+    name: Equivalence gate
+    runs-on: ubuntu-latest
+    needs: [baseline, candidate]
+    if: always()
+    timeout-minutes: 5
+    steps:
+      - name: Download assets (for compare.py)
+        uses: actions/download-artifact@v4
+        with:
+          name: egress-battery-assets
+          path: assets
+      - name: Download baseline results
+        uses: actions/download-artifact@v4
+        with:
+          name: egress-results-baseline
+          path: results/baseline
+      - name: Download candidate results
+        uses: actions/download-artifact@v4
+        with:
+          name: egress-results-candidate
+          path: results/candidate
+      - name: Run equivalence comparator
+        run: python3 assets/compare.py

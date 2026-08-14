@@ -1,0 +1,127 @@
+name: CI Gate
+# Posts a comment instructing the PR owner to add the "ready-for-aw" label
+# when Copilot review passes. This gates expensive agentic CI (smoke tests,
+# contribution check, etc.) to avoid wasting tokens on code that will change
+# after review.
+#
+# Note: We cannot auto-add the label because GITHUB_TOKEN-added labels don't
+# trigger other workflows (GitHub's anti-cascade protection). The label must
+# be added manually by a human or a GitHub App.
+
+on:
+  pull_request_review:
+    types: [submitted]
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  issues: write
+  pull-requests: write
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if ready for agentic CI
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const LABEL = 'ready-for-aw';
+            const COMMENT_MARKER = '<!-- ci-gate-bot -->';
+            const copilotReviewers = new Set(['copilot', 'copilot[bot]', 'Copilot', 'copilot-pull-request-reviewer', 'copilot-pull-request-reviewer[bot]']);
+            const isCopilotReviewer = login => copilotReviewers.has(login ?? '');
+            const { owner, repo } = context.repo;
+            const pr_number = context.payload.pull_request?.number
+              || context.payload.review?.pull_request?.number;
+
+            core.info(`Event: ${context.eventName}, PR: ${pr_number || 'none'}`);
+
+            if (!pr_number) {
+              core.info('No PR number found, skipping');
+              return;
+            }
+
+            // Check if label already exists
+            const { data: labels } = await github.rest.issues.listLabelsOnIssue({
+              owner, repo, issue_number: pr_number
+            });
+            if (labels.some(l => l.name === LABEL)) {
+              core.info('Label already present, skipping');
+              return;
+            }
+
+            // Helper: post or update the gate comment
+            async function postGateComment(message) {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner, repo, issue_number: pr_number
+              });
+              const existing = comments.find(c => c.body?.includes(COMMENT_MARKER));
+              const body = `${COMMENT_MARKER}\n${message}`;
+              if (existing) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number: pr_number, body });
+              }
+            }
+
+            // Determine if Copilot has reviewed
+            let copilotReviewed = false;
+            let hasInlineComments = false;
+
+            if (context.eventName === 'pull_request') {
+              const { data: reviews } = await github.rest.pulls.listReviews({
+                owner, repo, pull_number: pr_number
+              });
+              const reviewLogins = reviews.map(r => r.user?.login);
+              core.info(`Found ${reviews.length} review(s): ${reviewLogins.join(', ')}`);
+              copilotReviewed = reviews.some(r => isCopilotReviewer(r.user?.login));
+              // On synchronize (push), skip the inline comment check.
+              // Old review comments persist even after fixes, so checking them
+              // would permanently block the gate. The push itself signals that
+              // the author has addressed the feedback.
+            }
+
+            if (context.eventName === 'pull_request_review') {
+              const reviewer = context.payload.review?.user?.login;
+              core.info(`Review event from: ${reviewer}`);
+              if (!isCopilotReviewer(reviewer)) {
+                core.info(`Review from ${reviewer}, not Copilot — skipping`);
+                return;
+              }
+              copilotReviewed = true;
+
+              // Check for inline comments
+              const { data: comments } = await github.rest.pulls.listReviewComments({
+                owner, repo, pull_number: pr_number
+              });
+              const copilotComments = comments.filter(c =>
+                isCopilotReviewer(c.user?.login) && !c.in_reply_to_id
+              );
+              hasInlineComments = copilotComments.length > 0;
+              if (hasInlineComments) {
+                core.info(`Copilot left ${copilotComments.length} inline comment(s), waiting for fixes`);
+              }
+            }
+
+            if (!copilotReviewed) {
+              core.info('No Copilot review found yet, waiting');
+              return;
+            }
+
+            if (hasInlineComments) {
+              const prAuthor = context.payload.pull_request?.user?.login
+                || context.payload.review?.pull_request?.user?.login;
+              await postGateComment(
+                `⏳ Copilot review left inline comments.\n\n@${prAuthor} To proceed:\n1. Ask \`@copilot\` to address the review feedback (reply to this comment or the review thread)\n2. Once the fix is pushed, add the \`ready-for-aw\` label to trigger agentic CI smoke tests`
+              );
+              return;
+            }
+
+            // Copilot reviewed with no inline comments — tell owner to add label
+            const prAuthor = context.payload.pull_request?.user?.login
+              || context.payload.review?.pull_request?.user?.login;
+            await postGateComment(
+              `✅ Copilot review passed with no inline comments.\n\n@${prAuthor} Add the \`ready-for-aw\` label to this PR to trigger agentic CI smoke tests.`
+            );
+            core.info('Posted comment directing PR owner to add ready-for-aw label');

@@ -1,0 +1,122 @@
+'use strict';
+
+/**
+ * OpenAI provider adapter.
+ *
+ * Port: 10000  (also serves as the management port for /health, /metrics, /reflect)
+ * Auth: Bearer token via Authorization header (static key or OIDC)
+ * Credentials: OPENAI_API_KEY or AWF_AUTH_TYPE=github-oidc (for Azure OpenAI with Entra)
+ * Target: OPENAI_API_TARGET  (default: api.openai.com)
+ * Base path: OPENAI_API_BASE_PATH  (default: /v1 for the public endpoint)
+ */
+
+const {
+  normalizeBasePath,
+  parseApiTargetAndBasePath,
+} = require('../proxy-utils');
+const { validateAuthHeaderEnv } = require('../oidc-adapter-utils');
+const { bearerAuthHeaders, providerKeyHeaders } = require('./auth-headers');
+
+const { createProviderAuthScaffold, createOidcAwareProviderAdapter } = require('../adapter-factory');
+const { OPENAI_ENV, COPILOT_ENV } = require('../provider-env-constants');
+
+/**
+ * Create the OpenAI provider adapter.
+ *
+ * @param {Record<string, string|undefined>} env - Environment variables (typically process.env)
+ * @param {{ bodyTransform: ((body: Buffer) => Buffer|null)|null }} deps - Injected dependencies
+ * @returns {import('./index').ProviderAdapter}
+ */
+function createOpenAIAdapter(env, deps = {}) {
+  const {
+    apiKey: openaiApiKey,
+    rawTarget: openaiTarget,
+    basePath: openaiBasePath,
+    bodyTransform,
+  } = createProviderAuthScaffold(env, deps, {
+    keyEnvVar: OPENAI_ENV.KEY,
+    targetEnvVar: OPENAI_ENV.TARGET,
+    basePathEnvVar: OPENAI_ENV.BASE_PATH,
+    defaultTarget: 'api.openai.com',
+  });
+  const providerType = (env[COPILOT_ENV.PROVIDER_TYPE] || '').trim().toLowerCase();
+  const copilotAzureByokEnabled = providerType === 'azure';
+  const customAuthHeader = (() => {
+    const header = validateAuthHeaderEnv(OPENAI_ENV.AUTH_HEADER, env[OPENAI_ENV.AUTH_HEADER]);
+    if (header) return header;
+    // Azure OpenAI BYOK uses `api-key` header instead of `Authorization: Bearer`
+    // (but OIDC auth still requires `Authorization: Bearer` unless explicitly overridden)
+    if (copilotAzureByokEnabled && (env.AWF_AUTH_TYPE || '').trim().toLowerCase() !== 'github-oidc') return 'api-key';
+    return '';
+  })();
+  const copilotByokApiKey = (env[COPILOT_ENV.PROVIDER_API_KEY] || '').trim() || undefined;
+  const { target: copilotByokTarget, basePath: copilotByokBasePath } = parseApiTargetAndBasePath(env[COPILOT_ENV.PROVIDER_BASE_URL]);
+
+  const apiKey = openaiApiKey || (copilotAzureByokEnabled ? copilotByokApiKey : undefined);
+  const explicitOpenAITarget = env[OPENAI_ENV.TARGET] ? openaiTarget : undefined;
+  const rawTarget = explicitOpenAITarget || (copilotAzureByokEnabled ? copilotByokTarget : undefined) || 'api.openai.com';
+  const explicitBasePath = openaiBasePath || (copilotAzureByokEnabled ? copilotByokBasePath : '');
+
+  // For the default OpenAI endpoint, unversioned clients (e.g. Codex CLI sending
+  // /responses) need a /v1 prefix to reach the correct versioned API surface.
+  // Custom targets manage their own path layout and must not receive an implicit prefix.
+  const basePath = explicitBasePath || (rawTarget === 'api.openai.com' ? '/v1' : '');
+
+  // OIDC auth strategy (Azure OpenAI, AWS Bedrock, GCP Vertex AI)
+  function buildTokenAuthHeaders(key) {
+    if (customAuthHeader) {
+      return providerKeyHeaders(customAuthHeader, key);
+    }
+    return bearerAuthHeaders(key);
+  }
+  const buildStaticAuthHeaders = () => buildTokenAuthHeaders(apiKey);
+  return createOidcAwareProviderAdapter({
+    env,
+    oidcAuthOptions: { staticAuthToken: apiKey },
+    buildOidcHeaders: buildTokenAuthHeaders,
+    buildStaticHeaders: buildStaticAuthHeaders,
+    createAdapterMethodsOptions: ({ authProvider, oidcConfigured, validationSkip, skipModelsFetch }) => ({
+      apiKey,
+      rawTarget,
+      basePath,
+      provider: 'openai',
+      port: 10000,
+      defaultTarget: 'api.openai.com',
+      validationPath: '/v1/models',
+      validationHeaders: buildStaticAuthHeaders,
+      validationSkip,
+      skipModelsFetch,
+      modelsPath: '/v1/models',
+      modelsFetchHeaders: buildStaticAuthHeaders,
+      reflectionConfigured: !!apiKey || oidcConfigured,
+      reflectionModelsPath: '/v1/models',
+      reflectionExtra: () => ({
+        auth_type: oidcConfigured ? `github-oidc/${authProvider}` : 'static-key',
+      }),
+    }),
+    buildAdapterOptions: ({ oidcConfigured }) => ({
+      name: 'openai',
+      port: 10000,
+      isManagementPort: true,
+      bodyTransform,
+      missingCredentialResponse: {
+        kind: 'plain_error',
+        statusCode: 404,
+        message: 'OpenAI proxy not configured (no OPENAI_API_KEY/COPILOT_PROVIDER_API_KEY or OIDC auth)',
+      },
+      unconfiguredResponseWhen: () => (oidcConfigured
+        ? {
+            kind: 'provider_not_configured',
+            message: 'OpenAI OIDC token unavailable; retry shortly',
+            retryable: true,
+          }
+        : null),
+      extra: {
+        /** Port 10000 always counts toward the startup validation latch. */
+        participatesInValidation: true,
+      },
+    }),
+  });
+}
+
+module.exports = { createOpenAIAdapter };

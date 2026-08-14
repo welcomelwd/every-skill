@@ -1,0 +1,26 @@
+{
+  "name": "awf-api-proxy",
+  "version": "1.0.0",
+  "description": "API proxy sidecar for AWF - routes LLM API requests through Squid while injecting authentication headers",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "jest --verbose --ci"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/resources": "^1.30.1",
+    "@opentelemetry/sdk-trace-node": "^1.30.1",
+    "@opentelemetry/semantic-conventions": "^1.41.1",
+    "https-proxy-agent": "^7.0.6"
+  },
+  "overrides": {
+    "@opentelemetry/propagator-jaeger": "2.10.0"
+  },
+  "devDependencies": {
+    "jest": "^30.2.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

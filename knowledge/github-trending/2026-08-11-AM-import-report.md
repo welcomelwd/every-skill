@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | `OthmanAdi/planning-with-files` | up-to-date | `skill/development/planning-with-files @ e8f505a4f5025df5b070494e46c25789582bff55` |
 | `Anselmoo/mcp-ai-agent-guidelines` | up-to-date | `mcp/servers/mcp-ai-agent-guidelines @ 68a70d9c57fc5a3dee029e478ef145c2c213c35b` |
-| `paperclipai/paperclip` | updated | `agent/runtimes/paperclip @ 05d58cd8844906c3e56daaebf1240bc5b0e08c9c (1332 files, 26214393 bytes); excluded 3224 files` |
+| `paperclipai/paperclip` | updated | `agent/runtimes/paperclip @ aac6ce82e10ff8d5c964421b021f9828e77d2435 (1336 files, 26214394 bytes); excluded 3221 files` |
 | `danielmiessler/LifeOS` | up-to-date | `agent/workflows/lifeos @ 58381b3df66252d7cc0cddf8b0d4e735fac35109` |
 | `semantica-agi/semantica` | up-to-date | `knowledge/tools/semantica @ 6f310d1d7acf11013dc7e68d4e68823eb96cec4d` |
 | `GoPlusSecurity/agentguard` | up-to-date | `knowledge/security/agentguard @ d18e142a88fe708a6bc7ba7acccf65bf0d858c0c` |
