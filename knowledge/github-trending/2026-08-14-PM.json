@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.0",
+  "source_date": "2026-08-14",
+  "batch": "PM",
+  "source_markdown": "knowledge/github-trending/2026-08-14.md",
+  "projects": [
+    {
+      "repository": "github/awesome-copilot",
+      "source_url": "https://github.com/github/awesome-copilot",
+      "category": "skill",
+      "subcategory": "development",
+      "slug": "awesome-copilot",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "782200e3a4f7c17248974ac4a63284c868bc290f"
+    },
+    {
+      "repository": "DeusData/codebase-memory-mcp",
+      "source_url": "https://github.com/DeusData/codebase-memory-mcp",
+      "category": "mcp",
+      "subcategory": "servers",
+      "slug": "codebase-memory-mcp",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "c0bd4bbf8dace58cffdb24fad86d95e325df99f4"
+    },
+    {
+      "repository": "nearai/ironclaw",
+      "source_url": "https://github.com/nearai/ironclaw",
+      "category": "agent",
+      "subcategory": "runtimes",
+      "slug": "ironclaw",
+      "license": "Apache-2.0 OR MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "6eba783168aea0c139906f126d9efcac10369e63"
+    },
+    {
+      "repository": "github/gh-aw-firewall",
+      "source_url": "https://github.com/github/gh-aw-firewall",
+      "category": "knowledge",
+      "subcategory": "security",
+      "slug": "gh-aw-firewall",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "3a3dd6891fd8956429609343f956db64165afdaa"
+    }
+  ]
+}
