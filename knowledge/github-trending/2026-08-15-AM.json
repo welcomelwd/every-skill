@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.0",
+  "source_date": "2026-08-15",
+  "batch": "AM",
+  "source_markdown": "knowledge/github-trending/2026-08-15.md",
+  "projects": [
+    {
+      "repository": "github/spec-kit",
+      "source_url": "https://github.com/github/spec-kit",
+      "category": "skill",
+      "subcategory": "development",
+      "slug": "spec-kit",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "bf88c9f9a82fa370c7a7257aa2b3cf10b457b65c"
+    },
+    {
+      "repository": "microsoft/mcp",
+      "source_url": "https://github.com/microsoft/mcp",
+      "category": "mcp",
+      "subcategory": "servers",
+      "slug": "microsoft-mcp",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "51acc4eb2721807000e19c9193c983b0f48af7aa"
+    },
+    {
+      "repository": "NousResearch/hermes-agent",
+      "source_url": "https://github.com/NousResearch/hermes-agent",
+      "category": "agent",
+      "subcategory": "runtimes",
+      "slug": "hermes-agent",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "452465bf78c187c091e41103db869d13d2bb6968"
+    },
+    {
+      "repository": "unslothai/unsloth",
+      "source_url": "https://github.com/unslothai/unsloth",
+      "category": "knowledge",
+      "subcategory": "tools",
+      "slug": "unsloth",
+      "license": "Apache-2.0 AND AGPL-3.0",
+      "download": true,
+      "ref": "main",
+      "commit": "203007d19051dcd2ae33876786d117c99f6b0368"
+    }
+  ]
+}
