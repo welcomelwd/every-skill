@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "repository": "hashicorp/terraform-mcp-server",
+  "source_url": "https://github.com/hashicorp/terraform-mcp-server",
+  "ref": "main",
+  "resolved_commit": "407136375bcc64a40342ecf4ad6603eeab2f3e69",
+  "category": "mcp",
+  "subcategory": "servers",
+  "slug": "terraform-mcp-server",
+  "license": "MPL-2.0",
+  "source_date": null,
+  "imported_at": "2026-08-15T23:02:13+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 197,
+  "copied_bytes": 903639,
+  "excluded_files": [],
+  "execution": "never run by this importer"
+}

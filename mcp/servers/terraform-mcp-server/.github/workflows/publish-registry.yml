@@ -1,0 +1,69 @@
+name: publish-registry
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate triggering actor
+        env:
+          ALLOWED_ACTORS: |
+            gautambaghel
+            jrhouston
+            jaylonmcshan19-x
+        run: |
+          if ! grep -Fxq "${GITHUB_ACTOR}" <<< "${ALLOWED_ACTORS}"; then
+            echo "github.actor '${GITHUB_ACTOR}' is not authorized to run this workflow."
+            exit 1
+          fi
+          echo "Authorized actor: ${GITHUB_ACTOR}"
+
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .go-version
+          cache: true
+          cache-dependency-path: |
+            go.sum
+
+      - name: Run unit tests
+        run: go test ./...
+
+      - name: Build release artifacts
+        run: make crt-build
+
+      - name: Install MCP Publisher CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Determine architecture
+          ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+          
+          # Download the latest release with checksums
+          gh release download --repo modelcontextprotocol/registry \
+            --pattern "*checksums.txt" \
+            --pattern "*linux_${ARCH}*"
+          
+          # Verify checksum before extracting
+          sha256sum --check *checksums.txt --ignore-missing
+          
+          # Extract and make executable
+          tar xzf mcp-publisher_linux_${ARCH}.tar.gz mcp-publisher
+          chmod +x mcp-publisher
+          
+
+      - name: Authenticate with MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish server to MCP Registry
+        run: ./mcp-publisher publish

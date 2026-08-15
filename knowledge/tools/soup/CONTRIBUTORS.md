@@ -1,0 +1,78 @@
+# Contributors
+
+Soup is built by its community. Thank you to everyone who has contributed code,
+tests, docs, and ideas. ❤️
+
+This list is maintained by hand alongside the GitHub
+[contributors graph](https://github.com/MakazhanAlpamys/Soup/graphs/contributors).
+Merged a PR and don't see yourself here? Open a PR adding your line — that counts too.
+
+## Maintainer
+
+- **Alpamys** ([@MakazhanAlpamys](https://github.com/MakazhanAlpamys)) — creator & lead maintainer
+
+## Contributors
+
+Listed by first contribution. PR numbers link the work.
+
+- **Salil Mhatre** ([@Deadpool2000](https://github.com/Deadpool2000))
+  - `soup version --json` for machine-readable CI output ([#6](https://github.com/MakazhanAlpamys/Soup/pull/6))
+  - RAM + disk-space checks in `soup doctor` ([#7](https://github.com/MakazhanAlpamys/Soup/pull/7))
+  - `soup runs clean` for smart checkpoint space management ([#9](https://github.com/MakazhanAlpamys/Soup/pull/9))
+  - Official Docker support for easier onboarding ([#20](https://github.com/MakazhanAlpamys/Soup/pull/20))
+  - `soup bench` — model speed + VRAM measurement ([#25](https://github.com/MakazhanAlpamys/Soup/pull/25))
+  - `--prompts-file` option for `soup bench` ([#30](https://github.com/MakazhanAlpamys/Soup/pull/30))
+  - Happy-path + CPU-warning tests for `soup bench` ([#31](https://github.com/MakazhanAlpamys/Soup/pull/31))
+  - `soup cost` — cloud GPU training cost estimation ([#42](https://github.com/MakazhanAlpamys/Soup/pull/42))
+  - `--nccl` flag for `soup doctor` multi-GPU bandwidth checks ([#178](https://github.com/MakazhanAlpamys/Soup/pull/178))
+  - Ready-made `qwen2.5-coder-7b-sft` recipe ([#285](https://github.com/MakazhanAlpamys/Soup/pull/285))
+  - `soup data split --stratify-semantic` — a random split can leave a whole topic out of the validation set, so a regression in it is invisible; rows are now clustered by meaning and each cluster split proportionally ([#388](https://github.com/MakazhanAlpamys/Soup/pull/388))
+- **Chinmaya Sahu** ([@csking101](https://github.com/csking101))
+  - DPO example config, sample data, and tests ([#48](https://github.com/MakazhanAlpamys/Soup/pull/48))
+  - FP8 `rowwise` + `rowwise_with_gw_hp` scaling recipes ([#62](https://github.com/MakazhanAlpamys/Soup/pull/62))
+- **Yixuan Xu** ([@mzl2233](https://github.com/mzl2233))
+  - Guard diagnose-gate on distributed worker ranks ([#169](https://github.com/MakazhanAlpamys/Soup/pull/169))
+- **dreamer0129** ([@dreamer0129](https://github.com/dreamer0129))
+  - Rich-markup escape fix in legacy `soup adapters` commands ([#175](https://github.com/MakazhanAlpamys/Soup/pull/175), adopted in-tree as [#174](https://github.com/MakazhanAlpamys/Soup/issues/174))
+- **Vivaan Dhawan** ([@VIVAAN-DHAWAN](https://github.com/VIVAAN-DHAWAN))
+  - Reject pickle/zip streams renamed to `.safetensors` via magic-byte check ([#198](https://github.com/MakazhanAlpamys/Soup/pull/198))
+- **Shivam** ([@shivam2931120](https://github.com/shivam2931120))
+  - Tokenizer-aware repetition scoring for the echo-trap detector ([#242](https://github.com/MakazhanAlpamys/Soup/pull/242))
+- **gittihub-jpg** ([@gittihub-jpg](https://github.com/gittihub-jpg))
+  - Manifest-level dotted-path custom transforms for `soup build` ([#255](https://github.com/MakazhanAlpamys/Soup/pull/255))
+  - `--energy` flag for `soup bom emit` — thread energy/CO₂ into the ML-BOM ([#256](https://github.com/MakazhanAlpamys/Soup/pull/256))
+- **shatakshi-1404** ([@shatakshi-1404](https://github.com/shatakshi-1404))
+  - Unit tests for the `warmup.py` auto-warmup-steps helper ([#274](https://github.com/MakazhanAlpamys/Soup/pull/274))
+- **Kondamwar Akshaya Shrikant** ([@Akshaya-reddy18](https://github.com/Akshaya-reddy18))
+  - Friendlier error messages — richer CUDA-OOM hint + Hugging Face gated-repo and `trust_remote_code` mappings + tests ([#282](https://github.com/MakazhanAlpamys/Soup/pull/282))
+- **Darsh** ([@CODING-DARSH](https://github.com/CODING-DARSH))
+  - Harden judge-URL validation against hostname prefix bypass (`startswith` → `urlparse`) in `eval/gate.py` ([#288](https://github.com/MakazhanAlpamys/Soup/pull/288))
+  - Apply configured vocabulary expansion (`data.add_new_tokens` / `new_special_tokens`) during SFT trainer init ([#287](https://github.com/MakazhanAlpamys/Soup/pull/287))
+  - Reuse the shared vocab-expansion helper in the vision + audio SFT paths ([#291](https://github.com/MakazhanAlpamys/Soup/pull/291))
+  - Honor configured vocab expansion in the DPO / IPO / KTO / BCO trainers ([#293](https://github.com/MakazhanAlpamys/Soup/pull/293))
+  - Honor configured vocab expansion in the ORPO / SimPO / GRPO trainers ([#295](https://github.com/MakazhanAlpamys/Soup/pull/295))
+  - `soup mcp serve --allow-execute` — the execution gate, kept a separate and stronger opt-in than `--allow-mutating`, with the tools still plan-only in this slice ([#391](https://github.com/MakazhanAlpamys/Soup/pull/391))
+  - Gated `train_execute` / `export_execute` behind a single-use server confirmation token, with the config snapshotted at plan time and protected directories digested by content rather than by mtime ([#393](https://github.com/MakazhanAlpamys/Soup/pull/393))
+- **Ekaanksh Patil** ([@Ekaanksh-dev](https://github.com/Ekaanksh-dev))
+  - Batch the PRM reward forward pass in `PRMScorer.__call__` (single `[B, T]` forward) ([#301](https://github.com/MakazhanAlpamys/Soup/pull/301))
+- **Sanjay Santhanam** ([@Sanjays2402](https://github.com/Sanjays2402))
+  - Run built-in benchmark gate tasks through `ForgettingDetector` — every `type: benchmark` eval-gate task had always failed ([#315](https://github.com/MakazhanAlpamys/Soup/pull/315))
+- **Nicolás Ramos** ([@nicolasramos](https://github.com/nicolasramos))
+  - `backend: mlx` was never dispatched — every MLX run trained through the transformers wrapper instead, and the saved MLX "adapter" was a full fine-tune because the model was never frozen before LoRA ([#362](https://github.com/MakazhanAlpamys/Soup/pull/362))
+- **William Yang** ([@wilyan09007](https://github.com/wilyan09007))
+  - `training.seed` reached the SFT wrapper and nothing else — seventeen other task wrappers trained at HF's default 42 with no error, so replicates that differed only in the seed were the same run; the seed is now applied before the adapter is drawn, not only inside `Trainer` ([#381](https://github.com/MakazhanAlpamys/Soup/pull/381))
+  - Under `use_fsdp2_compile`, every `checkpoint-*` kept `torch.compile`'s key prefix and resumed **silently** from a re-zeroed adapter — normalisation now runs as each checkpoint is written, ahead of anything that publishes it ([#380](https://github.com/MakazhanAlpamys/Soup/pull/380))
+- **Amir Fathi** ([@AmirF194](https://github.com/AmirF194))
+  - A streamed model's `named_parameters()` carried the wrapper's `.inner.` segment, so a name-keyed comparison against a resident model shared no names at all and a correctness gate reported `0/0` as a pass ([#384](https://github.com/MakazhanAlpamys/Soup/pull/384))
+  - `training.stream_vram_override` — the layer-streaming pre-flight measured free VRAM with a device-level driver query, so it could not see a per-process cap and there was no way to make it simulate one ([#386](https://github.com/MakazhanAlpamys/Soup/pull/386))
+  - The VRAM pre-flight never called its own calibration hook, so the guard against a stack whose loss path under-budgets by 12.5% sat inert with no caller ([#390](https://github.com/MakazhanAlpamys/Soup/pull/390))
+  - `kl_control` re-wrote the same β on every hold step, so a non-acting run was not the no-op `log_only` claims to be; the mitigation log now carries `held` / `acted` / `released` as a field rather than as free text ([#414](https://github.com/MakazhanAlpamys/Soup/pull/414))
+- **Ben Younes** ([@ousamabenyounes](https://github.com/ousamabenyounes))
+  - `MitigationLogWriter` dropped every record in silence once its parent directory vanished mid-run — the controller kept acting while its evidence stopped growing ([#398](https://github.com/MakazhanAlpamys/Soup/pull/398))
+  - `soup draft distill --steps N` delivered only ~N/4.44 optimiser steps — `val_split` and `gradient_accumulation_steps` both divide the budget, and the epoch arithmetic ignored them ([#399](https://github.com/MakazhanAlpamys/Soup/pull/399))
+  - The `soup ship` MCQ scorer read `oxed {A}` as no-answer — LaTeX permits a space before the brace and models emit it, and the cue tier cannot rescue it ([#396](https://github.com/MakazhanAlpamys/Soup/pull/396))
+
+---
+
+Want to join this list? See [CONTRIBUTING.md](CONTRIBUTING.md) — good first issues are
+labelled in the [issue tracker](https://github.com/MakazhanAlpamys/Soup/labels/good%20first%20issue).

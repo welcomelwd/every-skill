@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "repository": "MakazhanAlpamys/Soup",
+  "source_url": "https://github.com/MakazhanAlpamys/Soup",
+  "ref": "main",
+  "resolved_commit": "33cce1a4ca8954110f2ff365d59dbd65f2912844",
+  "category": "knowledge",
+  "subcategory": "tools",
+  "slug": "soup",
+  "license": "Apache-2.0",
+  "source_date": null,
+  "imported_at": "2026-08-15T23:02:13+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 963,
+  "copied_bytes": 14119355,
+  "excluded_files": [
+    "soup.png: binary content",
+    "docs/assets/layer-streaming.gif: file exceeds 2097152 bytes",
+    "src/soup_cli/ui/static/logo.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

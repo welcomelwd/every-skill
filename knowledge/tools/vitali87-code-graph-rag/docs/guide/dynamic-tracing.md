@@ -11,8 +11,9 @@ Currently supported runtimes: **Python** (3.12+, via `sys.monitoring`),
 **Node.js** (V8 cpuprofile conversion), **.NET** (dotnet-trace speedscope
 conversion), **PHP** (Xdebug trace conversion), **Lua** (a pure-Lua
 `debug.sethook` agent), **Dart** (a VM Service sample collector),
-**Go** (pprof CPU-profile conversion), and **C/C++** (a
-`-finstrument-functions` shim). Remaining runtimes are tracked in
+**Go** (pprof CPU-profile conversion), **C/C++** (a
+`-finstrument-functions` shim), and **Rust** (pprof-rs CPU-profile
+conversion). Remaining runtimes are tracked in
 [issue #1244](https://github.com/vitali87/code-graph-rag/issues/1244).
 
 ## Recording a trace
@@ -107,11 +108,15 @@ distinguish this from the instrumented Python and JVM tracers:
   `dynamic_call_count` holds sample counts (relative weight), not call
   counts. Lower `--cpu-prof-interval` (microseconds, default 1000) to
   tighten coverage at the cost of larger profiles.
-- **Transpiled output.** Frames point at the JavaScript that executed. If
-  you index `.ts` sources but run transpiled output from `dist/`, those
-  frames count as `unresolved[unknown_path]`; source-map translation is a
-  planned follow-up. Running TS directly (via a runner that keeps file
-  paths) or indexing the built tree avoids the gap today.
+- **Transpiled output.** Frames point at the JavaScript that executed. Enable
+  source maps in your build (`tsc --sourceMap`; the equivalent option for your
+  bundler, whose default varies by tool and mode) and the converter follows each
+  generated file's `sourceMappingURL` to its `.js.map` and relocates every frame
+  back to its original TypeScript/JavaScript position, so a project built to
+  `dist/` still resolves to the indexed `src/*.ts` nodes. Without source maps,
+  or for a generated position that has no mapping (runtime glue, an occasional
+  module wrapper), the frame keeps its generated `dist/*.js` location; keep the
+  `.js.map` beside the `.js` so the converter can find it.
 
 ## Recording a .NET trace (C#)
 
@@ -167,10 +172,16 @@ never call anything resolve by their `Class::method` name tail instead;
 when several declarations share that tail, the frame is counted as
 `unresolved[ambiguous]` rather than guessed.
 Closures resolve through the file and line range embedded in their runtime
-name. Calls through `__call` attribute to the magic method itself, since
-the graph has no notion of the proxied target. Expect significant tracing
-overhead (Xdebug instruments everything); it is meant for test runs, not
-production.
+name. Instance calls (`$obj->method()`) record the concrete runtime class as
+the edge's `dynamic_receiver_types`, so a dispatch through an interface or base
+type shows which implementation ran; static calls (`Class::method()`) are not
+dynamic dispatch and carry none. A trait method called on the using class is
+observed under that class (`UsingClass->method`); it resolves by span when its
+defining position is recovered, but a leaf trait method that makes no calls
+falls back to the name tail and may be counted `unresolved`. Calls through
+`__call` attribute to the magic method itself, since the graph has no notion of
+the proxied target. Expect significant tracing overhead (Xdebug instruments
+everything); it is meant for test runs, not production.
 
 ## Recording a Lua trace
 
@@ -245,11 +256,62 @@ are stripped from names, with declaration-line spans carrying identity.
 Frames from the Go runtime, the standard library, and `vendor/` are seen
 through to the nearest project frame.
 
+## Recording a Rust trace
+
+Rust has no runtime instrumentation hook, and static analysis already resolves
+monomorphised calls, so the dynamic payoff is narrower but real: `dyn Trait`
+dispatch, function pointers, and closures routed across boundaries.
+[`pprof-rs`](https://crates.io/crates/pprof) samples the process and writes a
+pprof protobuf, the same format as Go's, so `--language rust` selects the Rust
+demangler (`cgr trace convert` reads the profile whether or not it is gzipped):
+
+```toml
+# Cargo.toml
+[dev-dependencies]
+pprof = { version = "0.13", features = ["protobuf-codec"] }
+```
+
+```rust
+// In a test or a small harness that exercises the workload:
+use pprof::protos::Message; // brings write_to_writer into scope
+
+let guard = pprof::ProfilerGuard::new(100).unwrap();
+run_the_workload();
+if let Ok(report) = guard.report().build() {
+    let profile = report.pprof().unwrap();
+    let mut file = std::fs::File::create("cpu.pb").unwrap();
+    profile.write_to_writer(&mut file).unwrap();
+}
+```
+
+```bash
+cargo test                # dev profile: runs the harness above, writing cpu.pb
+cgr trace convert cpu.pb --language rust \
+    --repo-path /path/to/your-repo --workload cargo-test
+cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
+```
+
+Sampled stacks make `dyn Trait` dispatch and calls through function pointers
+visible; counts are sample counts, so give the workload enough CPU time. Trace a
+non-optimized build (the default `cargo test` / `cargo run` dev profile,
+`opt-level = 0`) so callees are not inlined away; `debug = true` only preserves
+symbols and line tables and does not reduce inlining in an optimized `--release`
+build, so add it to whichever profile you trace but do not rely on it alone. The
+demangler strips the legacy `::h` symbol hash, collapses
+generic instantiations and trait-qualified receivers
+(`<Dog as Animal>::speak`) to their bare member, and marks closures
+(`{{closure}}`) anonymous; monomorphised instances resolve to their single
+generic source definition by declaration-line span. Frames from the standard
+library, the cargo registry, and `target/` are seen through to the nearest
+project frame.
+
 ## Recording a C or C++ trace
 
 A single-file shim (`codebase_rag/trace/c_agent/cgr_trace_shim.c`, no
 dependencies beyond pthreads) rides the compiler's own instrumentation and
 records **every call exactly**:
+
+For a **C** project, compile the sources and the shim together:
 
 ```bash
 cc -pthread -finstrument-functions -g -O0 your_sources... \
@@ -259,19 +321,37 @@ cgr trace convert cgr-trace.addrs --repo-path /path/to/your-repo --workload smok
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
 
+For a **C++** project, compile the shim with the C compiler (it is C, and a
+C++ driver would compile the `.c` file as C++ and fail) and link the
+instrumented C++ objects with the C++ driver; only the C++ translation units
+carry `-finstrument-functions`:
+
+```bash
+cc  -pthread -c codebase_rag/trace/c_agent/cgr_trace_shim.c -o cgr_shim.o
+c++ -pthread -finstrument-functions -g -O0 -c your_sources... # -> *.o
+c++ -pthread your_objects... cgr_shim.o -o app
+```
+
+In CMake, add `cgr_trace_shim.c` to the target's sources (CMake compiles a
+`.c` file with the C compiler on its own) and set
+`-finstrument-functions -g -O0` on the traced build type; the shim links in
+without a separate step.
+
 The shim records function-address pairs and the main image's load bias;
 conversion symbolises them with `atos` (macOS) or `addr2line` (ELF). PIE
 binaries need no special build flag — the shim records the ASLR slide and
 the converter subtracts it before symbolising, so the default hardened
-(PIE) build works. Calls through function pointers and virtual dispatch
-land with true invocation counts; C++ names demangle and normalise to their
-bare member form, with source positions carrying identity. Frames that
+(PIE) build works. Calls through function pointers (C) and virtual dispatch
+(C++) land with true invocation counts; C++ names demangle and normalise to
+their bare member form, with source positions carrying identity. Frames that
 symbolise outside the repository (libc, the C++ runtime) drop their edges
-rather than being guessed. Overhead is one mutex-guarded table insert per
-call — fine for test workloads, not for production; the edge table holds
-65k distinct pairs, and conversion **rejects** a trace the shim marked
-`dropped` (table overflowed) rather than pass off an incomplete call graph
-as exact.
+rather than being guessed. An edge whose caller or callee does not resolve to
+a project frame is excluded from the converted trace; addresses that do not
+symbolise at all (stripped symbols, missing debug info) are additionally
+counted and reported, so that symbolisation gap is visible rather than silent. Overhead is one mutex-guarded table insert per call — fine
+for test workloads, not for production; the edge table holds 65k distinct
+pairs, and conversion **rejects** a trace the shim marked `dropped` (table
+overflowed) rather than pass off an incomplete call graph as exact.
 
 ## Ingesting a trace
 
@@ -293,6 +373,7 @@ properties:
 | `dynamic_workloads` | Test ids that exercised the edge (capped list). |
 | `dynamic_workload_count` | Uncapped number of distinct workloads. |
 | `dynamic_receiver_types` | Concrete receiver types observed for method calls. |
+| `dynamic_sampled` | `true` when the edge came from a sampling profiler (Go pprof, Node.js/V8, .NET `dotnet-trace`, Dart CPU samples), so its presence and `dynamic_call_count` are approximate; `false` when the tracer observed every call (Python, the JVM agent, Xdebug, the C shim, the Lua hook), so counts are exact. |
 | `static_missed: true` | No matching static `CALLS` edge existed in the graph at ingest time. Dynamic dispatch, reflection, and registries are the common causes; a stale or incomplete static graph produces the same flag. |
 
 An edge with `dynamic: true` and `static_missed: false` is a static edge

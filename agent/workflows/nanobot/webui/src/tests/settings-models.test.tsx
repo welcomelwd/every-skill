@@ -89,6 +89,27 @@ async function togglePresetEditor(name = "primary") {
 describe("Settings models", () => {
   installSettingsViewTestHooks();
 
+  it("distinguishes the editable display name from the stable command name", async () => {
+    const payload = settingsPayload();
+    payload.model_presets[0] = {
+      ...payload.model_presets[0],
+      name: "openai",
+      label: "minimax",
+    };
+    payload.model_call_order = ["openai"];
+    payload.agent.model_preset = "openai";
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+
+    renderSettingsView({ initialSection: "models", initialSettings: payload });
+
+    await togglePresetEditor("openai");
+
+    expect(screen.getByText("Display name")).toBeInTheDocument();
+    expect(
+      screen.getByText("Shown in the interface. The command name stays /model openai."),
+    ).toBeInTheDocument();
+    expect(screen.getByDisplayValue("minimax")).toBeInTheDocument();
+  });
 
   it("keeps generation parameters collapsed until advanced options are opened", async () => {
     vi.stubGlobal(
@@ -980,6 +1001,90 @@ describe("Settings models", () => {
         String(input).startsWith("/api/settings/provider-models"),
       ),
     ).toBe(false);
+  });
+
+  it("defers the OrcaRouter catalog until the user searches", async () => {
+    const base = settingsPayload();
+    const payload: SettingsPayload = {
+      ...base,
+      agent: {
+        ...base.agent,
+        model: "orcarouter/auto",
+        provider: "orcarouter",
+        resolved_provider: "orcarouter",
+      },
+      model_presets: [
+        {
+          ...base.model_presets[0],
+          model: "orcarouter/auto",
+          provider: "orcarouter",
+          resolved_provider: "orcarouter",
+        },
+      ],
+      providers: [
+        {
+          name: "orcarouter",
+          label: "OrcaRouter",
+          configured: true,
+          auth_type: "api_key",
+          api_key_required: true,
+          api_key_hint: "sk-o••••test",
+          api_base: null,
+          default_api_base: "https://api.orcarouter.ai/v1",
+          model_catalog: "catalog",
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/settings") return jsonResponse(payload);
+      if (url === "/api/settings/cli-apps") {
+        return jsonResponse({ apps: [], installed_count: 0 });
+      }
+      if (url === "/api/settings/mcp-presets") {
+        return jsonResponse({ presets: [], installed_count: 0 });
+      }
+      if (url === "/api/settings/provider-models?provider=orcarouter") {
+        return jsonResponse({
+          provider: "orcarouter",
+          label: "OrcaRouter",
+          status: "available",
+          catalog_kind: "catalog",
+          models: [
+            { id: "orcarouter/auto", owned_by: "orcarouter" },
+            { id: "anthropic/claude-sonnet-4.6", owned_by: "anthropic" },
+          ],
+          model_count: 2,
+          fetched_at: 1,
+        });
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderSettingsView({ initialSection: "models" });
+
+    await togglePresetEditor();
+    const modelButtons = await screen.findAllByRole("button", { name: /orcarouter\/auto/i });
+    await openPopover(modelButtons[modelButtons.length - 1]);
+    expect(await screen.findByText("Search provider catalog to choose a model.")).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).startsWith("/api/settings/provider-models"),
+      ),
+    ).toBe(false);
+
+    fireEvent.change(screen.getByPlaceholderText("Search or type model ID"), {
+      target: { value: "cl" },
+    });
+
+    await screen.findByText("anthropic/claude-sonnet-4.6");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/settings/provider-models?provider=orcarouter",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer tok" },
+      }),
+    );
   });
 
   it("loads curated models for configured OAuth providers", async () => {

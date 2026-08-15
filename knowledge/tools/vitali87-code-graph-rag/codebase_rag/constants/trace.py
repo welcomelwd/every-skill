@@ -20,6 +20,12 @@ TRACE_KEY_LINE = "line"
 TRACE_KEY_COUNT = "count"
 TRACE_KEY_WORKLOADS = "workloads"
 TRACE_KEY_RECEIVER_TYPES = "receiver_types"
+# Header flag: True when the tracer sampled the call stack (pprof, V8 cpuprofile,
+# dotnet-trace, Dart CPU samples) so parent/child adjacency and counts are
+# approximate, False when it instrumented every call (Python sys.monitoring, the
+# JVM agent, Xdebug, the C shim, the Lua hook) so edges and counts are exact.
+# Absent in pre-flag trace files, which read back as exact.
+TRACE_KEY_SAMPLED = "sampled"
 
 TRACE_LANGUAGE_PYTHON = "python"
 TRACE_LANGUAGE_JVM = "jvm"
@@ -30,12 +36,14 @@ TRACE_LANGUAGE_LUA = "lua"
 TRACE_LANGUAGE_DART = "dart"
 TRACE_LANGUAGE_GO = "go"
 TRACE_LANGUAGE_CPP = "cpp"
+TRACE_LANGUAGE_RUST = "rust"
 TRACE_TOOL_NAME = "cgr-trace"
 TRACE_TOOL_NAME_JVM = "cgr-trace-jvm"
 TRACE_TOOL_NAME_CPUPROFILE = "cgr-trace-cpuprofile"
 TRACE_TOOL_NAME_SPEEDSCOPE = "cgr-trace-speedscope"
 TRACE_TOOL_NAME_XDEBUG = "cgr-trace-xdebug"
 TRACE_TOOL_NAME_PPROF = "cgr-trace-pprof"
+TRACE_TOOL_NAME_RUST_PPROF = "cgr-trace-rust-pprof"
 TRACE_TOOL_NAME_INSTRUMENTED = "cgr-trace-instrumented"
 TRACE_DEFAULT_OUTPUT = "cgr-trace.jsonl"
 
@@ -66,6 +74,10 @@ TRACE_ERR_NO_SYMBOLIZER = "Neither atos nor addr2line is available to symbolise.
 TRACE_ERR_ADDRS_DROPPED = (
     "{path} overflowed the shim's edge table: call edges were dropped, so the "
     "trace is incomplete and cannot honour exact invocation counts."
+)
+TRACE_MSG_ADDRS_UNRESOLVED = (
+    "{count} of {total} instrumented addresses did not symbolise to a source "
+    "position (missing debug info or stripped symbols); their edges were dropped."
 )
 TRACE_ERR_BAD_XDEBUG = (
     "{path} is not an Xdebug computerized trace (expected 'File format: 4')."
@@ -114,6 +126,10 @@ TRACE_PROP_WORKLOADS = "dynamic_workloads"
 TRACE_PROP_WORKLOAD_COUNT = "dynamic_workload_count"
 TRACE_PROP_RECEIVER_TYPES = "dynamic_receiver_types"
 TRACE_PROP_STATIC_MISSED = "static_missed"
+# True when the edge came from a sampling profiler, so its presence and
+# dynamic_call_count are approximate (a sampled edge that was never sampled is
+# not evidence of dead code); False when the tracer observed every call.
+TRACE_PROP_SAMPLED = "dynamic_sampled"
 
 
 class TraceUnresolvedReason(StrEnum):
