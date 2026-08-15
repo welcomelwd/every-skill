@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "source_date": "2026-08-15",
+  "batch": "PM",
+  "source_markdown": "knowledge/github-trending/2026-08-15.md",
+  "projects": [
+    {
+      "repository": "NVIDIA/skills",
+      "source_url": "https://github.com/NVIDIA/skills",
+      "category": "skill",
+      "subcategory": "development",
+      "slug": "nvidia-skills",
+      "license": "Apache-2.0 AND CC-BY-4.0",
+      "download": true,
+      "ref": "main",
+      "commit": "a9130c6036de4603499924a3f2687cb6c42101ca"
+    },
+    {
+      "repository": "DelineaXPM/delinea-mcp",
+      "source_url": "https://github.com/DelineaXPM/delinea-mcp",
+      "category": "mcp",
+      "subcategory": "security",
+      "slug": "delinea-mcp",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "2302893ab4cb965d301bf5e8476fd2624832a292"
+    },
+    {
+      "repository": "simular-ai/Agent-S",
+      "source_url": "https://github.com/simular-ai/Agent-S",
+      "category": "agent",
+      "subcategory": "runtimes",
+      "slug": "agent-s",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "bffdb59c60cbbb38c3a190b2e91da12039e4063c"
+    },
+    {
+      "repository": "infiniflow/ragflow",
+      "source_url": "https://github.com/infiniflow/ragflow",
+      "category": "knowledge",
+      "subcategory": "tools",
+      "slug": "ragflow",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "554fb1133ac3861732235ad9c377eb5e0a770665"
+    }
+  ]
+}
