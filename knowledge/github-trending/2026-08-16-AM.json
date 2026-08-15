@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "source_date": "2026-08-16",
+  "batch": "AM",
+  "source_markdown": "knowledge/github-trending/2026-08-16.md",
+  "projects": [
+    {
+      "repository": "google/skills",
+      "source_url": "https://github.com/google/skills",
+      "category": "skill",
+      "subcategory": "development",
+      "slug": "google-skills",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "8f57a0d9839ba9e33aa5367dfeb7ba37598175e3"
+    },
+    {
+      "repository": "hashicorp/terraform-mcp-server",
+      "source_url": "https://github.com/hashicorp/terraform-mcp-server",
+      "category": "mcp",
+      "subcategory": "servers",
+      "slug": "terraform-mcp-server",
+      "license": "MPL-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "407136375bcc64a40342ecf4ad6603eeab2f3e69"
+    },
+    {
+      "repository": "microsoft/agent-framework",
+      "source_url": "https://github.com/microsoft/agent-framework",
+      "category": "agent",
+      "subcategory": "runtimes",
+      "slug": "agent-framework",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "12621e0a746517068300f7b9445225c3ee2406ea"
+    },
+    {
+      "repository": "MakazhanAlpamys/Soup",
+      "source_url": "https://github.com/MakazhanAlpamys/Soup",
+      "category": "knowledge",
+      "subcategory": "tools",
+      "slug": "soup",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "33cce1a4ca8954110f2ff365d59dbd65f2912844"
+    }
+  ]
+}
