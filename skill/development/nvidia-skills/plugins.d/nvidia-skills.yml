@@ -1,0 +1,64 @@
+name: nvidia-skills
+
+version: "1.4.0"
+description: Find the right NVIDIA skill for GPU acceleration, CUDA, AI agents, data loading, training, inference, robotics, Physical AI, Omniverse, simulation, and other NVIDIA-powered workflows.
+
+display_name: NVIDIA Skills
+short_description: Find the right NVIDIA skill
+long_description: Find and install the right NVIDIA skill for work across GPU acceleration, CUDA, AI agents, data loading, training, inference, robotics, Physical AI, Omniverse, simulation, and more. The plugin checks NVIDIA's live skills catalog, recommends the best match, and provides an install command and a useful first prompt.
+
+category: Developer Tools
+logo: ./assets/nvidia.png
+composer_icon: ./assets/nvidia.png
+# screenshots: []   # optional; supply ./assets/*.png paths when we have any
+website_url: https://build.nvidia.com/skills/
+privacy_policy_url: https://www.nvidia.com/en-us/about-nvidia/privacy-center/
+terms_of_service_url: https://developer.nvidia.com/legal/terms
+
+keywords:
+  - nvidia
+  - gpu
+  - cuda
+  - ai-agents
+  - data-loading
+  - training
+  - inference
+  - llm-serving
+  - robotics
+  - simulation
+  - omniverse
+  - openusd
+  - digital-twin
+  - physical-ai
+  - cad
+
+default_prompts:
+  - "Which NVIDIA skills can help with simulation and robotics?"
+  - "How can I turn real-world driving footage into a 3D neural scene for simulation?"
+  - "Help me deploy a secure OpenClaw agent."
+
+# This plugin ships a single skill: nvidia-skill-finder.
+#
+# The new approach is discovery-first. Instead of bundling a curated subset
+# of skills into the plugin (which loads every SKILL.md into the harness
+# context on install and crowds the limited skill context space), the plugin
+# ships only the finder. The finder routes users to any skill in the canonical
+# ./skills/ catalog on demand, so the full catalog is reachable without paying
+# the context cost of pre-loading it.
+#
+# It also decouples versioning: individual skills are version-managed in the
+# catalog independently of this plugin's version, so a skill update no longer
+# forces a plugin re-release (and vice versa).
+include_skills:
+  - skills/nvidia-skill-finder/
+
+
+# Inherits from plugins.d/_defaults.yml:
+#   version, author, homepage, repository, license,
+#   brand_color, capabilities
+
+# By default this plugin is added (true) in all self-hosted marketplace.json files. Uncomment to opt out.
+# marketplace_enabled:
+#   claude: false
+#   codex: false
+#   cursor: false

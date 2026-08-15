@@ -6,9 +6,9 @@
   "rangeStrategy": "auto",
   "postUpdateOptions": [],
   "constraints": {
-    "npm": ">= 11"
+    "npm": ">=11.18.0 <12"
   },
-  "npmrc": "registry=https://registry.npmjs.org/\nengine-strict=true",
+  "npmrc": "registry=https://registry.npmjs.org/\nengine-strict=true\nmin-release-age=10",
   "lockFileMaintenance": {
     "enabled": true,
     "schedule": [
@@ -26,6 +26,13 @@
     {
       "description": "Disable major Node.js version updates",
       "matchPackageNames": ["node"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "Keep Renovate's npm tool constraint on the CI-supported major; npm 12 breaks bundled lockfile maintenance",
+      "matchFileNames": ["renovate.json"],
+      "matchPackageNames": ["npm"],
       "matchUpdateTypes": ["major"],
       "enabled": false
     },
@@ -314,6 +321,11 @@
       "matchPackageNames": ["@biomejs/biome"],
       "schedule": ["before 6am on Monday"],
       "minimumReleaseAge": "10 days"
+    },
+    {
+      "description": "Hold Knip below 6.28 until existing public barrel re-exports have been audited; 6.28 changed ignoreExportsUsedInFile and flags 130 established exports",
+      "matchPackageNames": ["knip"],
+      "allowedVersions": "<6.28.0"
     },
     {
       "description": "Dev tooling: weekly updates (low urgency)",

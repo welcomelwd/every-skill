@@ -1,0 +1,220 @@
+import base64
+import hmac
+import html
+import logging
+from urllib.parse import urlencode
+
+from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi.responses import RedirectResponse, Response
+
+from . import as_config
+
+logger = logging.getLogger(__name__)
+
+
+def mount_oauth_routes(app: FastAPI, cfg: dict | None = None) -> None:
+    registration_psk = cfg.get("registration_psk") if cfg else None
+    db_path = cfg.get("oauth_db_path", "oauth.db") if cfg else "oauth.db"
+    key_path = cfg.get("jwt_key_path") if cfg else None
+    as_config.init_keys(key_path)
+    as_config.init_db(db_path)
+
+    @app.get("/.well-known/oauth-authorization-server")
+    async def well_known(request: Request):
+        base = str(request.base_url).rstrip("/")
+        logger.debug(
+            "well_known from %s", request.client.host if request.client else "unknown"
+        )
+        return {
+            "issuer": base,
+            "authorization_endpoint": f"{base}/oauth/authorize",
+            "token_endpoint": f"{base}/oauth/token",
+            "registration_endpoint": f"{base}/oauth/register",
+            "jwks_uri": f"{base}/jwks.json",
+            "scopes_supported": ["mcp.read", "mcp.write"],
+        }
+
+    @app.get("/.well-known/oauth-protected-resource")
+    @app.get("/.well-known/oauth-protected-resource/mcp")
+    async def protected_resource_metadata(request: Request):
+        # RFC 9728: lets clients discover the authorization server from a
+        # 401's WWW-Authenticate header. The AS is co-hosted, so it is the
+        # same origin. "resource" must equal the JWT audience minted by
+        # as_config.issue_token (the origin, per RFC 8707 resource
+        # indicators). The /mcp-suffixed alias covers clients that derive
+        # the path-inserted well-known URI from the /mcp endpoint.
+        base = str(request.base_url).rstrip("/")
+        return {
+            "resource": base,
+            "authorization_servers": [base],
+            "scopes_supported": ["mcp.read", "mcp.write"],
+            "bearer_methods_supported": ["header"],
+        }
+
+    @app.get("/jwks.json")
+    async def jwks():
+        logger.debug("jwks")
+        return {"keys": [as_config.public_jwk()]}
+
+    @app.post("/oauth/register")
+    async def register(request: Request):
+        if registration_psk is None:
+            raise HTTPException(status_code=400, detail="Registration disabled")
+        # The PSK is "required to register OAuth clients" per the README, but
+        # previously only its presence was tested - any anonymous caller could
+        # mint client_id/client_secret pairs. Require the shared secret, as
+        # the authorize handler already does. Accept it as a Bearer token
+        # (RFC 7591 initial-access-token style) or a JSON "secret" field.
+        bearer = request.headers.get("authorization", "")
+        supplied = bearer[7:] if bearer.lower().startswith("bearer ") else None
+        data = await request.json()
+        supplied = supplied or data.get("secret") or ""
+        if not hmac.compare_digest(supplied, registration_psk):
+            raise HTTPException(status_code=401, detail="invalid registration secret")
+        logger.debug("register client %s", data.get("client_name"))
+
+        client_name = data.get("client_name")
+        redirect_uris = data.get("redirect_uris", [])
+
+        if not redirect_uris:
+            raise HTTPException(status_code=400, detail="redirect_uris required")
+
+        try:
+            return as_config.register_client(client_name, redirect_uris)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.get("/oauth/authorize")
+    async def authorize_form(
+        client_id: str,
+        redirect_uri: str,
+        scope: str = "mcp.read mcp.write",
+        state: str | None = None,
+    ):
+        logger.debug("authorize_form %s", client_id)
+        if client_id not in as_config.CLIENTS:
+            raise HTTPException(status_code=400, detail="invalid client")
+
+        # Validate redirect URI
+        if not as_config.validate_redirect_uri(client_id, redirect_uri):
+            raise HTTPException(status_code=400, detail="invalid redirect_uri")
+
+        escaped_client_id = html.escape(client_id)
+        escaped_uri = html.escape(redirect_uri)
+        escaped_scope = html.escape(scope)
+        escaped_state = html.escape(state) if state else None
+
+        html_content = (
+            '<form method="post">'
+            '<input type="password" name="secret" placeholder="Enter approval secret"/>'
+            f'<input type="hidden" name="client_id" value="{escaped_client_id}"/>'
+            f'<input type="hidden" name="redirect_uri" value="{escaped_uri}"/>'
+            f'<input type="hidden" name="scope" value="{escaped_scope}"/>'
+            + (
+                f'<input type="hidden" name="state" value="{escaped_state}"/>'
+                if state
+                else ""
+            )
+            + '<button type="submit">Approve</button></form>'
+        )
+        return Response(content=html_content, media_type="text/html")
+
+    @app.post("/oauth/authorize")
+    async def authorize_submit(
+        secret: str = Form(...),
+        client_id: str = Form(...),
+        redirect_uri: str = Form(...),
+        scope: str = Form(...),
+        state: str | None = Form(None),
+    ):
+        logger.debug("authorize_submit for %s", client_id)
+        # Constant-time compare, matching the /oauth/register handler.
+        if registration_psk is None or not hmac.compare_digest(
+            secret, registration_psk
+        ):
+            return Response(
+                content="Invalid secret", status_code=401, media_type="text/html"
+            )
+        if client_id not in as_config.CLIENTS:
+            raise HTTPException(status_code=400, detail="invalid client")
+
+        # Validate redirect URI
+        if not as_config.validate_redirect_uri(client_id, redirect_uri):
+            raise HTTPException(status_code=400, detail="invalid redirect_uri")
+        code = as_config.create_code(client_id, scope.split())
+        params = {"code": code}
+        if state:
+            params["state"] = state
+        url = f"{redirect_uri}?" + urlencode(params)
+        logger.debug("redirect to %s", url)
+        return RedirectResponse(url, status_code=302)
+
+    @app.post("/oauth/token")
+    async def token(request: Request):
+        logger.debug("token request")
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            data = await request.json()
+        elif "application/x-www-form-urlencoded" in content_type:
+            data = await request.form()
+        else:
+            raise HTTPException(status_code=415, detail="Unsupported content type")
+
+        grant_type = data.get("grant_type")
+        code = data.get("code")
+
+        # Support both client_secret_post and client_secret_basic
+        client_id = data.get("client_id")
+        client_secret = data.get("client_secret")
+
+        auth_header = request.headers.get("authorization")
+        if auth_header and auth_header.startswith("Basic "):
+            try:
+                decoded = base64.b64decode(auth_header.split(" ", 1)[1]).decode("utf-8")
+                basic_id, basic_secret = decoded.split(":", 1)
+                client_id = basic_id
+                client_secret = basic_secret
+            except Exception:
+                raise HTTPException(
+                    status_code=400, detail="invalid_client: malformed basic auth"
+                ) from None
+
+        if grant_type != "authorization_code":
+            raise HTTPException(status_code=400, detail="unsupported grant type")
+
+        # Look up code without consuming yet
+        auth = as_config.AUTH_CODES.get(code)
+        if not auth:
+            raise HTTPException(status_code=400, detail="invalid_grant: unknown code")
+
+        if not client_id or not client_secret:
+            raise HTTPException(
+                status_code=400, detail="invalid_client: missing credentials"
+            )
+        if client_id != auth["client_id"]:
+            raise HTTPException(
+                status_code=400, detail="invalid_grant: client_id mismatch"
+            )
+        if not as_config.verify_client_secret(client_id, client_secret):
+            raise HTTPException(status_code=401, detail="invalid_client: bad secret")
+
+        # Optional: enforce redirect_uri match
+        redirect_uri = data.get("redirect_uri")
+        if auth.get("redirect_uri") and redirect_uri != auth.get("redirect_uri"):
+            raise HTTPException(
+                status_code=400, detail="invalid_grant: redirect_uri mismatch"
+            )
+
+        audience = str(request.base_url).rstrip("/")
+        access = as_config.issue_token(auth["client_id"], auth["scopes"], audience)
+        logger.debug("issued token for %s", auth["client_id"])
+
+        # Consume code only after validation succeeds
+        as_config.AUTH_CODES.pop(code, None)
+
+        return {
+            "access_token": access,
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "scope": " ".join(auth["scopes"]),
+        }

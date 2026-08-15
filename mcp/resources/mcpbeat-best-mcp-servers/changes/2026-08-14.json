@@ -1,0 +1,159 @@
+{
+  "date": "2026-08-14",
+  "findings": {
+    "fixed": 554,
+    "high": 19,
+    "new": 1220
+  },
+  "licence": "CC BY 4.0",
+  "notable": [
+    {
+      "detail": "destroy.fs",
+      "kind": "new_high",
+      "server": "paperclipai/paperclip",
+      "url": "https://mcpbeat.com/mcp-servers/incorporatedpartners/labelhead-artist-momentum/"
+    },
+    {
+      "detail": "destroy.fs",
+      "kind": "new_high",
+      "server": "JKHeadley/instar",
+      "url": "https://mcpbeat.com/mcp-servers/jkheadley/threadline-mcp/"
+    },
+    {
+      "detail": "destroy.fs",
+      "kind": "new_high",
+      "server": "SamMorrowDrums/remarkable-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/sammorrowdrums/remarkable/"
+    },
+    {
+      "detail": "exfil.cloud_meta",
+      "kind": "new_high",
+      "server": "cesteral/mcp-open-advertising",
+      "url": "https://mcpbeat.com/mcp-servers/cesteral/dv360-mcp/"
+    },
+    {
+      "detail": "supply.ci_secrets",
+      "kind": "new_high",
+      "server": "metabase/metabase",
+      "url": "https://mcpbeat.com/mcp-servers/metabase/mcp/"
+    },
+    {
+      "detail": "exfil.cloud_meta",
+      "kind": "new_high",
+      "server": "nirholas/three.ws",
+      "url": "https://mcpbeat.com/mcp-servers/nirholas/audio-mcp/"
+    },
+    {
+      "detail": "destroy.fs",
+      "kind": "new_high",
+      "server": "tenzro/tenzro-network",
+      "url": "https://mcpbeat.com/mcp-servers/tenzro/tenzro-layerzero/"
+    },
+    {
+      "detail": "combo.obf_exfil",
+      "kind": "new_high",
+      "server": "ogasurfproject-jpg/horizon-shield",
+      "url": "https://mcpbeat.com/mcp-servers/ogasurfproject-jpg/hs-verify-gate/"
+    },
+    {
+      "detail": "supply.only_in_package",
+      "kind": "new_high",
+      "server": "kapella-hub/FirekeepHQ",
+      "url": "https://mcpbeat.com/mcp-servers/kapella-hub/firekeep/"
+    },
+    {
+      "detail": "claim.read_only",
+      "kind": "new_high",
+      "server": "pramodreddyboddu/mq-sentinel",
+      "url": "https://mcpbeat.com/mcp-servers/pramodreddyboddu/mq-sentinel/"
+    },
+    {
+      "detail": "exec.pipe_to_shell",
+      "kind": "new_high",
+      "server": "r2cuerdame/CodeSampleX",
+      "url": "https://mcpbeat.com/mcp-servers/r2cuerdame/codesamplex/"
+    },
+    {
+      "detail": "find_opportunities",
+      "kind": "schema",
+      "server": "analyticslegends/analytics-legends-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/analyticslegends/sap-analytics/"
+    },
+    {
+      "detail": "find_best_price",
+      "kind": "schema",
+      "server": "BuyWhere/buywhere",
+      "url": "https://mcpbeat.com/mcp-servers/buywhere/catalog-api/"
+    },
+    {
+      "detail": "certscore_scan_site",
+      "kind": "schema",
+      "server": "ergoveritas1-alt/certscore.ai",
+      "url": "https://mcpbeat.com/mcp-servers/certscore/mcp-light/"
+    },
+    {
+      "detail": "export_panel",
+      "kind": "schema",
+      "server": "minds-ai-co/minds-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/getminds/minds/"
+    },
+    {
+      "detail": "get_vehicle_details",
+      "kind": "schema",
+      "server": "gondola-ai/gondola-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/gondola/gondola/"
+    },
+    {
+      "detail": "createImage",
+      "kind": "schema",
+      "server": "Ludo-AI/ludo-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/ludo/game-assets/"
+    },
+    {
+      "detail": "find_similar_wines",
+      "kind": "schema",
+      "server": "jagduvi1/Cellarion",
+      "url": "https://mcpbeat.com/mcp-servers/cellarion/wine-registry/"
+    },
+    {
+      "detail": "realty_complex_rent_by_pyeong",
+      "kind": "schema",
+      "server": "sallim-app/korea-realty",
+      "url": "https://mcpbeat.com/mcp-servers/sallim/korea-realty/"
+    },
+    {
+      "detail": "nfe_emitir",
+      "kind": "schema",
+      "server": "BrasilNFe/brasilnfe-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/com-brasilnfe/fiscal/"
+    },
+    {
+      "detail": "get_policies",
+      "kind": "schema",
+      "server": "Tempguru-co/tempguru-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/tempguru/event-staffing/"
+    },
+    {
+      "detail": "estimate_geometry_package",
+      "kind": "schema",
+      "server": "xyver/daedal-map",
+      "url": "https://mcpbeat.com/mcp-servers/daedalmap/boundaries/"
+    },
+    {
+      "detail": "resolve_reference",
+      "kind": "schema",
+      "server": "xyver/daedal-map",
+      "url": "https://mcpbeat.com/mcp-servers/daedalmap/county-map/"
+    }
+  ],
+  "servers": {
+    "gone": 35,
+    "new": 157
+  },
+  "source": "https://mcpbeat.com/data/2026-08-14/",
+  "tools": {
+    "added": 567,
+    "removed": 393,
+    "schema_changed": 4196
+  }
+}

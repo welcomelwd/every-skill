@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "repository": "DelineaXPM/delinea-mcp",
+  "source_url": "https://github.com/DelineaXPM/delinea-mcp",
+  "ref": "main",
+  "resolved_commit": "2302893ab4cb965d301bf5e8476fd2624832a292",
+  "category": "mcp",
+  "subcategory": "security",
+  "slug": "delinea-mcp",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-15T10:09:13+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 108,
+  "copied_bytes": 1243291,
+  "excluded_files": [
+    "docs/delinea-secret-server-openapi-spec.json: file exceeds 2097152 bytes"
+  ],
+  "execution": "never run by this importer"
+}
