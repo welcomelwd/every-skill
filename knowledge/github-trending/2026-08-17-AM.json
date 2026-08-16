@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "source_date": "2026-08-17",
+  "batch": "AM",
+  "source_markdown": "knowledge/github-trending/2026-08-17.md",
+  "projects": [
+    {
+      "repository": "huggingface/skills",
+      "source_url": "https://github.com/huggingface/skills",
+      "category": "skill",
+      "subcategory": "development",
+      "slug": "huggingface-skills",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "ec0108293521ef698e451ec044e8b4feba6b732b"
+    },
+    {
+      "repository": "mongodb-js/mongodb-mcp-server",
+      "source_url": "https://github.com/mongodb-js/mongodb-mcp-server",
+      "category": "mcp",
+      "subcategory": "servers",
+      "slug": "mongodb-mcp-server",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "b112cfbd9e1106e87f02c682f4a5e08f7a184126"
+    },
+    {
+      "repository": "kubernetes-sigs/agent-sandbox",
+      "source_url": "https://github.com/kubernetes-sigs/agent-sandbox",
+      "category": "agent",
+      "subcategory": "runtimes",
+      "slug": "agent-sandbox",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "5f2699524aa3a9c23f9c1d8e4d62e50be3ebfa94"
+    },
+    {
+      "repository": "agentskills/agentskills",
+      "source_url": "https://github.com/agentskills/agentskills",
+      "category": "knowledge",
+      "subcategory": "standards",
+      "slug": "agent-skills-specification",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "69ef37e9424c0a7ea9dd2293b559e43ec8176379"
+    }
+  ]
+}
