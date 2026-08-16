@@ -2,11 +2,19 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 import warnings
 from typing import Any, Callable, Iterator, Optional, Union, cast
 
 from .errors import PageIndexAPIError
+
+
+def _preload_litellm() -> None:
+    try:
+        import litellm  # noqa: F401
+    except Exception:
+        pass
 
 
 def _parse_pages(pages: str) -> list[int]:
@@ -33,7 +41,7 @@ def _parse_pages(pages: str) -> list[int]:
     return sorted(result)
 
 
-def _normalize_retrieve_model(model: str) -> str:
+def _agents_sdk_model_name(model: str) -> str:
     """Preserve supported Agents SDK prefixes and route other provider paths via LiteLLM."""
     passthrough_prefixes = ("litellm/", "openai/")
     if not model or "/" not in model:
@@ -56,16 +64,27 @@ class PageIndexClient:
     Args:
         api_key (str, optional): PageIndex cloud API key
             (https://dash.pageindex.ai/api-keys). Omit for local mode.
-        model (str, optional): Local mode only — LLM used to build document
-            trees. Defaults to the packaged config (see pageindex/config.yaml).
-        summary_model (str, optional): Local mode only — LLM used for node
-            summaries and document descriptions.
-        retrieve_model (str, optional): Local mode only — the model the
-            local chat surfaces (``chat_completions``, ``responses``)
-            default to, exposed as ``client.retrieve_model``.
-            ``provider/model`` names route through LiteLLM; for an
-            OpenAI-compatible server that itself serves slashed model ids
-            (vLLM, TGI), prefix ``openai/`` (e.g. ``openai/Qwen/...``).
+        index_model (str, optional): Local mode only — LLM used to index
+            documents (structure and summaries). Defaults to the SDK
+            default (fast and cheap).
+        chat_model (str, optional): Local mode only — the model the chat
+            surfaces (``chat``, ``chat_completions``, ``responses``)
+            default to, exposed as ``client.chat_model``. Chat names
+            route through LiteLLM and mean what LiteLLM says they mean;
+            bare names are OpenAI-compatible shorthand, and
+            ``openai/Qwen/...`` is the form for an OpenAI-compatible
+            server that itself serves slashed model ids (vLLM, TGI).
+            Defaults to the SDK default (strong).
+        model (str, optional): Local mode only — one model for both roles:
+            sets the default for ``index_model`` and ``chat_model`` at
+            once. The role-specific arguments win over it. (Also the
+            0.2.8-era name for the indexing model — old configs keep
+            working unchanged.)
+        summary_model (str, optional): Local mode only — legacy: overrides
+            the model used for node summaries and document descriptions;
+            ``index_model`` covers this.
+        retrieve_model (str, optional): Local mode only — legacy name for
+            ``chat_model``.
         storage_path (str, optional): Local mode only — directory where
             indexed documents are stored. Defaults to ``./.pageindex``.
 
@@ -88,6 +107,8 @@ class PageIndexClient:
         self,
         api_key: Optional[str] = None,
         *,
+        index_model: Optional[str] = None,
+        chat_model: Optional[str] = None,
         model: Optional[str] = None,
         summary_model: Optional[str] = None,
         retrieve_model: Optional[str] = None,
@@ -98,9 +119,11 @@ class PageIndexClient:
                 "api_key is an empty string. Pass a real PageIndex API key for "
                 "cloud mode, or omit api_key entirely for local mode."
             )
+        model_args = {"index_model": index_model, "chat_model": chat_model,
+                      "model": model, "summary_model": summary_model,
+                      "retrieve_model": retrieve_model}
         if api_key is not None:
-            local_only = {"model": model, "summary_model": summary_model,
-                          "retrieve_model": retrieve_model, "storage_path": storage_path}
+            local_only = dict(model_args, storage_path=storage_path)
             passed = [name for name, value in local_only.items() if value is not None]
             if passed:
                 raise PageIndexAPIError(
@@ -113,23 +136,29 @@ class PageIndexClient:
             self._api = CloudAPI(self)
         else:
             from .utils import ConfigLoader
-            overrides = {key: value for key, value in
-                         {"model": model, "summary_model": summary_model,
-                          "retrieve_model": retrieve_model}.items()
+            overrides = {key: value for key, value in model_args.items()
                          if value}
             opt = ConfigLoader().load(overrides or None)
             self.model = opt.model
-            self.summary_model = getattr(opt, "summary_model", None) or opt.model
-            self.retrieve_model = _normalize_retrieve_model(
-                getattr(opt, "retrieve_model", None) or opt.model)
+            self.index_model = opt.index_model
+            self.summary_model = opt.summary_model
+            self.chat_model = _agents_sdk_model_name(opt.chat_model)
             self.storage_path = storage_path or ".pageindex"
             from .local_api import LocalAPI
             self._api = LocalAPI(
                 storage_path=self.storage_path,
                 model=self.model,
                 summary_model=self.summary_model,
-                retrieve_model=self.retrieve_model,
+                retrieve_model=self.chat_model,
             )
+            # LiteLLM's multi-second import would otherwise land on the
+            # first chat call; failures resurface there with real context.
+            threading.Thread(target=_preload_litellm, daemon=True).start()
+
+    @property
+    def retrieve_model(self):
+        """Legacy name for ``chat_model``."""
+        return self.chat_model
 
     # ---------- DOCUMENT SUBMISSION ----------
 
@@ -353,6 +382,7 @@ class PageIndexClient:
         doc_id: Optional[Union[str, list[str]]] = None,
         stream: bool = False,
         model: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> Union[str, Iterator[str]]:
         """
         Ask a question about your documents, get the answer.
@@ -371,14 +401,19 @@ class PageIndexClient:
                 Keep it identical across a conversation's calls.
             stream: Yield the answer as text chunks as it is produced.
             model: Local only — backend model name (defaults to
-                ``retrieve_model``).
+                ``chat_model``).
+            reasoning_effort: Local only — how hard the model thinks
+                (``"low"`` / ``"medium"`` / ``"high"``; what a backend
+                accepts is its own). Unset sends nothing — the model's
+                default behavior applies.
 
         Returns:
             - stream=False: the answer string
             - stream=True: iterator of text chunks
         """
         result = self.chat_completions(messages, stream=stream,
-                                       doc_id=doc_id, model=model)
+                                       doc_id=doc_id, model=model,
+                                       reasoning_effort=reasoning_effort)
         if stream:
             return cast(Iterator[str], result)
         envelope = cast(dict[str, Any], result)
@@ -394,20 +429,24 @@ class PageIndexClient:
         enable_citations: bool = False,
         model: Optional[str] = None,
         max_turns: Optional[int] = None,
+        top_p: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        reasoning_effort: Optional[str] = None,
+        extra_body: Optional[dict[str, Any]] = None,
     ) -> Union[dict[str, Any], Iterator[str], Iterator[dict[str, Any]]]:
         """
         PageIndex Chat Completions: document QA in one call.
 
         Cloud: the hosted chat endpoint. Local: a managed document-QA agent
-        run over the local tools against your own LLM backend's
-        /chat/completions (the OpenAI SDK's
-        usual env config — OPENAI_API_KEY, OPENAI_BASE_URL — selects the
-        backend, so any OpenAI-compatible server works; a ``/`` in the
-        model name means LiteLLM provider routing, so prefix ``openai/``
-        when the backend itself serves slashed ids, e.g.
-        ``openai/Qwen/...`` on vLLM; LiteLLM-routed Claude models —
-        Anthropic direct, Bedrock, Vertex — get the managed prompt
-        prefix cache-marked automatically). The non-stream
+        run over the local tools against your own LLM backend, routed
+        through LiteLLM — model names mean what LiteLLM says they mean.
+        Bare names are OpenAI-compatible shorthand (the OpenAI SDK's usual
+        env config — OPENAI_API_KEY, OPENAI_BASE_URL — selects the
+        backend, so any OpenAI-compatible server works; write
+        ``openai/Qwen/...`` when the server itself serves slashed ids),
+        provider-prefixed names — ``anthropic/…``, ``bedrock/…`` — reach
+        that provider, and LiteLLM-routed Claude models get the managed
+        prompt prefix cache-marked automatically. The non-stream
         response carries the final answer only; streaming yields the
         agent's visible text as it is produced, including narration before
         tool calls. ``finish_reason`` reports loop completion ("stop") —
@@ -434,8 +473,23 @@ class PageIndexClient:
             enable_citations: Cloud-only — local mode raises (citations need
                 block-level OCR data local mode does not store).
             model: Local only — backend model name (defaults to
-                ``retrieve_model``). The cloud endpoint selects its own.
+                ``chat_model``). The cloud endpoint selects its own.
             max_turns: Local only — cap on agent turns per call.
+            top_p: Local only — nucleus sampling, passed through to the
+                model.
+            max_tokens: Local only — per-call output cap, passed through;
+                it bounds each backend call in the agent loop (the way
+                max_turns bounds the loop), not the whole run.
+            reasoning_effort: Local only — passed through verbatim as
+                LiteLLM's ``reasoning_effort``; each provider maps it to
+                its own thinking control, and the values mean what the
+                backend says they mean. Unset sends nothing (the
+                backend's default applies).
+            extra_body: Local only — extra request fields beyond this
+                method's parameters, merged last so they win.
+                OpenAI-compatible backends take them verbatim in the
+                request body; LiteLLM-routed providers take them as
+                LiteLLM's own params (mapped or refused per provider).
 
         Returns:
             - stream=False: complete response dict ({'id', 'object', 'created',
@@ -456,12 +510,16 @@ class PageIndexClient:
                 self, messages, stream=stream, doc_id=doc_id,
                 temperature=temperature, stream_metadata=stream_metadata,
                 enable_citations=enable_citations, model=model,
-                max_turns=max_turns,
+                max_turns=max_turns, top_p=top_p, max_tokens=max_tokens,
+                reasoning_effort=reasoning_effort, extra_body=extra_body,
             )
-        if model is not None or max_turns is not None:
+        if (model is not None or max_turns is not None or top_p is not None
+                or max_tokens is not None or reasoning_effort is not None
+                or extra_body is not None):
             raise PageIndexAPIError(
-                "model and max_turns are local-mode parameters — the cloud "
-                "chat endpoint selects its own model."
+                "model, max_turns, top_p, max_tokens, reasoning_effort and "
+                "extra_body are local-mode parameters — the cloud chat "
+                "endpoint selects its own model."
             )
         return self._api.chat_completions(
             messages=messages, stream=stream, doc_id=doc_id,
@@ -479,6 +537,9 @@ class PageIndexClient:
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         max_turns: Optional[int] = None,
+        max_output_tokens: Optional[int] = None,
+        reasoning: Optional[dict[str, Any]] = None,
+        extra_body: Optional[dict[str, Any]] = None,
     ) -> Union[dict[str, Any], Iterator[dict[str, Any]]]:
         """
         Document QA over the OpenAI Responses protocol — the agentic surface.
@@ -502,7 +563,7 @@ class PageIndexClient:
         Args:
             input: A user message string, or a list of Responses input items
                 (round-trip prior ``items`` here).
-            model: Backend model name (defaults to ``retrieve_model``).
+            model: Backend model name (defaults to ``chat_model``).
             stream: Yield Responses stream events as dicts — one logical
                 response per call: per-turn backend lifecycle events are
                 collapsed, sequence numbers are reassigned monotonically,
@@ -517,6 +578,17 @@ class PageIndexClient:
             instructions: Appended to the managed system prompt.
             temperature / top_p: Passed through to the model.
             max_turns: Cap on agent turns per call.
+            max_output_tokens: Per-call output cap, passed through; it
+                bounds each backend call in the agent loop (the way
+                max_turns bounds the loop), not the whole run. Echoed in
+                the envelope.
+            reasoning: Responses reasoning options, forwarded verbatim
+                (e.g. ``{"effort": "low", "summary": "auto"}``) — the
+                values mean what the backend says they mean. Unset sends
+                nothing (the backend's default applies).
+            extra_body: Extra request fields beyond this method's
+                parameters, merged verbatim into the request body (last,
+                so they win).
         """
         from .cloud_api import CloudAPI
         if isinstance(self._api, CloudAPI):
@@ -528,7 +600,8 @@ class PageIndexClient:
         return run_responses(
             self, input, model=model, stream=stream, doc_id=doc_id,
             instructions=instructions, temperature=temperature, top_p=top_p,
-            max_turns=max_turns,
+            max_turns=max_turns, max_output_tokens=max_output_tokens,
+            reasoning=reasoning, extra_body=extra_body,
         )
 
     def messages(
@@ -544,6 +617,8 @@ class PageIndexClient:
         top_k: Optional[int] = None,
         stop_sequences: Optional[list[str]] = None,
         max_turns: Optional[int] = None,
+        thinking: Optional[dict[str, Any]] = None,
+        extra_body: Optional[dict[str, Any]] = None,
     ) -> Union[dict[str, Any], Iterator[Any]]:
         """
         Document QA over the Anthropic Messages protocol — Claude-native.
@@ -578,6 +653,11 @@ class PageIndexClient:
                 OpenAI surfaces). A truncated run reports
                 ``stop_reason: "tool_use"`` and its ``messages`` remain
                 valid for continuation.
+            thinking: Anthropic thinking configuration, forwarded verbatim
+                (e.g. ``{"type": "adaptive"}``) — the values and their
+                constraints are the backend's. Unset sends nothing.
+            extra_body: Extra request fields beyond this method's
+                parameters, merged verbatim into each request body.
         """
         from .cloud_api import CloudAPI
         if isinstance(self._api, CloudAPI):
@@ -591,6 +671,7 @@ class PageIndexClient:
             stream=stream, doc_id=doc_id, system=system,
             temperature=temperature, top_p=top_p, top_k=top_k,
             stop_sequences=stop_sequences, max_turns=max_turns,
+            thinking=thinking, extra_body=extra_body,
         )
 
     # ---------- DOCUMENT MANAGEMENT ----------
@@ -742,7 +823,7 @@ class PageIndexClient:
         Sugar over the explicit form — ``agent_instructions`` (with
         ``doc_id`` targeting) as the instructions and
         ``as_openai_tools`` as the tools; local clients also carry their
-        configured ``retrieve_model`` (cloud omits ``model`` so the
+        configured ``chat_model`` (cloud omits ``model`` so the
         framework default applies). To customize further, switch to
         those methods directly.
 
@@ -763,7 +844,7 @@ class PageIndexClient:
                                                      scoped=scope is not None),
             "tools": self.as_openai_tools(include_management, doc_id=scope),
         }
-        model = model or getattr(self, "retrieve_model", None)
+        model = model or getattr(self, "chat_model", None)
         if model:
             config["model"] = model
         return config
@@ -1020,10 +1101,13 @@ class PageIndexLocalClient(PageIndexClient):
     def __init__(
         self,
         *,
+        index_model: Optional[str] = None,
+        chat_model: Optional[str] = None,
         model: Optional[str] = None,
         summary_model: Optional[str] = None,
         retrieve_model: Optional[str] = None,
         storage_path: Optional[str] = None,
     ):
-        super().__init__(None, model=model, summary_model=summary_model,
+        super().__init__(None, index_model=index_model, chat_model=chat_model,
+                         model=model, summary_model=summary_model,
                          retrieve_model=retrieve_model, storage_path=storage_path)

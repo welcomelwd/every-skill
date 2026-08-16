@@ -1,0 +1,415 @@
+# Copyright 2026 The Kubernetes Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import logging
+import time
+from datetime import datetime, UTC
+from typing import List
+from kubernetes import client, config, watch
+from .exceptions import SandboxClaimFailedError, SandboxMetadataError, SandboxNotFoundError, SandboxTemplateNotFoundError, SandboxWarmPoolNotFoundError
+from .utils import is_valid_ip, is_valid_gateway_hostname
+from .constants import (
+    CLAIM_API_GROUP,
+    CLAIM_API_VERSION,
+    CLAIM_PLURAL_NAME,
+    TERMINAL_CLAIM_READY_REASONS,
+    CLIENT_REQUEST_TIME_ANNOTATION,
+    GATEWAY_API_GROUP,
+    GATEWAY_API_VERSION,
+    GATEWAY_PLURAL,
+    SANDBOX_API_GROUP,
+    SANDBOX_API_VERSION,
+    SANDBOX_PLURAL_NAME,
+    CREATED_BY_LABEL,
+)
+from .utils import select_pod_ip
+
+class K8sHelper:
+    """Helper class for Kubernetes API interactions."""
+
+    def __init__(self):
+        try:
+            config.load_incluster_config()
+        except config.ConfigException:
+            config.load_kube_config()
+        self.custom_objects_api = client.CustomObjectsApi()
+        self.core_v1_api = client.CoreV1Api()
+
+    def create_sandbox_claim(
+        self,
+        name: str,
+        warmpool: str,
+        namespace: str,
+        annotations: dict | None = None,
+        labels: dict | None = None,
+        lifecycle: dict | None = None,
+        volume_claim_templates: list[dict] | None = None,
+        pod_metadata: dict | None = None
+    ):
+        """
+        Creates a SandboxClaim custom resource.
+        
+        Args:
+            pod_metadata: Optional ``{"labels": {...}, "annotations": {...}}``
+                dict emitted as ``spec.additionalPodMetadata`` so the labels and
+                annotations propagate onto the running Sandbox Pod (as opposed to
+                ``labels``, which only land on the SandboxClaim object).
+        """
+        updated_annotations = dict(annotations) if annotations else {}
+        if CLIENT_REQUEST_TIME_ANNOTATION not in updated_annotations:
+            updated_annotations[CLIENT_REQUEST_TIME_ANNOTATION] = datetime.now(UTC).isoformat()
+
+        metadata = {
+            "name": name,
+            "annotations": updated_annotations,
+            "labels": {
+                **(labels or {}),
+                CREATED_BY_LABEL: "python-client",
+            }
+        }
+
+        spec = {
+            "warmPoolRef": {
+                "name": warmpool
+            }
+        }
+        if lifecycle:
+            spec["lifecycle"] = lifecycle
+        if volume_claim_templates:
+            spec["volumeClaimTemplates"] = volume_claim_templates
+        if pod_metadata:
+            spec["additionalPodMetadata"] = pod_metadata
+
+        manifest = {
+            "apiVersion": f"{CLAIM_API_GROUP}/{CLAIM_API_VERSION}",
+            "kind": "SandboxClaim",
+            "metadata": metadata,
+            "spec": spec,
+        }
+        logging.info(f"Creating SandboxClaim '{name}' in namespace '{namespace}' using warm pool '{warmpool}'...")
+        return self.custom_objects_api.create_namespaced_custom_object(
+            group=CLAIM_API_GROUP,
+            version=CLAIM_API_VERSION,
+            namespace=namespace,
+            plural=CLAIM_PLURAL_NAME,
+            body=manifest
+        )
+
+    def resolve_sandbox_name(self, claim_name: str, namespace: str, timeout: int, resource_version: str | None = None) -> str:
+        """Resolves the actual Sandbox name from the SandboxClaim status.
+        With warm pool adoption, the sandbox name may differ from the claim
+        name. This method watches the SandboxClaim until the sandbox name
+        appears in the claim's status, then returns it.
+
+        Args:
+            resource_version: Optional resourceVersion to start the watch
+                from (e.g. ``metadata.resourceVersion`` of the create
+                response). Defaults to ``"0"`` — see ``_watch_claim``.
+        """
+        return self._watch_claim(claim_name, namespace, timeout, require_ready=False,
+                                 resource_version=resource_version)
+
+    def wait_for_claim_ready(self, claim_name: str, namespace: str, timeout: int, resource_version: str | None = None) -> str:
+        """Watches the SandboxClaim until it is bound to a sandbox AND its
+        Ready condition is True, then returns the sandbox name.
+
+        This is the lowest-latency ready-wait: the claim controller writes
+        ``status.sandbox.name``, ``status.sandbox.podIPs`` and the forwarded
+        Ready condition in a single status update on warm-pool adoption, so a
+        single watch on the claim observes readiness without a second watch
+        on the Sandbox resource (the claim's Ready condition is a direct
+        forward of the Sandbox's Ready condition).
+
+        Args:
+            resource_version: Optional resourceVersion to start the watch
+                from (e.g. ``metadata.resourceVersion`` of the create
+                response). Defaults to ``"0"`` — see ``_watch_claim``.
+        """
+        return self._watch_claim(claim_name, namespace, timeout, require_ready=True,
+                                 resource_version=resource_version)
+
+    def _watch_claim(self, claim_name: str, namespace: str, timeout: int, require_ready: bool,
+                     resource_version: str | None = None) -> str:
+        """Shared SandboxClaim watch loop.
+
+        Returns the sandbox name once ``status.sandbox.name`` is populated;
+        when ``require_ready`` is set, additionally waits until the claim's
+        Ready condition is True.
+
+        The watch always starts from an explicit resourceVersion — the
+        claim's own (from the create response) when the caller has it, else
+        ``"0"`` — so the apiserver serves it from the watch cache. A watch
+        with UNSET resourceVersion forces a quorum etcd read to establish
+        initial state on every wait, which at high claim rates is pure
+        apiserver/etcd load on the latency path. If the supplied version has
+        been compacted away (410 Gone), the watch transparently restarts from
+        ``"0"`` (current state from the watch cache).
+        """
+        wait_target = "claim readiness" if require_ready else "sandbox name"
+        # Existing tests assert on the exact resolve-path message.
+        deleted_msg = (f"SandboxClaim '{claim_name}' was deleted while waiting for claim readiness"
+                       if require_ready else
+                       f"SandboxClaim '{claim_name}' was deleted while resolving sandbox name")
+        deadline = time.monotonic() + timeout
+        rv = resource_version or "0"
+        logging.info(f"Watching claim '{claim_name}' for {wait_target} (from resourceVersion={rv})...")
+        while True:
+            remaining = int(deadline - time.monotonic())
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"Could not resolve {wait_target} from claim "
+                    f"'{claim_name}' within {timeout} seconds.")
+            w = watch.Watch()
+            try:
+                event_iter = w.stream(
+                    func=self.custom_objects_api.list_namespaced_custom_object,
+                    namespace=namespace,
+                    group=CLAIM_API_GROUP,
+                    version=CLAIM_API_VERSION,
+                    plural=CLAIM_PLURAL_NAME,
+                    field_selector=f"metadata.name={claim_name}",
+                    resource_version=rv,
+                    timeout_seconds=remaining
+                )
+                for event in event_iter:
+                    if event is None:
+                        continue
+                    if event["type"] == "DELETED":
+                        w.stop()
+                        raise SandboxMetadataError(deleted_msg)
+                    if event["type"] in ["ADDED", "MODIFIED"]:
+                        claim_object = event['object']
+                        # Track the last-seen resourceVersion so a stream
+                        # restart resumes instead of replaying history.
+                        seen_rv = (claim_object.get('metadata') or {}).get('resourceVersion')
+                        if seen_rv:
+                            rv = seen_rv
+                        status = claim_object.get('status') or {}
+
+                        ready = False
+                        for cond in status.get('conditions', []):
+                            if (
+                                cond.get('type') == 'Ready'
+                                and cond.get('status') == 'False'
+                                and cond.get('reason') == 'TemplateNotFound'
+                            ):
+                                w.stop()
+                                raise SandboxTemplateNotFoundError(
+                                    f"SandboxTemplate requested does not exist: {cond.get('message', 'Template not found')}"
+                                )
+                            elif cond.get('reason') == 'WarmPoolNotFound':
+                                w.stop()
+                                raise SandboxWarmPoolNotFoundError(
+                                    f"SandboxWarmPool requested does not exist: {cond.get('message', 'WarmPool not found')}"
+                                )
+                            elif (
+                                cond.get('type') == 'Ready'
+                                and cond.get('status') == 'False'
+                                and cond.get('reason') in TERMINAL_CLAIM_READY_REASONS
+                            ):
+                                # The controller reported a failure it will not
+                                # retry; waiting out the timeout cannot succeed.
+                                w.stop()
+                                raise SandboxClaimFailedError(
+                                    f"SandboxClaim '{claim_name}' failed with terminal reason "
+                                    f"{cond.get('reason')}: {cond.get('message', '')}"
+                                )
+                            if cond.get('type') == 'Ready' and cond.get('status') == 'True':
+                                ready = True
+
+                        sandbox_status = status.get('sandbox', {})
+                        # Support both 'name' (standard) and 'Name' (legacy, before CRD rename in #440)
+                        name = sandbox_status.get('name', '') or sandbox_status.get('Name', '')
+                        if name and (ready or not require_ready):
+                            logging.info(
+                                f"Resolved sandbox name '{name}' from claim status"
+                                + (" (claim Ready)" if ready else ""))
+                            w.stop()
+                            return name
+            except client.ApiException as e:
+                if e.status == 410:
+                    # The requested resourceVersion was compacted away:
+                    # restart from the watch cache's current state.
+                    logging.info(
+                        f"Watch on claim '{claim_name}' expired (410 Gone at resourceVersion={rv}); "
+                        "restarting from current state")
+                    rv = "0"
+                    continue
+                raise
+
+    def wait_for_sandbox_ready(self, name: str, namespace: str, timeout: int) -> str | None:
+        """Waits for the Sandbox custom resource to have a 'Ready' status.
+
+        Returns the selected pod IP from the sandbox status when ready, or None if
+        no valid IP can be selected.
+        """
+        deadline = time.monotonic() + timeout
+        logging.info(f"Watching for Sandbox {name} to become ready...")
+        while True:
+            remaining = int(deadline - time.monotonic())
+            if remaining <= 0:
+                raise TimeoutError(f"Sandbox {name} did not become ready within {timeout} seconds.")
+            w = watch.Watch()
+            for event in w.stream(
+                func=self.custom_objects_api.list_namespaced_custom_object,
+                namespace=namespace,
+                group=SANDBOX_API_GROUP,
+                version=SANDBOX_API_VERSION,
+                plural=SANDBOX_PLURAL_NAME,
+                field_selector=f"metadata.name={name}",
+                timeout_seconds=remaining
+            ):
+                if event is None:
+                    continue
+                if event["type"] in ["ADDED", "MODIFIED"]:
+                    sandbox_object = event['object']
+                    status = sandbox_object.get('status') or {}
+                    conditions = status.get('conditions', [])
+                    for cond in conditions:
+                        if cond.get('type') == 'Ready' and cond.get('status') == 'True':
+                            logging.info(f"Sandbox {name} is ready.")
+                            w.stop()
+                            pod_ips = status.get('podIPs', [])
+                            return select_pod_ip(pod_ips)
+                elif event["type"] == "DELETED":
+                    logging.error(f"Sandbox {name} was deleted before becoming ready.")
+                    w.stop()
+                    raise SandboxNotFoundError(f"Sandbox {name} was deleted before becoming ready.")
+
+    def delete_sandbox_claim(self, name: str, namespace: str):
+        """Deletes a SandboxClaim custom resource."""
+        try:
+            self.custom_objects_api.delete_namespaced_custom_object(
+                group=CLAIM_API_GROUP,
+                version=CLAIM_API_VERSION,
+                namespace=namespace,
+                plural=CLAIM_PLURAL_NAME,
+                name=name
+            )
+            logging.info(f"Terminated SandboxClaim: {name}")
+        except client.ApiException as e:
+            if e.status != 404:
+                logging.error(f"Error terminating SandboxClaim {name}: {e}")
+                raise
+
+    def get_sandbox(self, name: str, namespace: str):
+        """Gets a Sandbox custom resource."""
+        try:
+            return self.custom_objects_api.get_namespaced_custom_object(
+                group=SANDBOX_API_GROUP,
+                version=SANDBOX_API_VERSION,
+                namespace=namespace,
+                plural=SANDBOX_PLURAL_NAME,
+                name=name
+            )
+        except client.ApiException as e:
+            if e.status == 404:
+                return None
+            raise
+
+    def patch_sandbox_claim(self, name: str, namespace: str, body: dict):
+        """Patches a SandboxClaim custom resource."""
+        return self.custom_objects_api.patch_namespaced_custom_object(
+            group=CLAIM_API_GROUP,
+            version=CLAIM_API_VERSION,
+            namespace=namespace,
+            plural=CLAIM_PLURAL_NAME,
+            name=name,
+            body=body
+        )
+
+    def get_sandbox_claim(self, name: str, namespace: str):
+        """Gets a SandboxClaim custom resource (or ``None`` if it doesn't exist)."""
+        try:
+            return self.custom_objects_api.get_namespaced_custom_object(
+                group=CLAIM_API_GROUP,
+                version=CLAIM_API_VERSION,
+                namespace=namespace,
+                plural=CLAIM_PLURAL_NAME,
+                name=name
+            )
+        except client.ApiException as e:
+            if e.status == 404:
+                return None
+            raise
+
+    def list_sandbox_claims(self, namespace: str, label_selector: str | None = None) -> List[str]:
+        """Lists all SandboxClaim custom resources in a namespace.
+
+        Args:
+            namespace: Kubernetes namespace to list claims in.
+            label_selector: Optional Kubernetes label selector string
+                (e.g. ``"app=myapp,env=prod"``). When set, only claims
+                matching the selector are returned.
+        """
+        try:
+            kwargs: dict = dict(
+                group=CLAIM_API_GROUP,
+                version=CLAIM_API_VERSION,
+                namespace=namespace,
+                plural=CLAIM_PLURAL_NAME,
+            )
+            if label_selector is not None:
+                kwargs["label_selector"] = label_selector
+            response = self.custom_objects_api.list_namespaced_custom_object(**kwargs)
+            return [
+                item.get("metadata", {}).get("name") 
+                for item in response.get("items", []) 
+                if item.get("metadata", {}).get("name")
+            ]
+        except client.ApiException as e:
+            logging.error(f"Error listing sandbox claims in namespace {namespace}: {e}")
+            raise
+
+    def wait_for_gateway_ip(self, gateway_name: str, namespace: str, timeout: int) -> str:
+        """Waits for the Gateway to be assigned an external IP."""
+        deadline = time.monotonic() + timeout
+        logging.info(f"Waiting for Gateway '{gateway_name}' in namespace '{namespace}'...")
+        while True:
+            remaining = int(deadline - time.monotonic())
+            if remaining <= 0:
+                raise TimeoutError(f"Gateway '{gateway_name}' did not get an IP.")
+            w = watch.Watch()
+            for event in w.stream(
+                func=self.custom_objects_api.list_namespaced_custom_object,
+                namespace=namespace,
+                group=GATEWAY_API_GROUP,
+                version=GATEWAY_API_VERSION,
+                plural=GATEWAY_PLURAL,
+                field_selector=f"metadata.name={gateway_name}",
+                timeout_seconds=remaining,
+            ):
+                if event is None:
+                    continue
+                if event["type"] in ["ADDED", "MODIFIED"]:
+                    gateway_object = event['object']
+                    status = gateway_object.get('status') or {}
+                    addresses = status.get('addresses', [])
+                    for address in addresses:
+                        if not isinstance(address, dict):
+                            continue
+                        ip_address = address.get('value')
+                        if not ip_address:
+                            continue
+                        
+                        if not is_valid_ip(ip_address) and not is_valid_gateway_hostname(ip_address):
+                            logging.warning(
+                                "Gateway address rejected because %r is neither a valid IP address nor a valid gateway hostname.",
+                                ip_address,
+                            )
+                            continue
+                        
+                        logging.info(f"Gateway ready. IP: {ip_address}")
+                        w.stop()
+                        return ip_address

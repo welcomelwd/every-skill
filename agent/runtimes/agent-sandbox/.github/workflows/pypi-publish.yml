@@ -1,0 +1,101 @@
+name: Publish Python 🐍 distribution 📦 to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Run Unit Tests 🧪
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.13"]
+    defaults:
+      run:
+        working-directory: clients/python/agentic-sandbox-client
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0 # Important: Fetches all history and tags for setuptools-scm
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Display Python version
+        run: python -c "import sys; print(sys.version)"
+
+      - name: Install dependencies (including tests)
+        run: python3 -m pip install ".[test]"
+
+      - name: Run Unit Tests
+        run: python3 -m pytest
+
+  build:
+    name: Build distribution 📦
+    needs: test
+
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/python/agentic-sandbox-client
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0 # Fetch full history and tags for setuptools-scm during build
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11"
+
+      - name: Install pypa/build and twine
+        run: >-
+          python3 -m pip install build==1.4.3 twine==6.2.0
+
+      - name: Build a binary wheel and a source tarball
+        run: python3 -m build
+
+      - name: Check distribution packages
+        run: python3 -m twine check dist/*
+
+      - name: Store the distribution packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: python-package-distributions
+          path: clients/python/agentic-sandbox-client/dist/
+
+  publish-to-pypi:
+    name: >-
+      Publish Python 🐍 distribution 📦 to PyPI
+    needs:
+      - build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/k8s-agent-sandbox
+    permissions:
+      id-token: write # IMPORTANT: mandatory for trusted publishing
+      contents: read
+
+    # Run if it is a push event
+    if: >-
+      (github.event_name == 'push')
+
+    steps:
+      - name: Download all the dists
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Publish distribution 📦 to PyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1

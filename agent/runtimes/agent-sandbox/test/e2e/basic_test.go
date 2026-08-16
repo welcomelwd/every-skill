@@ -1,0 +1,154 @@
+// Copyright 2025 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package e2e
+
+import (
+	"fmt"
+	"hash/fnv"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	sandboxv1beta1 "sigs.k8s.io/agent-sandbox/api/v1beta1"
+	"sigs.k8s.io/agent-sandbox/test/e2e/framework"
+	"sigs.k8s.io/agent-sandbox/test/e2e/framework/predicates"
+)
+
+// NameHash generates an FNV-1a hash from a string and returns
+// it as a fixed-length hexadecimal string.
+func NameHash(objectName string) string {
+	h := fnv.New32a()
+	h.Write([]byte(objectName))
+	hashValue := h.Sum32()
+
+	// Convert the uint32 to a hexadecimal string.
+	// This results in an 8-character string (e.g., "a5b3c2d1").
+	const hex = "0123456789abcdef"
+	var buf [8]byte
+	buf[0] = hex[(hashValue>>28)&0xf]
+	buf[1] = hex[(hashValue>>24)&0xf]
+	buf[2] = hex[(hashValue>>20)&0xf]
+	buf[3] = hex[(hashValue>>16)&0xf]
+	buf[4] = hex[(hashValue>>12)&0xf]
+	buf[5] = hex[(hashValue>>8)&0xf]
+	buf[6] = hex[(hashValue>>4)&0xf]
+	buf[7] = hex[hashValue&0xf]
+	return string(buf[:])
+}
+
+func simpleSandbox(ns string) *sandboxv1beta1.Sandbox {
+	sandboxObj := &sandboxv1beta1.Sandbox{}
+	sandboxObj.Name = "my-sandbox"
+	sandboxObj.Namespace = ns
+	sandboxObj.Spec.Service = new(true)
+	sandboxObj.Spec.PodTemplate = sandboxv1beta1.PodTemplate{
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{ // Use a simple pause container as a basic test
+					Name:  "pause",
+					Image: "registry.k8s.io/pause:3.10",
+				},
+			},
+		},
+		ObjectMeta: sandboxv1beta1.PodMetadata{
+			Annotations: map[string]string{"test-anno-key": "val-1"},
+			Labels:      map[string]string{"test-label-key": "val-2"},
+		},
+	}
+	return sandboxObj
+}
+
+func TestSimpleSandbox(t *testing.T) {
+	tc := framework.NewTestContext(t)
+
+	// Set up a namespace with unique name to avoid conflicts
+	ns := &corev1.Namespace{}
+	ns.Name = fmt.Sprintf("sandbox-basic-test-%d", time.Now().UnixNano())
+	require.NoError(t, tc.CreateWithCleanup(t.Context(), ns))
+	// Create a Sandbox Object
+	sandboxObj := simpleSandbox(ns.Name)
+	require.NoError(t, tc.CreateWithCleanup(t.Context(), sandboxObj))
+
+	nameHash := NameHash(sandboxObj.Name)
+	// Assert Sandbox object status reconciles as expected
+	p := []predicates.ObjectPredicate{
+		predicates.SandboxHasStatus(sandboxv1beta1.SandboxStatus{
+			Service:       "my-sandbox",
+			ServiceFQDN:   fmt.Sprintf("my-sandbox.%s.svc.cluster.local", ns.Name),
+			LabelSelector: "agents.x-k8s.io/sandbox-name-hash=" + nameHash,
+			Conditions: []metav1.Condition{
+				{
+					Type:               string(sandboxv1beta1.SandboxConditionSuspended),
+					Status:             metav1.ConditionFalse,
+					ObservedGeneration: 1,
+					Reason:             sandboxv1beta1.SandboxReasonNotSuspended,
+					Message:            "Sandbox is not suspended",
+				},
+				{
+					Type:               string(sandboxv1beta1.SandboxConditionPodScheduled),
+					Status:             metav1.ConditionTrue,
+					ObservedGeneration: 1,
+					Reason:             sandboxv1beta1.SandboxReasonPodScheduled,
+				},
+				{
+					Type:               "Ready",
+					Status:             metav1.ConditionTrue,
+					ObservedGeneration: 1,
+					Reason:             sandboxv1beta1.SandboxReasonDependenciesReady,
+					Message:            "Pod is Ready; Service Exists",
+				},
+			},
+		}),
+	}
+	require.NoError(t, tc.WaitForObject(t.Context(), sandboxObj, p...))
+	// Assert Pod object exists with expected fields
+	p = []predicates.ObjectPredicate{
+		predicates.HasAnnotation("test-anno-key", "val-1"),
+		predicates.HasLabel("test-label-key", "val-2"),
+		predicates.HasOwnerReferences([]metav1.OwnerReference{
+			{
+				APIVersion:         "agents.x-k8s.io/v1beta1",
+				BlockOwnerDeletion: new(true),
+				Controller:         new(true),
+				Kind:               "Sandbox",
+				Name:               "my-sandbox",
+				UID:                sandboxObj.UID,
+			},
+		}),
+	}
+	pod := &corev1.Pod{}
+	pod.Name = "my-sandbox"
+	pod.Namespace = ns.Name
+	tc.MustMatchPredicates(pod, p...)
+	// Assert Service object exists with expected fields
+	p = []predicates.ObjectPredicate{
+		predicates.HasOwnerReferences([]metav1.OwnerReference{
+			{
+				APIVersion:         "agents.x-k8s.io/v1beta1",
+				BlockOwnerDeletion: new(true),
+				Controller:         new(true),
+				Kind:               "Sandbox",
+				Name:               "my-sandbox",
+				UID:                sandboxObj.UID,
+			},
+		}),
+	}
+	service := &corev1.Service{}
+	service.Name = "my-sandbox"
+	service.Namespace = ns.Name
+	tc.MustMatchPredicates(service, p...)
+}

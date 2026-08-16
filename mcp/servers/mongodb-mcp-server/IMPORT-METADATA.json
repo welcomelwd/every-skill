@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "repository": "mongodb-js/mongodb-mcp-server",
+  "source_url": "https://github.com/mongodb-js/mongodb-mcp-server",
+  "ref": "main",
+  "resolved_commit": "b112cfbd9e1106e87f02c682f4a5e08f7a184126",
+  "category": "mcp",
+  "subcategory": "servers",
+  "slug": "mongodb-mcp-server",
+  "license": "Apache-2.0",
+  "source_date": null,
+  "imported_at": "2026-08-16T23:03:54+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 597,
+  "copied_bytes": 9073038,
+  "excluded_files": [
+    ".npmrc: sensitive filename",
+    "packaging/mcpb/icon.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

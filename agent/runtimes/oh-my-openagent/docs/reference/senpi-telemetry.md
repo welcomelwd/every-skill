@@ -53,7 +53,7 @@ The payloads carry only booleans, buckets, counters, and allowlisted enum values
 | `turn_completed` | `total_tokens` | `number` | - |
 | `turn_completed` | `turn_index` | `number` | - |
 | `skill_loaded` | `$session_id` | `string` | - |
-| `skill_loaded` | `skill_name` | `string` | `ast-grep`, `coding-agent-sessions`, `data-scientist`, `debugging`, `frontend`, `git-master`, `give-me-tips`, `hyperplan`, `init-deep`, `lsp-setup`, `onboarding`, `programming`, `refactor`, `remove-ai-slops`, `review-work`, `start-work`, `ultimate-browsing`, `ultrawork`, `ulw-loop`, `ulw-plan`, `ulw-research`, `visual-qa` |
+| `skill_loaded` | `skill_name` | `string` | `ast-grep`, `coding-agent-sessions`, `data-scientist`, `debugging`, `frontend`, `git-master`, `give-me-tips`, `hyperplan`, `init-deep`, `lsp-setup`, `mass-ulw`, `onboarding`, `programming`, `refactor`, `remove-ai-slops`, `review-work`, `start-work`, `ultimate-browsing`, `ultrawork`, `ulw-loop`, `ulw-plan`, `ulw-research`, `visual-qa` |
 | `delegation_started` | `$session_id` | `string` | - |
 | `delegation_started` | `background` | `boolean` | - |
 | `delegation_started` | `batch_size_bucket` | `string` | `1`, `2_4`, `5_plus` |
@@ -61,6 +61,22 @@ The payloads carry only booleans, buckets, counters, and allowlisted enum values
 | `delegation_started` | `name` | `string` | `visual-engineering`, `artistry`, `ultrabrain`, `deep`, `quick`, `unspecified-low`, `architect`, `unspecified-high`, `writing`, `explore`, `librarian`, `metis`, `momus`, `custom` |
 | `feature_used` | `$session_id` | `string` | - |
 | `feature_used` | `feature` | `string` | `goal_tool`, `team_create`, `memory_tool` |
+| `parallelism_summary` | `$session_id` | `string` | - |
+| `parallelism_summary` | `clock_anomalies` | `number` | - |
+| `parallelism_summary` | `dropped_calls` | `number` | - |
+| `parallelism_summary` | `eval_only_duration_ms` | `number` | - |
+| `parallelism_summary` | `eval_only_waves` | `number` | - |
+| `parallelism_summary` | `incomplete_calls` | `number` | - |
+| `parallelism_summary` | `measured_turn_duration_ms_total` | `number` | - |
+| `parallelism_summary` | `mixed_waves` | `number` | - |
+| `parallelism_summary` | `modeled_wallclock_saved_ms` | `number` | - |
+| `parallelism_summary` | `non_eval_joined_calls` | `number` | - |
+| `parallelism_summary` | `non_eval_saved_round_trips` | `number` | - |
+| `parallelism_summary` | `non_eval_wave_size_histogram` | `string` | - |
+| `parallelism_summary` | `non_eval_waves_multi` | `number` | - |
+| `parallelism_summary` | `non_eval_waves_total` | `number` | - |
+| `parallelism_summary` | `schema_kind` | `string` | `parallelism_v1` |
+| `parallelism_summary` | `upper_bound_saved_ms` | `number` | - |
 <!-- END GENERATED SCHEMA -->
 
 ### Reasoning tokens caveat

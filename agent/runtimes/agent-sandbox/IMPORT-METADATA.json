@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "repository": "kubernetes-sigs/agent-sandbox",
+  "source_url": "https://github.com/kubernetes-sigs/agent-sandbox",
+  "ref": "main",
+  "resolved_commit": "5f2699524aa3a9c23f9c1d8e4d62e50be3ebfa94",
+  "category": "agent",
+  "subcategory": "runtimes",
+  "slug": "agent-sandbox",
+  "license": "Apache-2.0",
+  "source_date": null,
+  "imported_at": "2026-08-16T23:03:54+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 1307,
+  "copied_bytes": 11372741,
+  "excluded_files": [
+    "examples/analytics-tool/imgs/analytics-output.png: binary content",
+    "examples/code-interpreter-agent-on-adk/example.png: binary content",
+    "examples/nono-sandbox/assets/nono.png: binary content",
+    "olm/config/manifests/icon.png: binary content",
+    "site/content/featured-background.webp: binary content",
+    "test/migration/testdata/v0.4.6/helm-v0.4.6.tar.gz: binary, archive, media, or generated artifact",
+    "test/stress/generate-report/static/metrics-explorer.js: binary content"
+  ],
+  "execution": "never run by this importer"
+}

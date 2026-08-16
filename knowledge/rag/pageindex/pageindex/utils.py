@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 import textwrap
 from datetime import datetime
 import time
@@ -18,6 +19,23 @@ import re
 
 # litellm is imported inside the functions that use it; eager import is slow
 # and fetches a remote model-cost map.
+
+
+def _repair_litellm_types() -> None:
+    """litellm 1.97.0's Message/Delta annotations carry nested forward refs
+    Python 3.10 cannot resolve (BerriAI/litellm#36384), so every completion
+    dies constructing its response. Rebuild them once with the defining
+    modules' names; no-op on 3.11+ and on fixed litellm releases."""
+    if sys.version_info >= (3, 11):
+        return
+    try:
+        import litellm.types.llms.openai as openai_types
+        import litellm.types.utils as litellm_types
+        namespace = {**vars(openai_types), **vars(litellm_types)}
+        litellm_types.Message.model_rebuild(_types_namespace=namespace)
+        litellm_types.Delta.model_rebuild(_types_namespace=namespace)
+    except Exception:
+        pass  # best-effort: a failed repair leaves litellm's own error
 
 # Backward compatibility: support CHATGPT_API_KEY as alias for OPENAI_API_KEY
 if not os.getenv("OPENAI_API_KEY") and os.getenv("CHATGPT_API_KEY"):
@@ -81,6 +99,7 @@ def llm_completion(model, prompt, chat_history=None, return_finish_reason=False)
                 )
             else:
                 import litellm
+                _repair_litellm_types()
                 response = litellm.completion(
                     model=model,
                     messages=messages,
@@ -127,6 +146,7 @@ async def llm_acompletion(model, prompt):
                 )
             else:
                 import litellm
+                _repair_litellm_types()
                 response = await litellm.acompletion(
                     model=model,
                     messages=messages,
@@ -954,6 +974,29 @@ def page_level_thinning(structure, thinning_threshold_node_num=20, min_pages_for
     return structure
 
 
+DEFAULT_INDEX_MODEL = "gpt-5.6-luna"
+DEFAULT_CHAT_MODEL = "gpt-5.6-sol"
+
+# Each of the five names has shipped in a release; all stay accepted.
+_MODEL_KEYS = ("model", "summary_model", "retrieve_model",
+               "index_model", "chat_model")
+
+
+def _resolve_models(merged: dict) -> None:
+    """Fill the model roles from whichever names were given: new names win
+    over old, specific over general, ``model`` sets every role, and the
+    built-in defaults close each chain. Idempotent, so already-resolved
+    config objects can round-trip through load()."""
+    given = {key: merged.get(key) for key in _MODEL_KEYS}
+    index = given["index_model"] or given["model"] or DEFAULT_INDEX_MODEL
+    summary = (given["summary_model"] or given["index_model"]
+               or given["model"] or DEFAULT_INDEX_MODEL)
+    chat = (given["chat_model"] or given["retrieve_model"]
+            or given["model"] or DEFAULT_CHAT_MODEL)
+    merged.update(model=index, index_model=index, summary_model=summary,
+                  chat_model=chat, retrieve_model=chat)
+
+
 class ConfigLoader:
     def __init__(self, default_path: str = None):
         if default_path is None:
@@ -966,7 +1009,8 @@ class ConfigLoader:
             return yaml.safe_load(f) or {}
 
     def _validate_keys(self, user_dict):
-        unknown_keys = set(user_dict) - set(self._default_dict)
+        unknown_keys = (set(user_dict) - set(self._default_dict)
+                        - set(_MODEL_KEYS))
         if unknown_keys:
             raise ValueError(f"Unknown config keys: {unknown_keys}")
 
@@ -985,6 +1029,7 @@ class ConfigLoader:
 
         self._validate_keys(user_dict)
         merged = {**self._default_dict, **user_dict}
+        _resolve_models(merged)
         return config(**merged)
 
 def create_node_mapping(tree, include_page_ranges=False, max_page=None):

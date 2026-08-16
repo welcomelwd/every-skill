@@ -1,0 +1,46 @@
+dist
+node_modules
+
+.idea
+.vscode/mcp.json
+.github/prompts/*
+
+# Environment variables
+.env
+
+# Sensitive
+state.json
+
+tests/tmp
+coverage
+
+# Generated assets by accuracy runs
+.accuracy
+
+temp
+.DS_Store
+
+# Development tool files
+.yalc
+yalc.lock
+
+# .mcpb build artifacts
+mcpb-build/
+dist-mcpb/
+
+# Eval CI report (sticky PR comment)
+.eval/
+
+# SBOM artifacts
+.sbom/
+
+# pnpm local store
+.pnpm-store/
+
+# Braintrust
+.bt
+# Generated eval pre-bundle for Braintrust
+tests/eval/dist
+
+# Personal agent configs
+CLAUDE.local.md

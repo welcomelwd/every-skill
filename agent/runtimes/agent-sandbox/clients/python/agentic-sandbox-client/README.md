@@ -1,0 +1,384 @@
+# Agentic Sandbox Client Python
+
+This Python client provides a simple, high-level interface for creating and interacting with
+sandboxes managed by the Agent Sandbox controller. It's designed to be used as a context manager,
+ensuring that sandbox resources are properly created and cleaned up.
+
+It supports a **scalable, cloud-native architecture** using Kubernetes Gateways and a specialized
+Router, while maintaining a convenient **Developer Mode** for local testing.
+
+## Architecture
+
+The client operates in four modes:
+
+1.  **Production (Gateway Mode):** Traffic flows from the Client -> Cloud Load Balancer (Gateway)
+    -> Router Service -> Sandbox Pod. This supports high-scale deployments.
+2.  **Development (Tunnel Mode):** Traffic flows from Localhost -> `kubectl port-forward` -> Router
+    Service -> Sandbox Pod. This requires no public IP and works on Kind/Minikube.
+3.  **In-Cluster Mode:** The client connects **directly to the sandbox pod** (via pod IP or cluster
+    DNS), bypassing the router. Intended for workloads running inside the cluster.
+4.  **Advanced / Internal Mode:** The client connects directly to a provided `api_url`, bypassing
+    discovery. This is useful when connecting through a custom domain or a manually specified router URL.
+
+## Prerequisites
+
+- A running Kubernetes cluster.
+- The [**Agent Sandbox Controller**](https://github.com/kubernetes-sigs/agent-sandbox?tab=readme-ov-file#installation) installed.
+- `kubectl` installed and configured locally.
+
+## Setup: Deploying the Router
+
+Before using the client, you must deploy the `sandbox-router`. This is a one-time setup.
+
+1.  **Build and Push the Router Image:**
+
+    For both Gateway Mode and Tunnel Mode, follow the instructions in [sandbox-router](sandbox-router/README.md)
+    to build, push, and apply the router image and resources.
+
+2.  **Create a Sandbox Warmpool:**
+
+    Ensure a `SandboxWarmPool` exists in your target namespace. The test_client.py
+    uses the [python-runtime-sandbox](../../../examples/python-runtime-sandbox/) image.
+
+    ```bash
+    kubectl apply -f python-sandbox-warmpool.yaml
+    ```
+
+## Installation
+
+1.  **Create a virtual environment:**
+
+    ```bash
+    python3 -m venv .venv
+    source .venv/bin/activate
+    ```
+
+2.  **Install Agent Sandbox Client**
+    
+
+    * **Option 1: Install from PyPI (Recommended):**
+
+        The package is available on [PyPI](https://pypi.org/project/k8s-agent-sandbox/) as `k8s-agent-sandbox`.
+
+        ```bash
+        pip install k8s-agent-sandbox
+        ```
+
+        If you are using [tracing with GCP](GCP.md#tracing-with-open-telemetry-and-google-cloud-trace), install with the optional tracing dependencies:
+
+        ```bash
+        pip install "k8s-agent-sandbox[tracing]"
+        ```
+
+
+    * **Option 2: Install from source via git:**
+
+        ```bash
+        # Replace "main" with a specific version tag (e.g., "v0.1.0") from
+        # https://github.com/kubernetes-sigs/agent-sandbox/releases to pin a version tag.
+        export VERSION="main"
+
+        pip install "git+https://github.com/kubernetes-sigs/agent-sandbox.git@${VERSION}#subdirectory=clients/python/agentic-sandbox-client"
+        ```
+
+        **Note**: This package uses `setuptools-scm` for dynamic versioning. For Option 2 and Option 3, when installing locally, you may notice the version increment if your local repository has uncommitted changes or is ahead of the last tagged release. This is expected behavior to ensure unique versioning during development.
+
+    * **Option 3: Install from source in editable mode:**
+
+        If you have not already done so, first clone this repository:
+
+        ```bash
+        cd ~
+        git clone https://github.com/kubernetes-sigs/agent-sandbox.git
+        cd agent-sandbox/clients/python/agentic-sandbox-client
+        ```
+
+        And then install the agentic-sandbox-client into your activated .venv:
+
+        ```bash
+        pip install -e .
+        ```
+
+        If you are using [tracing with GCP](GCP.md#tracing-with-open-telemetry-and-google-cloud-trace),
+        install with the optional tracing dependencies:
+
+        ```bash
+        pip install -e ".[tracing]"
+        ```
+
+## Usage Examples
+
+### 1. Production Mode (GKE Gateway)
+
+Use this when running against a real cluster with a public Gateway IP. The client automatically
+discovers the Gateway.
+
+```python
+from k8s_agent_sandbox import SandboxClient
+from k8s_agent_sandbox.models import SandboxGatewayConnectionConfig
+
+# Connect via the GKE Gateway
+client = SandboxClient(
+    connection_config=SandboxGatewayConnectionConfig(
+        gateway_name="external-http-gateway",  # Name of the Gateway resource
+    )
+)
+
+sandbox = client.create_sandbox(warmpool="python-sandbox-warmpool", namespace="default")
+try:
+    print(sandbox.commands.run("echo 'Hello from Cloud!'").stdout)
+finally:
+    sandbox.terminate()
+```
+
+### 2. Developer Mode (Local Tunnel)
+
+Use this for local development or CI. The client automatically opens a secure tunnel to the
+Router Service using `kubectl`.
+
+```python
+from k8s_agent_sandbox import SandboxClient
+from k8s_agent_sandbox.models import SandboxLocalTunnelConnectionConfig
+
+# Automatically tunnels to svc/sandbox-router-svc
+client = SandboxClient(
+    connection_config=SandboxLocalTunnelConnectionConfig()
+)
+
+sandbox = client.create_sandbox(warmpool="python-sandbox-warmpool", namespace="default")
+try:
+    print(sandbox.commands.run("echo 'Hello from Local!'").stdout)
+finally:
+    sandbox.terminate()
+```
+
+### 3. In-Cluster Mode (Direct Pod Connection)
+
+Use this when the client runs **inside the cluster** (for example, another pod in the same cluster).
+The client connects **directly to the sandbox runtime pod**, bypassing the sandbox router.
+
+The client first uses the pod IP reported in the Sandbox status. If the pod IP is not available
+(for example, before status is populated or when running against an older controller), it falls
+back to the stable cluster DNS endpoint:
+`http://{sandbox_id}.{namespace}.svc.cluster.local:{server_port}`.
+
+```python
+from k8s_agent_sandbox import SandboxClient
+from k8s_agent_sandbox.models import SandboxInClusterConnectionConfig
+
+connection_config = SandboxInClusterConnectionConfig()
+
+client = SandboxClient(connection_config=connection_config)
+
+sandbox = client.create_sandbox(warmpool="python-sandbox-warmpool", namespace="default")
+try:
+    print(sandbox.commands.run("echo 'Hello from in-cluster!'").stdout)
+finally:
+    sandbox.terminate()
+```
+
+### 4. Advanced / Internal Mode
+
+Use `SandboxDirectConnectionConfig` to bypass discovery entirely. Useful for:
+
+- **Internal Agents:** Running inside the cluster (e.g. router Service DNS).
+- **Custom Domains:** Connecting via HTTPS (e.g., `https://sandbox.example.com`).
+
+```python
+from k8s_agent_sandbox import SandboxClient
+from k8s_agent_sandbox.models import SandboxDirectConnectionConfig
+
+client = SandboxClient(
+    connection_config=SandboxDirectConnectionConfig(
+       api_url="http://sandbox-router-svc.agent-sandbox-system.svc.cluster.local:8080"
+    )
+)
+
+sandbox = client.create_sandbox(warmpool="python-sandbox-warmpool", namespace="default")
+try:
+    sandbox.commands.run("ls -la")
+finally:
+    sandbox.terminate()
+```
+
+### 5. Custom Ports
+
+If your sandbox runtime listens on a port other than 8888 (e.g., a Node.js app on 3000), specify `server_port`.
+
+```python
+from k8s_agent_sandbox import SandboxClient
+from k8s_agent_sandbox.models import SandboxLocalTunnelConnectionConfig
+
+client = SandboxClient(
+    connection_config=SandboxLocalTunnelConnectionConfig(server_port=3000)
+)
+
+sandbox = client.create_sandbox(warmpool="node-sandbox-warmpool", namespace="default")
+```
+
+### 6. Async Client
+
+For async applications (FastAPI, aiohttp, async agent orchestrators), use the `AsyncSandboxClient`.
+Install the async extras first:
+
+```bash
+pip install k8s-agent-sandbox[async]
+```
+
+The async client requires an explicit connection config — `SandboxLocalTunnelConnectionConfig`
+is not supported because it relies on a synchronous `kubectl port-forward` subprocess. Use
+`SandboxGatewayConnectionConfig`, `SandboxDirectConnectionConfig`, or
+`SandboxInClusterConnectionConfig` instead.
+
+**Direct connection (explicit URL, e.g. router service):**
+
+```python
+import asyncio
+from k8s_agent_sandbox import AsyncSandboxClient
+from k8s_agent_sandbox.models import SandboxDirectConnectionConfig
+
+async def main():
+    config = SandboxDirectConnectionConfig(
+        api_url="http://sandbox-router-svc.agent-sandbox-system.svc.cluster.local:8080"
+    )
+
+    async with AsyncSandboxClient(connection_config=config) as client:
+        sandbox = await client.create_sandbox(
+            warmpool="python-sandbox-warmpool",
+            namespace="default",
+        )
+        result = await sandbox.commands.run("echo 'Hello from async!'")
+        print(result.stdout)
+
+asyncio.run(main())
+```
+
+**In-cluster (direct to sandbox pod; default: cluster DNS):**
+
+```python
+import asyncio
+from k8s_agent_sandbox import AsyncSandboxClient
+from k8s_agent_sandbox.models import SandboxInClusterConnectionConfig
+
+async def main():
+    config = SandboxInClusterConnectionConfig()  # default: cluster DNS
+
+    async with AsyncSandboxClient(connection_config=config) as client:
+        sandbox = await client.create_sandbox(
+            warmpool="python-sandbox-warmpool",
+            namespace="default",
+        )
+        result = await sandbox.commands.run("echo 'Hello from async!'")
+        print(result.stdout)
+
+asyncio.run(main())
+```
+
+### 7. Labels and Pod Metadata
+
+`create_sandbox` lets you attach metadata at two different levels:
+
+- `labels`: Kubernetes labels on the **SandboxClaim object** itself
+  (`SandboxClaim.metadata.labels`). Useful for selecting/listing claims.
+- `pod_labels` / `pod_annotations`: labels and annotations stamped onto the
+  running Sandbox **Pod** via `spec.additionalPodMetadata`. Because they live on
+  the Pod, the workload can read them from inside the sandbox through the
+  [Downward API](https://kubernetes.io/docs/concepts/workloads/pods/downward-api/)
+  (for example, to stamp a tenant or client identifier and reject requests that
+  don't belong to it).
+
+```python
+sandbox = client.create_sandbox(
+    warmpool="python-sandbox-warmpool",
+    namespace="default",
+    labels={"team": "platform"},            # on the SandboxClaim object
+    pod_labels={"client-id": "tenant-a"},   # on the running Pod
+    pod_annotations={"owner": "tenant-a"},  # on the running Pod
+)
+```
+
+`pod_labels` are validated with the same Kubernetes label rules as `labels`. The
+same parameters are available on `AsyncSandboxClient.create_sandbox`.
+
+Behavioral notes:
+
+- A `pod_label` / `pod_annotation` whose key already exists on the warmpool
+  template with a different value is rejected by the controller's "No
+  Overrides" rule, and the reconcile errors.
+- Client-side validation only checks RFC-1123 label syntax. The controller's
+  domain allow-list and system-label restrictions are enforced server-side and
+  are not replicated client-side.
+
+### 8. Custom Volume Claim Templates
+
+You can dynamically request persistent volumes to be attached to your Sandbox Pod by specifying `volume_claim_templates`. This allows the sandbox to mount custom PersistentVolumeClaims (PVCs).
+
+```python
+sandbox = client.create_sandbox(
+    warmpool="python-sandbox-warmpool",
+    namespace="default",
+    volume_claim_templates=[
+        {
+            "metadata": {
+                "name": "my-volume",
+            },
+            "spec": {
+                "accessModes": ["ReadWriteOnce"],
+                "resources": {
+                    "requests": {
+                        "storage": "1Gi",
+                    },
+                },
+            },
+        }
+    ],
+)
+```
+
+The volume claim templates are validated against the warmpool template's policy and rules (e.g., whether custom volume claims are allowed or if overrides are permitted).
+
+### 9. Startup Latency: How the SDK Waits for Readiness
+
+`create_sandbox()` is fully **watch-based** — it never polls the Kubernetes
+API on an interval, so there is no poll-interval latency added on top of the
+controller's own claim-to-Ready time.
+
+The wait is a **single watch on the SandboxClaim**. The claim controller
+publishes the bound sandbox name (`status.sandbox.name`), the pod IPs
+(`status.sandbox.podIPs`) and the forwarded `Ready` condition in one status
+update when it adopts a warm-pool sandbox, so the first watch event that
+carries the sandbox name normally also carries `Ready=True` and
+`create_sandbox()` returns immediately. On a cold start (no warm sandbox
+available, or `env`/`volume_claim_templates` set, which force cold starts)
+the same watch simply keeps streaming claim updates until the forwarded
+`Ready` condition flips to `True`.
+
+Latency guidance:
+
+- **Do not poll** `Sandbox`/`SandboxClaim` objects with `get_*` calls in a
+  loop to detect readiness; a poll interval of `T` adds an average of `T/2`
+  (uniformly distributed 0..`T`) on top of the controller latency. Use
+  `create_sandbox()` / the claim `Ready` condition watch.
+- `sandbox_ready_timeout` (default 180s) bounds the whole wait; the watch
+  returns as soon as the claim is Ready, the timeout only caps the worst case.
+- The Kubernetes client reuses a single authenticated connection pool for
+  the watch, so no extra TLS handshakes occur on the ready path.
+- With the local-tunnel connection mode, the first request additionally pays
+  for the `kubectl port-forward` startup; the SDK probes the local port every
+  50ms while it comes up. Gateway/in-cluster modes do not have this step.
+
+## Testing
+
+A test script is included to verify the full lifecycle (Creation -> Execution -> File I/O -> Cleanup).
+
+### Run in Dev Mode:
+
+```bash
+python test_client.py --namespace default
+```
+
+### Run in Production Mode:
+
+```bash
+python test_client.py --gateway-name external-http-gateway
+```

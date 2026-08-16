@@ -1,7 +1,7 @@
 import { backendScopeKey, type ConnectionState, type GatewayEvent, resolveGatewayWsUrl } from '@hermes/shared'
 import { atom } from 'nanostores'
 
-import { HermesGateway } from '@/hermes'
+import { HermesGateway, setApiRequestConnection } from '@/hermes'
 import { reconnectBackoffDelayMs } from '@/lib/reconnect-backoff'
 import { markNativeNotifyBaseline } from '@/store/notify-baseline'
 import { setConnection, setGatewayState } from '@/store/session'
@@ -142,6 +142,22 @@ export function activeGateway(): HermesGateway | null {
   return g.secondaries.get(g.activeKey)?.gateway ?? null
 }
 
+/**
+ * The registry connection serving the gateway the user is currently looking
+ * at — null for the local/legacy primary path and for profile-keyed (local)
+ * secondaries. Event consumers pair this with the event's own `connectionId`
+ * tag so "from the active profile" really means "from the active SOURCE":
+ * two connected gateways can both expose a 'default' profile, and a bare
+ * profile comparison attributed gateway B's 'default' activity to gateway A.
+ */
+export function activeGatewayConnectionId(): null | string {
+  if (g.activeKey === g.primaryProfile) {
+    return null
+  }
+
+  return g.secondaries.get(g.activeKey)?.connectionId ?? null
+}
+
 // Mirror a backend's connection state into the global composer state, but only
 // when that backend is the one the user is currently looking at. Lets the
 // composer reflect the active profile's socket without a background reconnect
@@ -167,6 +183,11 @@ function setActive(profile: string): void {
   const gateway = activeGateway()
   g.$gateway.set(gateway)
   setGatewayState(gateway?.connectionState ?? 'closed')
+  // Push the active scope's registry connection into the hermes module (null
+  // for the local pool) so connection-building WS calls (pluginSocket) resolve
+  // through the same source of truth every activation path maintains here —
+  // registry-agent activations included, not just profile switches.
+  setApiRequestConnection(activeGatewayConnectionId())
 }
 
 function clearTimer(entry: Secondary): void {
@@ -235,8 +256,18 @@ async function reconnectSecondary(entry: Secondary): Promise<void> {
   try {
     await openSecondary(entry)
     entry.reconnectAttempt = 0
-  } catch {
-    // Transport failure → fall through to the backoff below.
+  } catch (error) {
+    // The registry no longer knows this connection (removed while we were
+    // backing off). Retrying forever can never succeed — fail-stop: dispose
+    // the entry and evict it instead of an infinite 15s-cap retry loop.
+    if (entry.connectionId && isMissingConnectionError(error)) {
+      entry.reconnecting = false
+      disposeSecondary(entry)
+      g.secondaries.delete(entry.scope)
+
+      return
+    }
+    // Other transport failure → fall through to the backoff below.
   } finally {
     entry.reconnecting = false
 
@@ -244,6 +275,15 @@ async function reconnectSecondary(entry: Secondary): Promise<void> {
       scheduleReconnect(entry)
     }
   }
+}
+
+// Electron's getConnectionFor rejects with `No connection with id "…"` when
+// the registry entry is gone. That is a permanent condition for the scoped
+// socket, unlike transient transport errors.
+function isMissingConnectionError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '')
+
+  return message.includes('No connection with id')
 }
 
 function createSecondary(profile: string, connectionId: null | string = null): Secondary {
@@ -505,15 +545,17 @@ function restoreActiveToPrimaryIfEvicted(): void {
   }
 }
 
-// Close + evict secondaries whose profile is neither active nor in `keep`
-// (profiles with a running / needs-input session). Bounds cost to live work.
-// `keep` carries PROFILE names (session ownership is profile-keyed), so a
-// registry-scoped entry survives when ITS profile has live work — matching on
-// the composite key alone would prune every non-local socket the moment the
-// user looks away.
+// Close + evict secondaries whose scope is neither active nor in `keep`
+// (scopes with a running / needs-input session). Bounds cost to live work.
+// `keep` carries PROFILE names for local/legacy entries and composite
+// backendScopeKey(connectionId, profile) scopes for registry-sourced live
+// work. A registry-scoped entry matches ONLY on its composite key: every
+// source exposes a 'default' profile, so matching a non-local entry on the
+// bare profile name kept gateway B's 'default' socket alive off gateway A's
+// 'default' activity (and vice versa) — cross-connection attribution.
 export function pruneSecondaryGateways(keep: Set<string>): void {
   for (const [key, entry] of [...g.secondaries]) {
-    if (key === g.activeKey || keep.has(key) || keep.has(entry.profile)) {
+    if (key === g.activeKey || keep.has(key) || (!entry.connectionId && keep.has(entry.profile))) {
       continue
     }
 
@@ -531,6 +573,39 @@ export function closeSecondaryGateways(): void {
 
   g.secondaries.clear()
   restoreActiveToPrimaryIfEvicted()
+}
+
+// Registry lifecycle: a connection was removed or materially edited. Dispose
+// every secondary scoped to it (a removed remote/cloud source has no local
+// process to die, so without this its WebSocket stays open streaming ghost
+// events). With `redial` (the edit case) each disposed profile is re-dialed
+// through the normal open path so the fresh socket targets the NEW endpoint;
+// the active scope re-activates so the foreground keeps painting.
+export function disposeSecondariesForConnection(connectionId: string, opts: { redial?: boolean } = {}): void {
+  const id = String(connectionId || '').trim()
+
+  if (!id) {
+    return
+  }
+
+  for (const [key, entry] of [...g.secondaries]) {
+    if (entry.connectionId !== id) {
+      continue
+    }
+
+    const wasActive = key === g.activeKey
+
+    disposeSecondary(entry)
+    g.secondaries.delete(key)
+
+    if (opts.redial) {
+      const reopen = wasActive
+        ? ensureGatewayForAgent(entry.connectionId, entry.profile)
+        : openGatewayForAgent(entry.connectionId, entry.profile)
+
+      void reopen.catch(() => undefined)
+    }
+  }
 }
 
 // Self-accept so editing this module (or a fan-out that lands here) is an

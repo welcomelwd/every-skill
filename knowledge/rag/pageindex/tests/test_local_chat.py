@@ -271,6 +271,19 @@ def test_cloud_guards():
     cloud = PageIndexCloudClient(api_key="pi-test-key")
     with pytest.raises(PageIndexAPIError, match="local-mode parameters"):
         cloud.chat_completions([{"role": "user", "content": "x"}], model="m")
+    with pytest.raises(PageIndexAPIError, match="local-mode"):
+        cloud.chat_completions([{"role": "user", "content": "x"}],
+                               reasoning_effort="low")
+    with pytest.raises(PageIndexAPIError, match="local-mode"):
+        cloud.chat_completions([{"role": "user", "content": "x"}],
+                               extra_body={"service_tier": "auto"})
+    with pytest.raises(PageIndexAPIError, match="local-mode"):
+        cloud.chat_completions([{"role": "user", "content": "x"}], top_p=0.9)
+    with pytest.raises(PageIndexAPIError, match="local-mode"):
+        cloud.chat_completions([{"role": "user", "content": "x"}],
+                               max_tokens=256)
+    with pytest.raises(PageIndexAPIError, match="local-mode"):
+        cloud.chat("x", reasoning_effort="low")
     with pytest.raises(PageIndexAPIError, match="not available on PageIndex "
                                                 "cloud yet"):
         cloud.responses("x")
@@ -354,6 +367,9 @@ def test_cache_marker_reaches_the_anthropic_wire(client, store_path,
         "hi", model="anthropic/claude-3-5-sonnet-20240620")
     assert "/v1/messages" in captured["url"]
     assert '"cache_control"' in json.dumps(captured["body"])
+    # The OpenAI cache-routing hint must not leak here: LiteLLM plants
+    # extra_body as a literal field, and Anthropic rejects unknown fields.
+    assert "extra_body" not in json.dumps(captured["body"])
     assert result["choices"][0]["message"]["content"] == "ok"
 
 
@@ -387,6 +403,28 @@ def test_chat_multi_turn_history(client, store_path, fake_model):
     ]
     assert client.chat(history) == "Chapter 4 covers pears"
     assert fake.inputs[0][-3:] == history
+
+
+@needs_agents
+def test_chat_reasoning_effort_reaches_the_engine(client, store_path,
+                                                  fake_model, monkeypatch):
+    """The business door's one thinking knob rides chat_completions'
+    channel unchanged; unset sends nothing."""
+    seen = {}
+    real = local_chat._openai_agent
+
+    def spy(*args, **kwargs):
+        agent = real(*args, **kwargs)
+        seen["settings"] = agent.model_settings
+        return agent
+
+    monkeypatch.setattr(local_chat, "_openai_agent", spy)
+    fake_model([[_msg_item("ok")]])
+    client.chat("q", reasoning_effort="low")
+    assert seen["settings"].extra_args["reasoning_effort"] == "low"
+    fake_model([[_msg_item("ok")]])
+    client.chat("q")
+    assert seen["settings"].extra_args is None
 
 
 def test_chat_cloud_unwraps_envelope(monkeypatch):
@@ -478,13 +516,14 @@ def test_doc_id_conversations_get_distinct_cache_keys(client, store_path,
     under one prompt_cache_key."""
     seed_doc(store_path, "pi-a", "report.pdf")
     keys = []
-    real = local_chat._run_kwargs
+    real = local_chat._conversation_cache_key
 
-    def spy(max_turns, group_id):
-        keys.append(group_id)
-        return real(max_turns, group_id)
+    def spy(model_name, instructions, items):
+        key = real(model_name, instructions, items)
+        keys.append(key)
+        return key
 
-    monkeypatch.setattr(local_chat, "_run_kwargs", spy)
+    monkeypatch.setattr(local_chat, "_conversation_cache_key", spy)
 
     fake_model([[_msg_item("a")]])
     result = client.responses("What is the CAGR?", doc_id="pi-a")
@@ -831,26 +870,163 @@ def test_responses_envelope_fields_and_cache_group(client, store_path,
     assert result["tool_choice"] == "auto"
 
 
-def test_conversation_group_id_stable_per_conversation():
-    """Cache-routing key: openai-agents hashes group_id into the OpenAI
-    prompt_cache_key. A conversation's continuations must share one key
-    (same model/instructions/first item), and unrelated conversations must
-    not pool under it."""
+def test_sol_class_refusal_names_its_exits():
+    """The chatcmpl+tools-while-reasoning 400 is a lane problem, not a
+    retry problem — the wrapped error must name every exit."""
+    err = local_chat._model_backend_error(Exception(
+        "Error code: 400 - Function tools with reasoning_effort are not "
+        "supported for gpt-5.6-sol in /v1/chat/completions."))
+    assert "responses()" in str(err) and "litellm" in str(err)
+    assert "pass reasoning_effort" in str(err)
+    plain = local_chat._model_backend_error(Exception("rate limited"))
+    assert "responses()" not in str(plain)
+
+
+def test_conversation_cache_key_stable_per_conversation():
+    """Cache-routing key, sent as the OpenAI prompt_cache_key. A
+    conversation's continuations must share one key (same model /
+    instructions / first item), and unrelated conversations must not pool
+    under it."""
     turn1 = [{"role": "user", "content": "q"}]
     continuation = turn1 + [{"role": "assistant", "content": "a"},
                             {"role": "user", "content": "and?"}]
-    key = local_chat._conversation_group_id("m", "sys", turn1)
-    assert key == local_chat._conversation_group_id("m", "sys", continuation)
-    assert key != local_chat._conversation_group_id(
+    key = local_chat._conversation_cache_key("m", "sys", turn1)
+    assert key == local_chat._conversation_cache_key("m", "sys", continuation)
+    assert key != local_chat._conversation_cache_key(
         "m", "sys", [{"role": "user", "content": "other"}])
-    assert key != local_chat._conversation_group_id("m2", "sys", turn1)
-    assert key != local_chat._conversation_group_id("m", "sys2", turn1)
+    assert key != local_chat._conversation_cache_key("m2", "sys", turn1)
+    assert key != local_chat._conversation_cache_key("m", "sys2", turn1)
 
 
 @needs_agents
-def test_run_kwargs_sets_conversation_group_id():
-    key = "pageindex-test"
-    assert (local_chat._run_kwargs(None, key)["run_config"].group_id == key)
+def test_agent_carries_prompt_cache_key_in_extra_body(monkeypatch):
+    """The key must reach the wire: openai-agents 0.20 dropped the
+    RunConfig.group_id -> prompt_cache_key derivation, so the agent's
+    ModelSettings.extra_body is the delivery channel. OpenAI destinations
+    only — prompt_cache_key is OpenAI's routing hint, and LiteLLM plants
+    extra_body as a literal field in other providers' bodies (Anthropic
+    rejects unknown fields); Claude routes keep their cache_control marker
+    in extra_args instead."""
+    monkeypatch.setattr(local_chat, "_openai_model", lambda *a: None)
+    monkeypatch.setattr("pageindex.integrations.openai_agents.build_openai_tools",
+                        lambda *a, **k: [])
+    agent = local_chat._openai_agent(
+        None, "chat", "anthropic/claude-x", "sys", None, None,
+        doc_ids=None, cache_key="pageindex-k1")
+    settings = agent.model_settings
+    assert settings.extra_body is None
+    assert "cache_control_injection_points" in settings.extra_args
+    for name in ("gpt-test", "openai/gpt-test", "litellm/openai/gpt-test"):
+        agent = local_chat._openai_agent(
+            None, "chat", name, "sys", None, None,
+            doc_ids=None, cache_key="pageindex-k2")
+        assert agent.model_settings.extra_body == {
+            "prompt_cache_key": "pageindex-k2"}, name
+        assert agent.model_settings.extra_args is None
+
+
+@needs_agents
+def test_reasoning_passthrough_reaches_each_engine(monkeypatch):
+    """Per-door native reasoning, forwarded verbatim. The chat door's
+    effort rides extra_args — LiteLLM's own top-level kwarg on every
+    supported openai-agents version, and the channel admits values outside
+    the OpenAI enum ("none") — coexisting with the Claude cache marker.
+    The responses door's object rides ModelSettings.reasoning, which the
+    Responses model forwards verbatim. Unset sends nothing."""
+    pytest.importorskip("litellm")
+    monkeypatch.setattr(local_chat, "_openai_model", lambda *a: None)
+    monkeypatch.setattr("pageindex.integrations.openai_agents.build_openai_tools",
+                        lambda *a, **k: [])
+    agent = local_chat._openai_agent(None, "chat", "gpt-test", "sys",
+                                     None, None, reasoning_effort="low")
+    assert agent.model_settings.extra_args == {"reasoning_effort": "low"}
+    assert agent.model_settings.reasoning is None
+    agent = local_chat._openai_agent(None, "chat", "anthropic/claude-x",
+                                     "sys", None, None,
+                                     reasoning_effort="none")
+    assert agent.model_settings.extra_args["reasoning_effort"] == "none"
+    assert "cache_control_injection_points" in agent.model_settings.extra_args
+    agent = local_chat._openai_agent(None, "responses", "gpt-test", "sys",
+                                     None, None,
+                                     reasoning={"effort": "low",
+                                                "summary": "auto"})
+    # ModelSettings coerces the dict into the typed openai Reasoning object.
+    assert agent.model_settings.reasoning.effort == "low"
+    assert agent.model_settings.reasoning.summary == "auto"
+    assert agent.model_settings.extra_args is None
+    agent = local_chat._openai_agent(None, "chat", "gpt-test", "sys",
+                                     None, None)
+    assert agent.model_settings.reasoning is None
+    assert agent.model_settings.extra_args is None
+
+
+@needs_agents
+def test_extra_body_passthrough_reaches_each_engine(monkeypatch):
+    """Caller extras merge last — over the cache key on OpenAI
+    destinations — and ride LiteLLM's own kwargs elsewhere, where
+    extra_body would plant literal fields providers reject."""
+    pytest.importorskip("litellm")
+    monkeypatch.setattr(local_chat, "_openai_model", lambda *a: None)
+    monkeypatch.setattr("pageindex.integrations.openai_agents.build_openai_tools",
+                        lambda *a, **k: [])
+    agent = local_chat._openai_agent(None, "chat", "gpt-test", "sys",
+                                     None, None, cache_key="pageindex-k",
+                                     extra_body={"logit_bias": {"1": 5},
+                                                 "prompt_cache_key": "mine"})
+    assert agent.model_settings.extra_body == {
+        "prompt_cache_key": "mine", "logit_bias": {"1": 5}}
+    assert agent.model_settings.extra_args is None
+    agent = local_chat._openai_agent(None, "chat", "anthropic/claude-x",
+                                     "sys", None, None,
+                                     reasoning_effort="low",
+                                     extra_body={"top_k": 20})
+    assert agent.model_settings.extra_body is None
+    assert agent.model_settings.extra_args["top_k"] == 20
+    assert agent.model_settings.extra_args["reasoning_effort"] == "low"
+    assert "cache_control_injection_points" in agent.model_settings.extra_args
+    agent = local_chat._openai_agent(None, "responses", "gpt-test", "sys",
+                                     None, None,
+                                     extra_body={"service_tier": "flex"})
+    assert agent.model_settings.extra_body == {"service_tier": "flex"}
+
+
+@needs_agents
+def test_sampling_knobs_ride_model_settings(client, store_path, fake_model,
+                                            monkeypatch):
+    """top_p/max_tokens ride ModelSettings fields — the one channel clean
+    on every lane (extra_body collides with LitellmModel's explicit
+    kwargs). responses' max_output_tokens is the same field's wire name,
+    echoed in the envelope."""
+    seed_doc(store_path, "pi-a", "report.pdf")
+    seen = {}
+    real = local_chat._openai_agent
+
+    def spy(*args, **kwargs):
+        agent = real(*args, **kwargs)
+        seen[args[1]] = agent.model_settings
+        return agent
+
+    monkeypatch.setattr(local_chat, "_openai_agent", spy)
+    fake_model([[_msg_item("ok")]])
+    client.chat_completions("q", top_p=0.9, max_tokens=256)
+    assert seen["chat"].top_p == 0.9
+    assert seen["chat"].max_tokens == 256
+    fake_model([[_msg_item("ok")]])
+    result = client.responses("q", max_output_tokens=321)
+    assert seen["responses"].max_tokens == 321
+    assert result["max_output_tokens"] == 321
+    fake_model([[_msg_item("ok")]])
+    assert client.responses("q")["max_output_tokens"] is None
+
+
+@needs_agents
+def test_responses_envelope_echoes_reasoning(client, store_path, fake_model):
+    seed_doc(store_path, "pi-a", "report.pdf")
+    fake_model([[_msg_item("ok")]])
+    result = client.responses("q", reasoning={"effort": "low"})
+    assert result["reasoning"] == {"effort": "low"}
+    fake_model([[_msg_item("ok")]])
+    assert client.responses("q")["reasoning"] is None
 
 
 @needs_agents
@@ -902,21 +1078,26 @@ def test_empty_doc_id_is_an_empty_allowlist(client, store_path, fake_model):
 
 @needs_agents
 def test_openai_model_resolves_provider_prefixes():
-    """retrieve_model arrives normalized (litellm/<provider>/<model>); the
-    OpenAI SDK must never see that prefix as a wire model name."""
+    """The chat lane is LiteLLM, full stop — model names mean what LiteLLM
+    says they mean, bare names are the openai/ shorthand, and routing
+    prefixes never leak as wire model names. responses stays OpenAI-SDK
+    native."""
     pytest.importorskip("litellm")
     from agents.extensions.models.litellm_model import LitellmModel
-    from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
     from agents.models.openai_responses import OpenAIResponsesModel
 
     model = local_chat._openai_model("chat", "litellm/anthropic/claude-x")
     assert isinstance(model, LitellmModel) and model.model == "anthropic/claude-x"
     model = local_chat._openai_model("chat", "anthropic/claude-x")
     assert isinstance(model, LitellmModel) and model.model == "anthropic/claude-x"
+    model = local_chat._openai_model("chat", "gpt-5.2")
+    assert isinstance(model, LitellmModel) and model.model == "openai/gpt-5.2"
     model = local_chat._openai_model("chat", "openai/gpt-5.2")
-    assert isinstance(model, OpenAIChatCompletionsModel)
-    assert str(model.model) == "gpt-5.2"
+    assert isinstance(model, LitellmModel) and model.model == "openai/gpt-5.2"
     model = local_chat._openai_model("responses", "gpt-5.2")
+    assert isinstance(model, OpenAIResponsesModel)
+    assert str(model.model) == "gpt-5.2"
+    model = local_chat._openai_model("responses", "openai/gpt-5.2")
     assert isinstance(model, OpenAIResponsesModel)
     assert str(model.model) == "gpt-5.2"
 
@@ -982,8 +1163,9 @@ def test_chat_missing_openai_key_fails_loud(monkeypatch):
     """A missing backend credential surfaces as the SDK's own error type,
     like every other precondition on the chat surfaces."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    with pytest.raises(PageIndexAPIError, match="OPENAI_API_KEY"):
-        local_chat._openai_model("chat", "gpt-4o")
+    for name in ("gpt-4o", "openai/gpt-4o"):
+        with pytest.raises(PageIndexAPIError, match="OPENAI_API_KEY"):
+            local_chat._openai_model("chat", name)
 
 
 @needs_agents
@@ -1260,6 +1442,36 @@ def test_messages_max_tokens_default_resolves_per_model(client, fake_anthropic):
         _anthropic_message([{"type": "text", "text": "ok"}], "end_turn")])
     client.messages("q", model="claude-3-opus-20240229", max_tokens=1234)
     assert calls[0]["max_tokens"] == 1234
+
+
+@needs_anthropic
+def test_messages_thinking_passes_through(client, fake_anthropic):
+    """Anthropic-native thinking config, forwarded verbatim; unset sends
+    nothing so the backend default applies."""
+    calls = fake_anthropic([
+        _anthropic_message([{"type": "text", "text": "ok"}], "end_turn")])
+    client.messages("q", model="claude-sonnet-4-5",
+                    thinking={"type": "adaptive"})
+    assert calls[0]["thinking"] == {"type": "adaptive"}
+    calls = fake_anthropic([
+        _anthropic_message([{"type": "text", "text": "ok"}], "end_turn")])
+    client.messages("q", model="claude-sonnet-4-5")
+    assert "thinking" not in calls[0]
+
+
+@needs_anthropic
+def test_messages_extra_body_merges_into_the_wire_body(client, fake_anthropic):
+    """The anthropic SDK merges extra_body keys into the request JSON —
+    asserted on the captured wire body, not the SDK call."""
+    calls = fake_anthropic([
+        _anthropic_message([{"type": "text", "text": "ok"}], "end_turn")])
+    client.messages("q", model="claude-sonnet-4-5",
+                    extra_body={"service_tier": "auto"})
+    assert calls[0]["service_tier"] == "auto"
+    calls = fake_anthropic([
+        _anthropic_message([{"type": "text", "text": "ok"}], "end_turn")])
+    client.messages("q", model="claude-sonnet-4-5")
+    assert "service_tier" not in calls[0]
 
 
 @needs_anthropic

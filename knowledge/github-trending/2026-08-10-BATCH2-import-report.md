@@ -4,23 +4,23 @@
 
 | 项目 | 状态 | 目录或原因 |
 | --- | --- | --- |
-| `VoltAgent/awesome-agent-skills` | up-to-date | `skill/development/awesome-agent-skills @ b729ad068c38bb186ca8ad09cc12223b3e9e250c` |
-| `sickn33/agentic-awesome-skills` | updated | `skill/development/agentic-awesome-skills @ 4d8fd151a638696354a6e2a49f0e934fadb02525 (2145 files, 26214399 bytes); excluded 18607 files` |
-| `shanraisshan/claude-code-best-practice` | updated | `skill/development/claude-code-best-practice @ d89f096ef6c3a7762219fec4e937cad85ddf3200 (199 files, 4136389 bytes); excluded 255 files` |
-| `FlorianBruniaux/claude-code-ultimate-guide` | up-to-date | `skill/development/claude-code-ultimate-guide @ bea6bf629c5ab01d1bd0e56f5546359332a59106` |
+| `VoltAgent/awesome-agent-skills` | updated | `skill/development/awesome-agent-skills @ 3b4e590b801eff240bfdc68e047b08f5198694d2 (4 files, 247229 bytes)` |
+| `sickn33/agentic-awesome-skills` | updated | `skill/development/agentic-awesome-skills @ 286166a20de1bc66b78696f98e753e0e0b168e4e (2145 files, 26214399 bytes); excluded 18607 files` |
+| `shanraisshan/claude-code-best-practice` | up-to-date | `skill/development/claude-code-best-practice @ d89f096ef6c3a7762219fec4e937cad85ddf3200` |
+| `FlorianBruniaux/claude-code-ultimate-guide` | updated | `skill/development/claude-code-ultimate-guide @ 0bc25f0a0627ee9ae0dcb2ef63857cb70e5a5c09 (1054 files, 15683899 bytes); excluded 10 files` |
 | `alirezarezvani/claude-skills` | up-to-date | `skill/development/claude-skills @ aa8d778811a557a2c28ccadda4cf3d0bd028a4cc` |
-| `f/prompts.chat` | updated | `skill/development/prompts-chat @ e5127f71f5dcd7ebceb768c648231dc956eab3ae (859 files, 26214340 bytes); excluded 676 files` |
+| `f/prompts.chat` | up-to-date | `skill/development/prompts-chat @ e5127f71f5dcd7ebceb768c648231dc956eab3ae` |
 | `mufeedvh/code2prompt` | up-to-date | `skill/development/code2prompt @ ab4fa06f6fdb9d65c6e713480ba149f8c3fca489` |
 | `skills/secure-code-game` | up-to-date | `skill/security/secure-code-game @ 1f4f94e76c7d05753722b056ca756944bedd458c` |
 | `Imbad0202/academic-research-skills` | up-to-date | `skill/research/academic-research-skills @ 6837b4dfeaabd5a6da886e199b44ae7b52e8b931` |
 | `NirDiamant/Prompt_Engineering` | up-to-date | `skill/research/prompt-engineering @ 083437e06982a87cb9f0f7092c49767845867a15` |
-| `n8n-io/n8n` | updated | `mcp/servers/n8n @ 68b47c70f79e42495ef854dc20f77dbf024e1f9b (3924 files, 26214399 bytes); excluded 22779 files` |
+| `n8n-io/n8n` | updated | `mcp/servers/n8n @ 972bb640f9d892c591948decde9efbbd5ddd4ed0 (3925 files, 26214400 bytes); excluded 22784 files` |
 | `tadata-org/fastapi_mcp` | up-to-date | `mcp/servers/fastapi-mcp @ e5cad13cabfc725bbcb047e526816d887d96da62` |
 | `AgentDeskAI/browser-tools-mcp` | up-to-date | `mcp/servers/browser-tools-mcp @ 99acee8d02f12f6e64dc7f33608bb34427ce90c7` |
 | `BrowserMCP/mcp` | up-to-date | `mcp/servers/browsermcp-mcp @ 9db12f2b4f61294f0bc11708986abc47db539d6c` |
 | `Klavis-AI/klavis` | up-to-date | `mcp/servers/klavis @ 45c9f7da83d1cf43f7429b96f9c8e8153542ea1e` |
 | `czlonkowski/n8n-mcp` | up-to-date | `mcp/tools/n8n-mcp @ 8ec71c8a541b3756fc3795257a4e63fc7b750fae` |
-| `maximhq/bifrost` | updated | `mcp/tools/bifrost @ e1045c07eb81bab18df2243f3f421f48450848ff (1988 files, 26214400 bytes); excluded 2322 files` |
+| `maximhq/bifrost` | up-to-date | `mcp/tools/bifrost @ e1045c07eb81bab18df2243f3f421f48450848ff` |
 | `getsentry/XcodeBuildMCP` | up-to-date | `mcp/tools/xcodebuildmcp @ e6ef59b49b44012c824f0a0de261c96142e37390` |
 | `MinishLab/semble` | up-to-date | `mcp/tools/semble @ 921849164e2632dd4f0e1c1370f82cfe15ed6d6c` |
 | `punkpeye/awesome-mcp-servers` | up-to-date | `mcp/resources/awesome-mcp-servers @ cbcdf8f7700cfe4c0ef9aeb232f64aeebe8a184c` |

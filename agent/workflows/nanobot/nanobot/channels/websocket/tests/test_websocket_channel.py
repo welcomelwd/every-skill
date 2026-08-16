@@ -6,7 +6,7 @@ import time
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -1000,6 +1000,200 @@ async def test_webui_mutations_preserve_request_and_response_order(bus: MagicMoc
         "request-first",
         "request-second",
     ]
+
+
+@pytest.mark.asyncio
+async def test_webui_request_survives_disconnect_and_preserves_reconnect_order(
+    bus: MagicMock,
+) -> None:
+    channel = _ch(bus)
+    first_conn = AsyncMock()
+    retry_conn = AsyncMock()
+    first_conn.send.side_effect = ConnectionClosed(Close(1006, ""), Close(1006, ""), True)
+    channel._webui_connections.update({first_conn, retry_conn})
+    started = asyncio.Event()
+    release = asyncio.Event()
+    dispatch_order: list[str] = []
+
+    async def mutate(_connection: object, action: str, _payload: dict[str, Any]) -> Any:
+        dispatch_order.append(action)
+        if action == "automation.run":
+            started.set()
+            await release.wait()
+        return _http_json_response({"action": action})
+
+    channel.gateway.http.dispatch_webui_mutation = AsyncMock(side_effect=mutate)
+    envelope = {
+        "type": "webui_request",
+        "request_id": "request-retry",
+        "action": "automation.run",
+        "payload": {"id": "daily-summary"},
+    }
+    queued_envelope = {
+        "type": "webui_request",
+        "request_id": "request-queued",
+        "action": "automation.update",
+        "payload": {"id": "daily-summary"},
+    }
+
+    await channel._dispatch_envelope(first_conn, "webui-client", envelope)
+    await started.wait()
+    await channel._dispatch_envelope(first_conn, "webui-client", queued_envelope)
+    assert dispatch_order == ["automation.run"]
+
+    await channel._cleanup_connection(first_conn)
+    assert first_conn not in channel._webui_connections
+    await channel._dispatch_envelope(retry_conn, "webui-client", envelope)
+    await channel._dispatch_envelope(retry_conn, "webui-client", queued_envelope)
+    await channel._dispatch_envelope(
+        retry_conn,
+        "webui-client",
+        {
+            "type": "webui_request",
+            "request_id": "request-next",
+            "action": "automation.delete",
+            "payload": {"id": "daily-summary"},
+        },
+    )
+    await asyncio.sleep(0)
+    assert dispatch_order == ["automation.run"]
+
+    pending = tuple(channel._webui_request_tasks.values())
+    release.set()
+    await asyncio.gather(*pending)
+
+    assert dispatch_order == ["automation.run", "automation.update", "automation.delete"]
+    responses = [json.loads(call.args[0]) for call in retry_conn.send.await_args_list]
+    assert [response["request_id"] for response in responses] == [
+        "request-retry",
+        "request-queued",
+        "request-next",
+    ]
+    assert first_conn not in channel._webui_request_locks
+
+
+@pytest.mark.asyncio
+async def test_webui_request_replays_completed_result_after_reconnect(bus: MagicMock) -> None:
+    channel = _ch(bus)
+    first_conn = AsyncMock()
+    retry_conn = AsyncMock()
+    channel._webui_connections.update({first_conn, retry_conn})
+    channel.gateway.http.dispatch_webui_mutation = AsyncMock(
+        return_value=_http_json_response({"installed": True})
+    )
+    envelope = {
+        "type": "webui_request",
+        "request_id": "request-completed",
+        "action": "skill.install",
+        "payload": {"skill": "demo"},
+    }
+
+    await channel._dispatch_envelope(first_conn, "webui-client", envelope)
+    await asyncio.gather(*tuple(channel._webui_request_tasks.values()))
+    await channel._dispatch_envelope(retry_conn, "webui-client", envelope)
+    await asyncio.gather(*tuple(channel._webui_request_tasks.values()))
+
+    channel.gateway.http.dispatch_webui_mutation.assert_awaited_once()
+    assert json.loads(retry_conn.send.await_args.args[0]) == {
+        "event": "webui_response",
+        "request_id": "request-completed",
+        "ok": True,
+        "result": {"installed": True},
+    }
+
+
+@pytest.mark.asyncio
+async def test_webui_request_rejects_request_id_reuse_with_different_payload(
+    bus: MagicMock,
+) -> None:
+    channel = _ch(bus)
+    first_conn = AsyncMock()
+    retry_conn = AsyncMock()
+    channel._webui_connections.update({first_conn, retry_conn})
+    channel.gateway.http.dispatch_webui_mutation = AsyncMock(
+        return_value=_http_json_response({"ran": True})
+    )
+
+    await channel._dispatch_envelope(
+        first_conn,
+        "webui-client",
+        {
+            "type": "webui_request",
+            "request_id": "request-conflict",
+            "action": "automation.run",
+            "payload": {"id": "job-a"},
+        },
+    )
+    await asyncio.gather(*tuple(channel._webui_request_tasks.values()))
+    await channel._dispatch_envelope(
+        retry_conn,
+        "webui-client",
+        {
+            "type": "webui_request",
+            "request_id": "request-conflict",
+            "action": "automation.run",
+            "payload": {"id": "job-b"},
+        },
+    )
+
+    channel.gateway.http.dispatch_webui_mutation.assert_awaited_once()
+    assert json.loads(retry_conn.send.await_args.args[0]) == {
+        "event": "webui_response",
+        "request_id": "request-conflict",
+        "ok": False,
+        "error": {
+            "status": 409,
+            "message": "request_id was already used for a different WebUI mutation",
+        },
+    }
+
+
+def test_webui_request_cache_prunes_expired_completed_but_keeps_pending(
+    bus: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import nanobot.channels.websocket.runtime as websocket_module
+
+    channel = _ch(bus)
+    now = 1_000.0
+    monkeypatch.setattr(websocket_module, "time", SimpleNamespace(monotonic=lambda: now))
+    operations = cast(dict[str, Any], channel._webui_request_operations)
+    operations["pending"] = SimpleNamespace(completed_at=None)
+    operations["expired"] = SimpleNamespace(
+        completed_at=now - websocket_module._WEBUI_REQUEST_CACHE_TTL_S
+    )
+    operations["fresh"] = SimpleNamespace(completed_at=now - 1)
+
+    channel._prune_webui_request_operations()
+
+    assert "pending" in operations
+    assert "expired" not in operations
+    assert "fresh" in operations
+
+
+def test_webui_request_cache_prunes_oldest_completed_at_capacity(
+    bus: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import nanobot.channels.websocket.runtime as websocket_module
+
+    channel = _ch(bus)
+    now = 1_000.0
+    monkeypatch.setattr(websocket_module, "time", SimpleNamespace(monotonic=lambda: now))
+    operations = cast(dict[str, Any], channel._webui_request_operations)
+    operations["pending"] = SimpleNamespace(completed_at=None)
+    for index in range(websocket_module._WEBUI_REQUEST_CACHE_MAX + 1):
+        operations[f"completed-{index}"] = SimpleNamespace(
+            completed_at=now - 1 + index / 1_000
+        )
+
+    channel._prune_webui_request_operations()
+
+    assert "pending" in operations
+    assert "completed-0" not in operations
+    assert "completed-1" in operations
+    completed = [operation for operation in operations.values() if operation.completed_at is not None]
+    assert len(completed) == websocket_module._WEBUI_REQUEST_CACHE_MAX
 
 
 @pytest.mark.asyncio

@@ -6,5 +6,5 @@
 | --- | --- | --- |
 | `github/spec-kit` | up-to-date | `skill/development/spec-kit @ bf88c9f9a82fa370c7a7257aa2b3cf10b457b65c` |
 | `microsoft/mcp` | up-to-date | `mcp/servers/microsoft-mcp @ 51acc4eb2721807000e19c9193c983b0f48af7aa` |
-| `NousResearch/hermes-agent` | updated | `agent/runtimes/hermes-agent @ be38224b49f015cc8dc1d7ae4762be85d19ea97a (2810 files, 26214390 bytes); excluded 6584 files` |
+| `NousResearch/hermes-agent` | updated | `agent/runtimes/hermes-agent @ 298f6621080ebf9721e487d39b1fa7e5f4aa4ab4 (2813 files, 26214396 bytes); excluded 6603 files` |
 | `unslothai/unsloth` | up-to-date | `knowledge/tools/unsloth @ 203007d19051dcd2ae33876786d117c99f6b0368` |

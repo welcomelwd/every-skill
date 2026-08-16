@@ -1,0 +1,138 @@
+# Copyright 2026 The Kubernetes Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import logging
+import urllib.parse
+
+from k8s_agent_sandbox.async_connector import AsyncSandboxConnector
+from k8s_agent_sandbox.files.filesystem import Filesystem
+from k8s_agent_sandbox.models import FileEntry
+from k8s_agent_sandbox.trace_manager import async_trace_span, trace
+
+
+class AsyncFilesystem:
+    """
+    Handles async file operations within the sandbox.
+    """
+
+    def __init__(self, connector: AsyncSandboxConnector, tracer, trace_service_name: str):
+        self.connector = connector
+        self.tracer = tracer
+        self.trace_service_name = trace_service_name
+
+    @async_trace_span("write")
+    async def write(
+        self,
+        path: str, content: bytes | str,
+        timeout: int = 60,
+        allow_unsafe_paths: bool = False,
+    ):
+        span = trace.get_current_span()
+        if span.is_recording():
+            span.set_attribute("sandbox.file.path", path)
+            span.set_attribute("sandbox.file.size", len(content))
+
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+
+        # Use the same hardened sanitizer as the sync twin — rejects
+        # empty / bare-'.', embedded NUL and ASCII control characters,
+        # and any '..' segment after normalisation. os.path.basename
+        # alone is not sufficient: basename("foo\x00../etc/passwd")
+        # returns the string unchanged, and the NUL truncates at the
+        # runtime's C layer.
+        if not allow_unsafe_paths:
+            path = Filesystem._safe_upload_path(path)
+        files_payload = {"file": (path, content)}
+        await self.connector.send_request(
+            "POST", "upload", files=files_payload, timeout=timeout
+        )
+        logging.info(f"File '{path}' uploaded successfully.")
+
+    @async_trace_span("read")
+    async def read(
+        self,
+        path: str,
+        timeout: int = 60,
+        allow_unsafe_paths: bool = False,
+    ) -> bytes:
+        span = trace.get_current_span()
+        if span.is_recording():
+            span.set_attribute("sandbox.file.path", path)
+
+        if not allow_unsafe_paths:
+            path = Filesystem._safe_upload_path(path)
+        encoded_path = urllib.parse.quote(path, safe="")
+        response = await self.connector.send_request(
+            "GET", f"download/{encoded_path}", timeout=timeout
+        )
+        content = response.content
+
+        if span.is_recording():
+            span.set_attribute("sandbox.file.size", len(content))
+
+        return content
+
+    @async_trace_span("list")
+    async def list(self, path: str, timeout: int = 60) -> list[FileEntry]:
+        span = trace.get_current_span()
+        if span.is_recording():
+            span.set_attribute("sandbox.file.path", path)
+        encoded_path = urllib.parse.quote(path, safe="")
+        response = await self.connector.send_request(
+            "GET", f"list/{encoded_path}", timeout=timeout
+        )
+
+        try:
+            entries = response.json()
+        except ValueError as e:
+            raise RuntimeError(
+                f"Failed to decode JSON response from sandbox: {response.text}"
+            ) from e
+
+        if not entries:
+            return []
+
+        try:
+            file_entries = [FileEntry(**e) for e in entries]
+        except Exception as e:
+            raise RuntimeError(
+                f"Server returned invalid file entry format: {entries}"
+            ) from e
+
+        if span.is_recording():
+            span.set_attribute("sandbox.file.count", len(file_entries))
+        return file_entries
+
+    @async_trace_span("exists")
+    async def exists(self, path: str, timeout: int = 60) -> bool:
+        span = trace.get_current_span()
+        if span.is_recording():
+            span.set_attribute("sandbox.file.path", path)
+        encoded_path = urllib.parse.quote(path, safe="")
+        response = await self.connector.send_request(
+            "GET", f"exists/{encoded_path}", timeout=timeout
+        )
+
+        try:
+            response_data = response.json()
+        except ValueError as e:
+            raise RuntimeError(
+                f"Failed to decode JSON response from sandbox: {response.text}"
+            ) from e
+
+        exists = response_data.get("exists", False)
+        if span.is_recording():
+            span.set_attribute("sandbox.file.exists", exists)
+        return exists

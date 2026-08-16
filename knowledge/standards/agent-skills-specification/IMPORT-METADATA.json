@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "repository": "agentskills/agentskills",
+  "source_url": "https://github.com/agentskills/agentskills",
+  "ref": "main",
+  "resolved_commit": "69ef37e9424c0a7ea9dd2293b559e43ec8176379",
+  "category": "knowledge",
+  "subcategory": "standards",
+  "slug": "agent-skills-specification",
+  "license": "Apache-2.0",
+  "source_date": null,
+  "imported_at": "2026-08-16T23:03:54+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 131,
+  "copied_bytes": 1159746,
+  "excluded_files": [
+    "CLAUDE.md: symlink",
+    "docs/images/logos/goose/goose-logo-black.png: binary content",
+    "docs/images/logos/goose/goose-logo-white.png: binary content",
+    "docs/images/logos/nanobot/nanobot-logo-dark.png: binary content",
+    "docs/images/logos/nanobot/nanobot-logo-light.png: binary content",
+    "docs/images/logos/qodo/qodo-logo-light.png: binary content",
+    "docs/images/logos/zeroclaw/zeroclaw-logo-dark.png: binary content",
+    "docs/images/logos/zeroclaw/zeroclaw-logo-light.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

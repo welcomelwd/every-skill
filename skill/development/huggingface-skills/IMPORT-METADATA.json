@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "repository": "huggingface/skills",
+  "source_url": "https://github.com/huggingface/skills",
+  "ref": "main",
+  "resolved_commit": "ec0108293521ef698e451ec044e8b4feba6b732b",
+  "category": "skill",
+  "subcategory": "development",
+  "slug": "huggingface-skills",
+  "license": "Apache-2.0",
+  "source_date": null,
+  "imported_at": "2026-08-16T23:03:54+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 198,
+  "copied_bytes": 1702621,
+  "excluded_files": [
+    "assets/banner.png: binary content",
+    "skills/huggingface-community-evals/examples/.env.example: sensitive filename"
+  ],
+  "execution": "never run by this importer"
+}

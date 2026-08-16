@@ -1,0 +1,166 @@
++++
+title = "Agent Sandbox"
+linkTitle = "Agent Sandbox"
+description = "Agent Sandbox is a cloud native controller for sandboxes"
++++
+
+
+{{< blocks/cover title="Agent Sandbox" subtitle="Build Agents in a Safer Environment" color="black" height="full" >}}
+
+<h2 class="quickstart-heading">Quickstart</h2>
+<p class="quickstart-subtitle">Spin up an isolated sandbox and run code in a few lines with the SDK.</p>
+<div class="quickstart-container">
+{{< blocks/tabs name="quickstart" >}}
+  {{< blocks/tab name="Python" codelang="python" options="style=github-dark" ctatext="Read the full Python SDK quickstart →" ctaurl="/docs/getting_started/python-sdk-quickstart/" >}}
+from k8s_agent_sandbox import SandboxClient
+
+client = SandboxClient()
+
+sandbox = client.create_sandbox(
+    warmpool="example-sandbox-pool",
+    namespace="default",
+)
+try:
+    result = sandbox.commands.run("echo 'Hello from Agent Sandbox!'")
+    print(result.stdout)
+    # Hello from Agent Sandbox!
+finally:
+    sandbox.terminate()
+  {{< /blocks/tab >}}
+  {{< blocks/tab name="Go" codelang="go" options="style=github-dark" ctatext="Read the full Go SDK quickstart →" ctaurl="/docs/getting_started/go-sdk-quickstart/" >}}
+package main
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"sigs.k8s.io/agent-sandbox/clients/go/sandbox"
+)
+func main() {
+	ctx := context.Background()
+
+	// Connect to your cluster and ensure sandboxes are cleaned up.
+	client, err := sandbox.NewClient(ctx, sandbox.Options{
+		WarmPoolName: "example-sandbox-pool",
+		Namespace:    "default",
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer client.DeleteAll(ctx)
+
+	// Create a sandbox and run a command.
+	// CreateSandbox arguments take precedence over options passed with Options
+	
+	sb, err := client.CreateSandbox(ctx, "example-sandbox-pool", "default")
+	if err != nil {
+		log.Print(err)
+		return
+	}
+	result, err := sb.Run(ctx, "echo 'Hello from the sandbox!'")
+	if err != nil {
+		log.Print(err)
+		return
+	}
+	fmt.Println(result.Stdout)
+}
+  {{< /blocks/tab >}}
+{{< /blocks/tabs >}}
+</div>
+
+
+<div class="mx-auto">
+	<div class="container">
+		<a class="link-card" href="https://github.com/kubernetes-sigs/agent-sandbox">
+			<p class="title">
+				GitHub
+			</p>
+			<p class="subtitle">
+				View Source Code
+			</p>
+		</a>
+		<a class="link-card" href="/docs">
+			<p class="title">
+				Documentation
+			</p>
+			<p class="subtitle">
+				Read and Deploy
+			</p>
+		</a>
+	</div>
+	{{< blocks/link-down color="light" id="description" >}}
+</div>
+{{< /blocks/cover >}}
+
+<a id="description"></a>
+{{% blocks/lead color="black"%}}
+<h1 class="text-center">Agent Sandbox provides a secure and isolated execution layer to safely deploy autonomous AI agents on Kubernetes that generate and run untrusted code at scale.</h1>
+
+<h2 class="use-cases-heading">Use Cases</h2>
+<div class="use-cases-grid">
+  <a class="use-case-card" href="/docs/use-cases/code-execution/">
+    <p class="label">Short-lived sandbox</p>
+    <p class="title">Code Execution</p>
+    <p class="description">Run untrusted code in fully isolated sandboxes. Ideal for code interpreters, analytics tools, and on-demand computation.</p>
+  </a>
+  <a class="use-case-card" href="/docs/use-cases/coding-agents/">
+    <p class="label">Medium-lived sandbox</p>
+    <p class="title">Coding Agents</p>
+    <p class="description">Autonomous agents that write, debug, and refactor code inside secure sandboxes with full dev tooling.</p>
+  </a>
+  <a class="use-case-card" href="/docs/use-cases/computer-use/">
+    <p class="label">Medium-lived sandbox</p>
+    <p class="title">Computer Use</p>
+    <p class="description">AI agents that interact with graphical desktops, browsers, and GUI applications inside isolated sandboxes.</p>
+  </a>
+  <a class="use-case-card" href="/docs/use-cases/ci-cd/">
+    <p class="label">Short to medium-lived sandbox</p>
+    <p class="title">CI/CD</p>
+    <p class="description">Integrate Agent Sandbox into CI/CD pipelines for isolated testing, validation, and automated workflows.</p>
+  </a>
+  <a class="use-case-card" href="/docs/use-cases/openclaw/">
+    <p class="label">Always-lived sandbox</p>
+    <p class="title">Agents in Sandbox — OpenClaw</p>
+    <p class="description">Run always-on agent environments with OpenClaw inside Agent Sandbox for persistent, long-running workloads.</p>
+  </a>
+  <a class="use-case-card" href="/docs/use-cases/gvisor-isolation/">
+    <p class="label">Isolation runtime</p>
+    <p class="title">gVisor Isolation</p>
+    <p class="description">Harden sandbox isolation with gVisor — a userspace kernel that intercepts system calls to protect the host.</p>
+  </a>
+  <a class="use-case-card" href="/docs/use-cases/kata-containers-isolation/">
+    <p class="label">Isolation runtime</p>
+    <p class="title">Kata Containers Isolation</p>
+    <p class="description">Hardware virtualization with a dedicated kernel per sandbox via Kata Containers and QEMU.</p>
+  </a>
+</div>
+
+<div class="info-container">
+  <div class="info-card">
+    <p class="title">Enable Complex Agentic Workloads</p>
+    <p class="description">Safely execute arbitrary, untrusted code in a fully isolated environment to enable high-risk applications like stateful code interpretation, agentic web browsing, complex "computer use" tasks, and sophisticated data analysis</p>
+  </div>
+  <div class="info-card">
+    <p class="title">Decoupled Isolation. Built for Choice</p>
+    <p class="description">Interoperability is core to Agent Sandbox with a standardized Kubernetes API that fully decouples the execution layer from the underlying isolation technology. This abstraction supports various backends, including gVisor and Kata Containers, allowing you to select the isolation method that perfectly aligns with your specific security, performance, and workload needs</p>
+  </div>
+</div>
+{{% /blocks/lead %}}
+
+{{< blocks/section color="light" type="row">}}
+
+{{% blocks/feature icon="fab fa-github" title="Contributions welcome!" url="https://github.com/kubernetes-sigs/agent-sandbox" %}}
+We do a [Pull Request](https://github.com/kubernetes-sigs/agent-sandbox/pulls) contributions workflow on **GitHub**.
+{{% /blocks/feature %}}
+
+{{% blocks/feature icon="fab fa-slack" title="Connect with us" url="https://kubernetes.slack.com" %}}
+Talk to contributors on [#agent-sandbox](https://kubernetes.slack.com/messages/agent-sandbox) channel
+
+{{% /blocks/feature %}}
+
+{{% blocks/feature icon="fa fa-envelope" title="Join the mailing group" url="https://groups.google.com/a/kubernetes.io/g/sig-apps" %}}
+Join the conversation on the [mailing group](https://groups.google.com/a/kubernetes.io/g/sig-apps)
+{{% /blocks/feature %}}
+
+
+{{< /blocks/section >}}

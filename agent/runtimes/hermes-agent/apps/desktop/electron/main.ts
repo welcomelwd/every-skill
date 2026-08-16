@@ -86,11 +86,13 @@ import {
   backendScopeKey,
   backendScopePrefix,
   buildAgentRoster,
+  connectionDialFieldsChanged,
   mergeConnectionInput,
   migrateV1ToRegistry,
   normalizeConnectionInput,
   normalizeRegistry,
   removeConnection,
+  resolveRegistryLocalRoute,
   setPrimaryConnection,
   updateEligibility,
   upsertConnection
@@ -212,6 +214,7 @@ import {
   electronProcessStartMarker,
   parentWatchdogEnv
 } from './parent-process-identity'
+import { selectPoolEvictions } from './pool-eviction'
 import { createKeepAwake } from './power-save'
 import { FirstRunSetupResetError, runPrimaryBackendStartup } from './primary-backend-startup'
 import { rehomePrimaryConnection } from './primary-connection-rehome'
@@ -8061,6 +8064,16 @@ function saveRegistryConnection(input: any = {}) {
 
   writeDesktopConnectionsRegistry(upsertConnection(registry, entry))
 
+  // A dial-material edit (endpoint/auth/ssh routing — NOT a label rename)
+  // leaves pooled backends under `conn:<id>::*` and renderer sockets pointing
+  // at the OLD target while the UI shows the new one. Recycle them: stop this
+  // connection's pooled backends/tunnels and tell renderers to dispose+redial
+  // their secondaries for this connection id.
+  if (existing && connectionDialFieldsChanged(existing, entry)) {
+    stopRegistryConnectionBackends(entry.id)
+    broadcastConnectionsChanged({ connectionId: entry.id, reason: 'updated' })
+  }
+
   return sanitizeRegistryConnection(entry)
 }
 
@@ -9143,6 +9156,21 @@ function sendConnectionApplied() {
   webContents.send('hermes:connection:applied')
 }
 
+// Registry lifecycle push: a connection was removed or materially edited, so
+// every window must tear down (and, for edits, re-dial) its secondary sockets
+// scoped to that connection. Without this, a removed remote/cloud source keeps
+// its renderer WebSocket open and streaming as a ghost, and an edited one
+// keeps talking to the OLD endpoint until idle-reap.
+function broadcastConnectionsChanged(payload: { connectionId: string; reason: 'removed' | 'updated' }) {
+  for (const win of BrowserWindow.getAllWindows()) {
+    const { webContents } = win
+
+    if (webContents && !webContents.isDestroyed()) {
+      webContents.send('hermes:connections:changed', payload)
+    }
+  }
+}
+
 async function waitForBackendExit(child, timeoutMs = 5000) {
   if (!child || child.exitCode !== null || child.signalCode !== null) {
     return
@@ -9263,10 +9291,11 @@ async function ensureBackend(profile) {
 
 // ── Registry-scoped backends (multi-connection, PR 2 of the campaign) ──────
 // Resolve a backend for (connectionId, profile) against the v2 registry.
-// The LOCAL connection routes through ensureBackend() untouched, so every
-// single-source path stays byte-identical; non-local connections pool under
-// the composite key from backendScopeKey() and reuse the same pool entry
-// lifecycle (LRU, idle reaper, touch) as per-profile local backends.
+// The LOCAL connection routes through ensureBackend() when the v1 route is
+// itself local (so every single-source path stays byte-identical), and forces
+// a genuinely-local child when the v1 mode says remote; non-local connections
+// pool under the composite key from backendScopeKey() and reuse the same pool
+// entry lifecycle (LRU, idle reaper, touch) as per-profile local backends.
 async function ensureRegistryBackend(connectionId, profile) {
   const registry = readDesktopConnectionsRegistry()
   const id = String(connectionId || '').trim() || registry.primary
@@ -9277,7 +9306,61 @@ async function ensureRegistryBackend(connectionId, profile) {
   }
 
   if (source.kind === 'local') {
-    return ensureBackend(profile)
+    // The registry's 'local' entry means THIS machine's runtime — always.
+    // ensureBackend() follows the v1 routing table, which resolves to a
+    // REMOTE descriptor when the v1 global mode is remote (or the profile
+    // has its own remote override). A migrated remote-mode user would then
+    // see the roster's "This device" rows enumerate + dial the remote box
+    // (every profile duplicated, -slug handles forced). Delegate only when
+    // the v1 route is genuinely local; otherwise spawn/reuse a forced-local
+    // child pooled under the composite 'conn:local::<profile>' key so it
+    // can't collide with the v1 remote descriptor cached at the bare key.
+    const profileKey = String(profile ?? '').trim() || 'default'
+
+    const localRoute = resolveRegistryLocalRoute(profileKey, {
+      globalRemote: globalRemoteActive(),
+      profileRemoteOverride: Boolean(profileHasRemoteOverride(profileKey))
+    })
+
+    if (localRoute.delegate) {
+      return ensureBackend(profile)
+    }
+
+    const existingLocal = backendPool.get(localRoute.poolKey)
+
+    if (existingLocal) {
+      existingLocal.lastActiveAt = Date.now()
+
+      return existingLocal.connectionPromise
+    }
+
+    evictLruPoolBackends(POOL_MAX_BACKENDS - 1)
+
+    const localEntry = {
+      process: null,
+      port: null,
+      token: null,
+      connectionPromise: null,
+      lastActiveAt: Date.now(),
+      remoteBaseUrl: null
+    }
+
+    localEntry.connectionPromise = spawnPoolBackend(profileKey, localEntry, {
+      forceLocal: true,
+      poolKey: localRoute.poolKey
+    }).catch(async error => {
+      if (backendPool.get(localRoute.poolKey) === localEntry) {
+        backendPool.delete(localRoute.poolKey)
+      }
+
+      stopBackendChild(localEntry.process)
+      await waitForBackendExit(localEntry.process)
+      throw error
+    })
+    backendPool.set(localRoute.poolKey, localEntry)
+    startPoolIdleReaper()
+
+    return localEntry.connectionPromise
   }
 
   const key = backendScopeKey(id, profile)
@@ -9420,31 +9503,22 @@ function touchPoolBackend(profile) {
   }
 }
 
-// Evict least-recently-used pool backends until at most `keep` remain — but only
-// ever evict backends without a live renderer socket (stale beyond the keepalive
-// window). When every backend is actively kept alive we let the pool exceed the
-// soft cap rather than kill a running session.
+// Evict least-recently-used SPAWNED pool backends until at most `keep` remain —
+// but only ever evict backends without a live renderer socket (stale beyond the
+// keepalive window). When every backend is actively kept alive we let the pool
+// exceed the soft cap rather than kill a running session. Process-less
+// descriptor entries (remote/cloud registry sources, per-profile remote
+// overrides — `entry.process === null`) are excluded from the cap entirely:
+// they hold no local process, so counting them used to let a roster refresh
+// across N registered remote connections LRU-evict a REAL local backend that
+// was merely idle past the keepalive window. Descriptors are still reclaimed
+// by the idle reaper.
 function evictLruPoolBackends(keep) {
-  if (backendPool.size <= keep) {
-    return
-  }
+  const evictions = selectPoolEvictions(backendPool.entries(), Math.max(0, keep), Date.now(), POOL_KEEPALIVE_FRESH_MS)
 
-  const now = Date.now()
-
-  const evictable = [...backendPool.entries()]
-    .filter(([, entry]) => now - (entry.lastActiveAt || 0) > POOL_KEEPALIVE_FRESH_MS)
-    .sort((a, b) => (a[1].lastActiveAt || 0) - (b[1].lastActiveAt || 0))
-
-  let removable = backendPool.size - Math.max(0, keep)
-
-  for (const [profile] of evictable) {
-    if (removable <= 0) {
-      break
-    }
-
+  for (const profile of evictions) {
     rememberLog(`Evicting idle profile backend "${profile}" (LRU cap ${POOL_MAX_BACKENDS})`)
     stopPoolBackend(profile)
-    removable -= 1
   }
 }
 
@@ -9477,7 +9551,13 @@ function startPoolIdleReaper() {
 // Spawn an additional dashboard backend pinned to a named profile. Mirrors the
 // local-spawn portion of startHermes() but without the boot-progress UI,
 // bootstrap, or remote handling (those belong to the primary backend only).
-async function spawnPoolBackend(profile, entry) {
+// `opts.forceLocal` skips remote resolution entirely (the registry 'local'
+// entry means THIS machine regardless of the v1 routing table); `opts.poolKey`
+// is the backendPool key when it differs from the profile name (composite
+// registry scopes) so the exit/error cleanup evicts the right entry.
+async function spawnPoolBackend(profile, entry, opts: { forceLocal?: boolean; poolKey?: string } = {}) {
+  const poolKey = opts.poolKey || profile
+
   await reapOrphanedBackendsOnce()
   // A profile may point at its OWN remote backend (connection.json
   // `profiles[name]`), or inherit the app-wide remote (env / global settings).
@@ -9485,7 +9565,7 @@ async function spawnPoolBackend(profile, entry) {
   // remote is reachable and hand back its connection descriptor. The pool
   // entry keeps `entry.process === null`, which stopPoolBackend/evict already
   // tolerate.
-  const remote = await resolveRemoteBackend(profile)
+  const remote = opts.forceLocal ? null : await resolveRemoteBackend(profile)
 
   if (remote) {
     await waitForHermes(remote.baseUrl, remote.token, undefined, remote.authMode)
@@ -9587,13 +9667,13 @@ async function spawnPoolBackend(profile, entry) {
   child.once('error', error => {
     rememberLog(`Hermes backend for profile "${profile}" failed to start: ${error.message}`)
     releaseBackendChild(child)
-    backendPool.delete(profile)
+    backendPool.delete(poolKey)
     rejectStart?.(error)
   })
   child.once('exit', (code, signal) => {
     rememberLog(`Hermes backend for profile "${profile}" exited (${signal || code})`)
     releaseBackendChild(child)
-    backendPool.delete(profile)
+    backendPool.delete(poolKey)
 
     if (!ready) {
       rejectStart?.(
@@ -9790,8 +9870,22 @@ async function startHermes() {
 
   const connectionPromise = (async () => {
     const connectRemote = async remote => {
+      // resolveRemote() may take arbitrarily long (settings resolve / ws-ticket
+      // mint). If a newer attempt started meanwhile (e.g. the user switched
+      // remotes and Apply invalidated this attempt), bail before probing.
+      if (!backendConnectionState.isCurrentAttempt(connectionAttempt)) {
+        throw new Error('Hermes backend start was superseded by a newer connection attempt.')
+      }
+
       await advanceBootProgress('backend.remote', `Connecting to remote Hermes backend at ${remote.baseUrl}`, 24)
       await waitForHermes(remote.baseUrl, remote.token, undefined, remote.authMode)
+
+      // Second async boundary: the health probe itself can outlive the
+      // attempt. A late success here must not publish a stale descriptor.
+      if (!backendConnectionState.isCurrentAttempt(connectionAttempt)) {
+        throw new Error('Hermes backend start was superseded by a newer connection attempt.')
+      }
+
       updateBootProgress({
         phase: 'backend.ready',
         message: 'Remote Hermes backend is ready',
@@ -11352,7 +11446,9 @@ function createWindow() {
 ipcMain.handle('hermes:connection', async (_event, profile) => ensureBackend(profile))
 // Registry-scoped variant: resolve a backend for (connectionId, profile).
 // connectionId '' / 'local' / the registry primary all behave sensibly; the
-// local kind delegates to ensureBackend so legacy behavior is untouched.
+// local kind delegates to ensureBackend when the v1 route is local, and
+// forces a genuinely-local child when the v1 global mode is remote (the
+// registry 'local' entry always means this machine).
 ipcMain.handle('hermes:connection:for', async (_event, payload) => {
   const { connectionId, profile } = payload && typeof payload === 'object' ? (payload as any) : ({} as any)
 
@@ -11915,6 +12011,10 @@ ipcMain.handle('hermes:connections:remove', async (_event, id) => {
   // Tear down anything the removed connection still had running: pooled
   // backends under its composite keys and any ssh tunnel scopes it owned.
   stopRegistryConnectionBackends(key)
+  // And the renderer side: without this push, secondaries scoped to the
+  // removed connection keep their WebSocket open (remote/cloud have no local
+  // process to kill) and stream ghost events until page reload.
+  broadcastConnectionsChanged({ connectionId: key, reason: 'removed' })
 
   return { ok: true, registry: sanitizeConnectionsRegistry(registry) }
 })

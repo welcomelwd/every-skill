@@ -1,0 +1,528 @@
+// Copyright 2026 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/gofrs/flock"
+	"k8s.io/klog/v2"
+)
+
+// State is the local state of the resourcectl CLI.
+type State struct {
+	// BoskosResources resources that this resourcectl instance has checked out.
+	BoskosResources []BoskosResource `json:"boskosResources"`
+}
+
+// BoskosResource holds information about a Boskos resource that
+// resourcectl has acquired.
+type BoskosResource struct {
+	// Name is the name of the resource we acquired from boskos
+	Name string `json:"name"`
+	// Type is the type of resource we acquired from boskos
+	Type string `json:"type"`
+	// HeartbeatPID is the pid of the heartbeat process that is keeping this
+	// resource alive.
+	HeartbeatPID int `json:"heartbeatPid"`
+	// Owner is the owner of the resource we acquired from boskos
+	Owner string `json:"owner"`
+	// Key is a user-specified key used to identify this resource
+	Key string `json:"key,omitempty"`
+}
+
+// ReleaseFromBoskos releases the Boskos resource by sending a request to Boskos.
+func (r *BoskosResource) ReleaseFromBoskos(ctx context.Context) error {
+	log := klog.FromContext(ctx)
+
+	if r.Name == "" {
+		return nil
+	}
+
+	boskosHost, err := getBoskosHost()
+	if err != nil {
+		return err
+	}
+
+	owner := r.Owner
+	if owner == "" {
+		owner = getBoskosOwner()
+	}
+	url := fmt.Sprintf("%s/release?name=%s&state=busy&dest=free&owner=%s", boskosHost, url.QueryEscape(r.Name), url.QueryEscape(owner))
+	log.Info("releasing resource from boskos", "name", r.Name, "owner", owner)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	if err != nil {
+		return fmt.Errorf("error creating request to release resource from boskos: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("error releasing resource from boskos: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("boskos returned status %d on release: %s", resp.StatusCode, string(body))
+	}
+	log.Info("released resource from boskos", "name", r.Name)
+
+	return nil
+}
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := run(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// run is the main entry point for the resourcectl CLI.
+func run(ctx context.Context) error {
+	if len(os.Args) < 2 {
+		return fmt.Errorf("Usage: resourcectl <get|cleanup|heartbeat> [args]")
+	}
+
+	command := os.Args[1]
+	switch command {
+	case "get":
+		fs := flag.NewFlagSet("get", flag.ExitOnError)
+		var key, boskosType string
+		fs.StringVar(&key, "key", "", "Key to track this resource")
+		fs.StringVar(&boskosType, "boskos-type", "", "Boskos resource type")
+
+		if err := fs.Parse(os.Args[2:]); err != nil {
+			return err
+		}
+
+		if key == "" || boskosType == "" {
+			return fmt.Errorf("Usage: resourcectl get --key <key> --boskos-type <type>")
+		}
+		return runGet(ctx, boskosType, key)
+	case "cleanup":
+		return runCleanup(ctx)
+	case "heartbeat":
+		fs := flag.NewFlagSet("heartbeat", flag.ExitOnError)
+		var name, owner string
+		fs.StringVar(&name, "name", "", "Resource name")
+		fs.StringVar(&owner, "owner", "", "Resource owner")
+
+		if err := fs.Parse(os.Args[2:]); err != nil {
+			return err
+		}
+
+		if name == "" {
+			return fmt.Errorf("Usage: resourcectl heartbeat --name <name> [--owner <owner>]")
+		}
+		return runHeartbeat(ctx, name, owner)
+	default:
+		return fmt.Errorf("Unknown command: %s", command)
+	}
+}
+
+// stateFilePath returns the path to the local state file.
+func stateFilePath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("error getting user home dir: %v", err)
+	}
+	dir := filepath.Join(home, ".local", "resourcectl")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("error creating state dir: %v", err)
+	}
+	return filepath.Join(dir, "state.json"), nil
+}
+
+// stateLockFilePath returns the path to the local state lock file.
+func stateLockFilePath() (string, error) {
+	p, err := stateFilePath()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Dir(p), "state.lock"), nil
+}
+
+// readState reads the local state file.
+func readState() (*State, error) {
+	p, err := stateFilePath()
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &State{}, nil
+		}
+		return nil, fmt.Errorf("error reading state file: %v", err)
+	}
+	var state State
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, fmt.Errorf("error unmarshalling state: %v", err)
+	}
+	return &state, nil
+}
+
+// writeState writes the local state file.
+func writeState(state *State) error {
+	p, err := stateFilePath()
+	if err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return fmt.Errorf("error encoding state: %v", err)
+	}
+	if err := os.WriteFile(p, data, 0600); err != nil {
+		return fmt.Errorf("error writing state file: %v", err)
+	}
+	return nil
+}
+
+// updateState performs a locked read-modify-write of the state file. The state
+// file lock is held only for the duration of fn, so fn must not perform slow or
+// blocking operations (such as network I/O) while it runs.
+func updateState(fn func(*State) error) error {
+	lockPath, err := stateLockFilePath()
+	if err != nil {
+		return err
+	}
+	fileLock := flock.New(lockPath)
+	if err := fileLock.Lock(); err != nil {
+		return fmt.Errorf("error acquiring lock: %w", err)
+	}
+	defer fileLock.Unlock()
+
+	state, err := readState()
+	if err != nil {
+		return err
+	}
+	if err := fn(state); err != nil {
+		return err
+	}
+	return writeState(state)
+}
+
+// getBoskosHost returns the boskos host from the environment variable BOSKOS_HOST.
+func getBoskosHost() (string, error) {
+	boskosHost := os.Getenv("BOSKOS_HOST")
+	if boskosHost == "" {
+		return "", fmt.Errorf("BOSKOS_HOST env var is not set")
+	}
+	// The host might be specified as a hostname (no scheme) or as a url including the scheme.
+	if !strings.HasPrefix(boskosHost, "http://") && !strings.HasPrefix(boskosHost, "https://") {
+		boskosHost = "http://" + boskosHost
+	}
+	return boskosHost, nil
+}
+
+// getBoskosOwner returns the owner to use for Boskos requests.
+func getBoskosOwner() string {
+	prefix := "resourcectl"
+	if job := os.Getenv("JOB_NAME"); job != "" {
+		if build := os.Getenv("BUILD_ID"); build != "" {
+			return fmt.Sprintf("%s-%s-%s", prefix, job, build)
+		}
+		return fmt.Sprintf("%s-%s", prefix, job)
+	}
+	if user := os.Getenv("USER"); user != "" {
+		return fmt.Sprintf("%s-%s", prefix, user)
+	}
+	return prefix
+}
+
+// runGet acquires a resource of the given type from Boskos and starts a
+// heartbeat process for it.
+func runGet(ctx context.Context, resourceType string, key string) error {
+	log := klog.FromContext(ctx)
+
+	boskosHost, err := getBoskosHost()
+	if err != nil {
+		return err
+	}
+
+	owner := getBoskosOwner()
+	url := fmt.Sprintf("%s/acquire?type=%s&state=free&dest=busy&owner=%s", boskosHost, url.QueryEscape(resourceType), url.QueryEscape(owner))
+	log.Info("acquiring resource from boskos", "type", resourceType, "owner", owner, "key", key)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	if err != nil {
+		return fmt.Errorf("error creating request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("error calling Boskos: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("boskos returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var resource struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&resource); err != nil {
+		return fmt.Errorf("error decoding response: %v", err)
+	}
+
+	// Record the resource under the state lock. We start the heartbeat process
+	// only once we hold the lock so that a process blocked waiting for the lock
+	// never leaves an orphaned heartbeat running if it is interrupted before the
+	// resource is persisted.
+	var cmd *exec.Cmd
+	if err := updateState(func(state *State) error {
+		// Start heartbeat process
+		cmd = exec.Command(os.Args[0], "heartbeat", "--name", resource.Name, "--owner", owner)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: 0}
+		// TODO: Log stdout/stderr of the heartbeat process
+		if err := cmd.Start(); err != nil {
+			// We will fail the test here, but we don't want a resource to be reclaimed mid test
+			return fmt.Errorf("error starting heartbeat process: %w", err)
+		}
+
+		state.BoskosResources = append(state.BoskosResources, BoskosResource{
+			Name:         resource.Name,
+			Type:         resourceType,
+			HeartbeatPID: cmd.Process.Pid,
+			Owner:        owner,
+			Key:          key,
+		})
+		return nil
+	}); err != nil {
+		if cmd != nil && cmd.Process != nil {
+			pgid := -cmd.Process.Pid
+			if killErr := syscall.Kill(pgid, syscall.SIGTERM); killErr != nil {
+				log.Error(killErr, "failed to send SIGTERM to heartbeat process group", "pgid", pgid)
+			}
+
+			done := make(chan error, 1)
+			go func() {
+				done <- cmd.Wait()
+			}()
+
+			select {
+			case <-time.After(time.Second):
+				if killErr := syscall.Kill(pgid, syscall.SIGKILL); killErr != nil {
+					log.Error(killErr, "failed to send SIGKILL to heartbeat process group", "pgid", pgid)
+				}
+				<-done
+			case <-done:
+			}
+		}
+
+		// Local state persistence failed, so this resource is not recorded and
+		// runCleanup will never release it. Network connectivity to Boskos is
+		// likely still functional, so best-effort release it now rather than
+		// tying it up for 10-15 minutes until the reaper reclaims it.
+		br := BoskosResource{Name: resource.Name, Owner: owner}
+		if relErr := br.ReleaseFromBoskos(ctx); relErr != nil {
+			log.Error(relErr, "failed to release resource from boskos after state update failure", "name", resource.Name)
+		}
+
+		return err
+	}
+
+	// Everything has worked; print the resource name for the caller.
+	fmt.Println(resource.Name)
+
+	return nil
+}
+
+// runCleanup releases all resources that this resourcectl instance has
+// acquired from Boskos.
+func runCleanup(ctx context.Context) error {
+	// Phase 1: under the lock, take ownership of the currently tracked resources
+	// and clear them from the state file. We release the lock immediately so the
+	// slow kill/release operations below do not block other resourcectl
+	// invocations from updating the state file.
+	var resources []BoskosResource
+	if err := updateState(func(state *State) error {
+		resources = state.BoskosResources
+		state.BoskosResources = nil
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	// Phase 2: kill the heartbeat processes and release the resources from
+	// Boskos without holding the lock. Resources we fail to release are retained
+	// so a future cleanup can retry them.
+	var errs []error
+	var remainingResources []BoskosResource
+
+	for i := range resources {
+		r := &resources[i]
+		if err := killHeartbeatProcess(ctx, r); err != nil {
+			errs = append(errs, err)
+		} else {
+			r.HeartbeatPID = 0
+		}
+
+		if err := r.ReleaseFromBoskos(ctx); err != nil {
+			errs = append(errs, err)
+			remainingResources = append(remainingResources, *r)
+		}
+	}
+
+	// Phase 3: re-acquire the lock and put any resources we failed to release
+	// back into the state file. We re-read the state inside updateState so we do
+	// not clobber resources added concurrently while the lock was not held.
+	if len(remainingResources) > 0 {
+		if err := updateState(func(state *State) error {
+			state.BoskosResources = append(state.BoskosResources, remainingResources...)
+			return nil
+		}); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+// killHeartbeatProcess kills the heartbeat process for a resource.
+func killHeartbeatProcess(ctx context.Context, r *BoskosResource) error {
+	if r.HeartbeatPID == 0 {
+		return nil
+	}
+
+	log := klog.FromContext(ctx)
+
+	// Verify the process is actually the heartbeat process if we are on Linux.
+	// On non-Linux platforms (e.g., macOS), we currently skip this verification
+	// because /proc is not available. This leaves a small window for PID-recycling
+	// issues on those platforms.
+	if runtime.GOOS == "linux" {
+		if !isHeartbeatProcess(r.HeartbeatPID, r.Name) {
+			return nil
+		}
+	} else {
+		log.V(4).Info("skipping heartbeat process verification on non-linux platform", "goos", runtime.GOOS, "pid", r.HeartbeatPID)
+	}
+
+	process, err := os.FindProcess(r.HeartbeatPID)
+	if err != nil {
+		return fmt.Errorf("error finding heartbeat process: %w", err)
+	}
+
+	if err := process.Kill(); err != nil {
+		// The heartbeat process is already gone (ESRCH on Unix, or ErrProcessDone
+		// from os.Process on Go's newer process-handle implementations); that's
+		// the desired end state, so treat it as success.
+		if errors.Is(err, syscall.ESRCH) || errors.Is(err, os.ErrProcessDone) {
+			return nil
+		}
+		return fmt.Errorf("error killing heartbeat process: %w", err)
+	}
+
+	return nil
+}
+
+// isHeartbeatProcess verifies if the process with the given PID is actually our heartbeat process.
+func isHeartbeatProcess(pid int, resourceName string) bool {
+	cmdlinePath := fmt.Sprintf("/proc/%d/cmdline", pid)
+	data, err := os.ReadFile(cmdlinePath)
+	if err != nil {
+		return false
+	}
+
+	// The /proc/<pid>/cmdline file contains arguments separated by null bytes (\x00).
+	args := strings.Split(string(data), "\x00")
+
+	// Check if the arguments contain "heartbeat" and "--name" <resourceName>
+	hasHeartbeat := false
+	hasName := false
+	for i := 0; i < len(args); i++ {
+		if args[i] == "heartbeat" {
+			hasHeartbeat = true
+		}
+		if args[i] == "--name" && i+1 < len(args) && args[i+1] == resourceName {
+			hasName = true
+		}
+	}
+
+	return hasHeartbeat && hasName
+}
+
+// runHeartbeat sends periodic heartbeats to Boskos to keep the resource alive.
+// This is run as a child process of runGet.
+func runHeartbeat(ctx context.Context, name, owner string) error {
+	log := klog.FromContext(ctx)
+
+	boskosHost, err := getBoskosHost()
+	if err != nil {
+		return err
+	}
+
+	if owner == "" {
+		owner = getBoskosOwner()
+	}
+	url := fmt.Sprintf("%s/update?name=%s&state=busy&owner=%s", boskosHost, url.QueryEscape(name), url.QueryEscape(owner))
+	log.Info("starting heartbeat", "name", name, "owner", owner)
+
+	// Send initial heartbeat
+	if err := sendOneHeartbeat(ctx, url); err != nil {
+		return fmt.Errorf("error sending initial heartbeat: %v", err)
+	}
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if err := sendOneHeartbeat(ctx, url); err != nil {
+				fmt.Fprintf(os.Stderr, "error sending heartbeat: %v\n", err)
+			}
+		}
+	}
+}
+
+// sendOneHeartbeat sends a single heartbeat to Boskos.
+func sendOneHeartbeat(ctx context.Context, url string) error {
+	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
+	if err != nil {
+		return fmt.Errorf("error creating request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("error sending heartbeat: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("boskos returned status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}

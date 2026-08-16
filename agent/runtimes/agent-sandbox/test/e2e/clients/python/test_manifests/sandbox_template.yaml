@@ -1,0 +1,31 @@
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: python-sdk-test-template
+spec:
+  volumeClaimTemplatesPolicy: Allowed
+  networkPolicyManagement: Managed
+  networkPolicy:
+    ingress:
+      - from:
+        - podSelector:
+            matchLabels:
+              app: sandbox-router
+    egress:
+      - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+        - ipBlock:
+            cidr: ::/0
+  podTemplate:
+    metadata:
+      labels:
+        app: python-sandbox
+        sandbox: sdk-test-sandbox
+    spec:
+      containers:
+      - name: python-sandbox
+        image: {image_prefix}python-runtime-sandbox:{image_tag}
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8888
