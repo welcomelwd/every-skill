@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "source_date": "2026-08-16",
+  "batch": "PM",
+  "source_markdown": "knowledge/github-trending/2026-08-16.md",
+  "projects": [
+    {
+      "repository": "microsoft/skills",
+      "source_url": "https://github.com/microsoft/skills",
+      "category": "skill",
+      "subcategory": "development",
+      "slug": "microsoft-skills",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "e20084b9d230c6f3b46ce36f011e6c3e50f79f8a"
+    },
+    {
+      "repository": "stacklok/toolhive",
+      "source_url": "https://github.com/stacklok/toolhive",
+      "category": "mcp",
+      "subcategory": "security",
+      "slug": "toolhive",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "8343851e8a58086ff0768cd35856e14b11d273fd"
+    },
+    {
+      "repository": "citrolabs/ego-lite",
+      "source_url": "https://github.com/citrolabs/ego-lite",
+      "category": "agent",
+      "subcategory": "runtimes",
+      "slug": "ego-lite",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "c46a439e7fbad90ad33dbea6c6af329b6009809f"
+    },
+    {
+      "repository": "HKUDS/CLI-Anything",
+      "source_url": "https://github.com/HKUDS/CLI-Anything",
+      "category": "knowledge",
+      "subcategory": "tools",
+      "slug": "cli-anything",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "6f372d36f8ea43dd2af23fda96646c8088ac7d2f"
+    }
+  ]
+}
