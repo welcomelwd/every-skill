@@ -1,0 +1,167 @@
+name: azure-storage-blob-rust-eval
+description: Evaluation suite for azure-storage-blob-rust
+version: "1.0"
+type: capability
+scoring:
+  weights: {}
+  threshold: 0.75
+defaults:
+  runs: 1
+  timeout: 60m
+  model: claude-sonnet-4.6
+  judge_model: gpt-5.5
+stimuli:
+  - name: rust-crud-blobs
+    prompt: |
+      Create a single Rust binary crate named rust-blob with one focused goal: demonstrate
+      Azure Blob Storage container and blob CRUD using the official Rust SDK.
+
+      Required workflow:
+      1. Create container `my-container` if it does not already exist.
+      2. Upload local file `example.txt` as block blob `uploads/example.txt`.
+      3. List all blobs in the container and print blob name plus size.
+      4. Download that blob to `downloaded-example.txt`.
+      5. Delete the blob, then delete the container.
+
+      Inputs:
+      - Read `AZURE_STORAGE_ACCOUNT` when present.
+      - Read optional `AZURE_STORAGE_CONTAINER`; default to `my-container`.
+      - If `example.txt` is missing, create it with sample content before upload.
+
+      Implementation constraints:
+      - Do not add Azure CLI provisioning or setup code to the Rust project.
+      - Use TokenCredential-based authentication and fail with clear messages when required
+        configuration is missing.
+      - Keep the implementation compact: one crate, minimal helpers, no extra abstractions.
+      - Prefer the documented skill/README patterns over crate-source exploration.
+      - Run `cargo build` and `cargo clippy -- -D warnings` near the end before finishing.
+    rubric:
+      - "Implements the full blob CRUD workflow end-to-end: create container, upload, list, download, and delete blob/container."
+      - "Uses official Azure Rust SDK crate patterns and a TokenCredential-based authentication flow."
+      - "Uses async Rust with Tokio runtime and idiomatic Result-based error propagation; avoids unnecessary unwrap/expect and returns an idiomatic main result type."
+      - "Code compiles and passes cargo check for the rust-blob project."
+      - "Uses correct Azure client construction patterns, including endpoint plus credential and compatible options initialization for forward compatibility."
+      - "Uses correct response handling and model deserialization patterns (for example into_model when appropriate) rather than ad-hoc response parsing."
+      - "Uses correct pager/stream iteration patterns for list operations and handles pagination across all results."
+      - "Uses long-running operation poller patterns correctly when an operation returns a poller; waits for final completion unless status streaming is explicitly required."
+      - "Uses SDK struct initialization patterns that preserve forward compatibility (for example default-update style where applicable)."
+      - "Uses idiomatic ownership and borrowing with minimal unnecessary cloning and appropriate shared ownership patterns for credentials and clients."
+      - "Avoids hardcoded secrets in source code or configuration committed to the workspace."
+      - "rustfmt compliance is bonus quality signal only and should not block a successful evaluation when all substantive correctness and SDK-usage criteria pass."
+    artifacts:
+      include:
+        - "**/Cargo.toml"
+        - "**/Cargo.lock"
+        - "**/build.rs"
+        - "**/src/**/*.rs"
+        - "**/examples/**/*.rs"
+        - "**/tests/**/*.rs"
+      exclude:
+        - "**/target/**"
+        - "**/*.rlib"
+        - "**/*.rmeta"
+        - "**/*.d"
+        - "**/*.o"
+        - "**/*.obj"
+        - "**/*.pdb"
+        - "**/*.exe"
+        - "**/*.dll"
+        - "**/*.so"
+        - "**/*.dylib"
+        - "**/*.a"
+        - "**/*.lib"
+        - "**/*.wasm"
+    environment:
+      skills:
+        - ../../../../.github/plugins/azure-sdk-rust/skills/azure-storage-blob-rust
+      files:
+        - src: ../../_shared/vally/tools/find-cargo-root.js
+          dest: .vally/tools/find-cargo-root.js
+        - src: ../../_shared/vally/tools/check-azure-crates.rs
+          dest: .vally/tools/check-azure-crates.rs
+        - src: ../../_shared/vally/tools/check-token-credential.rs
+          dest: .vally/tools/check-token-credential.rs
+        - src: ../../_shared/vally/tools/check-async-runtime.rs
+          dest: .vally/tools/check-async-runtime.rs
+        - src: ../../_shared/vally/tools/check-no-secrets.rs
+          dest: .vally/tools/check-no-secrets.rs
+        - src: workspace/cargo.toml
+          dest: Cargo.toml
+    constraints:
+      expect_skills:
+        - azure-storage-blob-rust
+    graders:
+      - type: prompt
+        name: "Prompt correctness and completeness of blob storage operations"
+        config:
+          prompt: |
+            - The code should demonstrate an azure blob storage client with a storage account url and credential
+            - Creating a container for container creation
+            - Uploading from a file path
+            - Enumerate blobs in a container
+            - Download from a blob to a local file
+            - Deleting blob files and containers for cleanup
+            - Error handling
+          scoring: scale_1_5
+
+      - name: Official Azure SDK Crate Selection
+        type: program
+        weight: 1.0
+        config:
+          program: cargo
+          args:
+            - "+nightly"
+            - "-Zscript"
+            - ".vally/tools/check-azure-crates.rs"
+          timeout: 2m
+      - name: TokenCredential Authentication
+        type: program
+        weight: 1.0
+        config:
+          program: cargo
+          args:
+            - "+nightly"
+            - "-Zscript"
+            - ".vally/tools/check-token-credential.rs"
+      - name: Async-First with Tokio Runtime
+        type: program
+        weight: 1.0
+        config:
+          program: cargo
+          args:
+            - "+nightly"
+            - "-Zscript"
+            - ".vally/tools/check-async-runtime.rs"
+      - name: No Hardcoded Secrets
+        type: program
+        weight: 1.0
+        config:
+          program: cargo
+          args:
+            - "+nightly"
+            - "-Zscript"
+            - ".vally/tools/check-no-secrets.rs"
+      - name: Rust Cargo Trajectory Build Failure
+        type: rust-cargo-build-failure-check
+        weight: 1.0
+        config:
+          collect_trajectory_compiler_errors: true
+          emit_in_metadata: true
+          error_exceptions:
+            - error_code: E0277
+              message_pattern: "Option<std::string::String>"
+              action: ignore_for_fail
+      - name: Post prompt Rust Cargo Build Failure
+        type: rust-cargo-build-failure-check
+        weight: 1.0
+        config:
+          commands:
+            - command: cargo build
+          emit_in_metadata: true
+      - name: Post prompt Rust Cargo Clippy Failure
+        type: rust-cargo-build-failure-check
+        weight: 1.0
+        config:
+          commands:
+            - command: cargo clippy -- -D warnings
+          emit_in_metadata: true

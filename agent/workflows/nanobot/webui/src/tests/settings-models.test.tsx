@@ -89,7 +89,7 @@ async function togglePresetEditor(name = "primary") {
 describe("Settings models", () => {
   installSettingsViewTestHooks();
 
-  it("distinguishes the editable display name from the stable command name", async () => {
+  it("uses the preset name as the canonical identity", async () => {
     const payload = settingsPayload();
     payload.model_presets[0] = {
       ...payload.model_presets[0],
@@ -104,11 +104,105 @@ describe("Settings models", () => {
 
     await togglePresetEditor("openai");
 
-    expect(screen.getByText("Display name")).toBeInTheDocument();
-    expect(
-      screen.getByText("Shown in the interface. The command name stays /model openai."),
-    ).toBeInTheDocument();
-    expect(screen.getByDisplayValue("minimax")).toBeInTheDocument();
+    const editor = screen.getByTestId("model-preset-editor");
+    expect(within(editor).getByText("Preset name")).toBeInTheDocument();
+    expect(within(editor).getByRole("textbox", { name: "Preset name" })).toHaveValue(
+      "openai",
+    );
+    expect(within(editor).queryByText("minimax")).not.toBeInTheDocument();
+  });
+
+  it("edits a legacy case-conflicting preset without treating its own name as a rename", async () => {
+    const payload = settingsPayload();
+    const primary = {
+      ...payload.model_presets[0],
+      name: "Fast",
+      label: "Fast",
+      active: true,
+    };
+    const legacyConflict = {
+      ...primary,
+      name: "fast",
+      label: "fast",
+      active: false,
+    };
+    const legacyPayload: SettingsPayload = {
+      ...payload,
+      agent: { ...payload.agent, model_preset: "Fast" },
+      model_presets: [primary, legacyConflict],
+      model_call_order: ["Fast", "fast"],
+    };
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    requestMutationMock.mockResolvedValueOnce(legacyPayload);
+
+    renderSettingsView({ initialSection: "models", initialSettings: legacyPayload });
+    await togglePresetEditor("Fast");
+    fireEvent.click(screen.getByRole("button", { name: /Advanced options/ }));
+    fireEvent.change(screen.getByLabelText("Temperature"), {
+      target: { value: "0.4" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save preset" }));
+
+    await waitFor(() => {
+      expect(requestMutationMock).toHaveBeenCalledWith(
+        "settings.model_configuration.update",
+        { name: "Fast", temperature: 0.4 },
+        20_000,
+      );
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("renames an existing preset without losing the editor selection", async () => {
+    const payload = settingsPayload();
+    const renamedPayload: SettingsPayload = {
+      ...payload,
+      agent: { ...payload.agent, model_preset: "Codex" },
+      model_presets: payload.model_presets.map((preset) => ({
+        ...preset,
+        name: "Codex",
+        label: "Codex",
+      })),
+      model_call_order: ["Codex"],
+    };
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    requestMutationMock.mockResolvedValueOnce(renamedPayload);
+
+    renderSettingsView({ initialSection: "models", initialSettings: payload });
+    await togglePresetEditor();
+
+    const nameInput = screen.getByRole("textbox", { name: "Preset name" });
+    fireEvent.change(nameInput, { target: { value: "Codex" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save preset" }));
+
+    await waitFor(() => {
+      expect(requestMutationMock).toHaveBeenCalledWith(
+        "settings.model_configuration.update",
+        { name: "primary", new_name: "Codex" },
+        20_000,
+      );
+    });
+    expect(await screen.findByTestId("model-call-order-row-Codex")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Preset name" })).toHaveValue("Codex");
+  });
+
+  it("maps a server-side name conflict back to the preset name field", async () => {
+    const payload = settingsPayload();
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    requestMutationMock.mockRejectedValueOnce({ status: 409 });
+
+    renderSettingsView({ initialSection: "models", initialSettings: payload });
+    await togglePresetEditor();
+
+    const nameInput = screen.getByRole("textbox", { name: "Preset name" });
+    fireEvent.change(nameInput, { target: { value: "Codex" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save preset" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "A preset with this name already exists.",
+    );
+    expect(nameInput).toHaveAttribute("aria-invalid", "true");
+    expect(nameInput).toHaveFocus();
   });
 
   it("keeps generation parameters collapsed until advanced options are opened", async () => {
@@ -188,7 +282,9 @@ describe("Settings models", () => {
       "lg:max-w-6xl",
       "rounded-floating",
     );
-    expect(within(editor).getByDisplayValue("Primary")).toBeInTheDocument();
+    expect(within(editor).getByRole("textbox", { name: "Preset name" })).toHaveValue(
+      "primary",
+    );
     const deleteButton = within(editor).getByRole("button", { name: "Delete" });
     expect(deleteButton).toBeDisabled();
     expect(deleteButton).toHaveAttribute("aria-describedby", "model-preset-delete-hint");
@@ -244,8 +340,9 @@ describe("Settings models", () => {
       ),
     );
     await togglePresetEditor();
-    fireEvent.change(screen.getByDisplayValue("Primary"), {
-      target: { value: "Primary draft" },
+    fireEvent.click(screen.getByRole("button", { name: /Advanced options/ }));
+    fireEvent.change(screen.getByLabelText("Temperature"), {
+      target: { value: "0.4" },
     });
     const primaryRow = screen.getByTestId("model-call-order-row-primary");
     const backupRow = screen.getByTestId("model-call-order-row-backup");
@@ -270,7 +367,7 @@ describe("Settings models", () => {
     });
 
     expect(screen.queryByRole("button", { name: "Save order" })).not.toBeInTheDocument();
-    expect(screen.getByDisplayValue("Primary draft")).toBeInTheDocument();
+    expect(screen.getByLabelText("Temperature")).toHaveValue(0.4);
     expect(screen.getByRole("button", { name: "Save preset" })).toBeEnabled();
   });
 
@@ -430,7 +527,8 @@ describe("Settings models", () => {
     renderSettingsView({ initialSection: "models", initialSettings: payloadWithCodex });
 
     const codexRow = await screen.findByTestId("model-call-order-row-codex");
-    expect(codexRow).toHaveTextContent("Codex");
+    expect(codexRow).toHaveTextContent("codex");
+    expect(codexRow).not.toHaveTextContent("Codex");
     expect(codexRow).toHaveTextContent("openai-codex/gpt-5.5");
     expect(codexRow).toHaveTextContent("Disabled");
     expect(codexRow).toHaveAttribute("draggable", "false");
@@ -461,7 +559,7 @@ describe("Settings models", () => {
     const { payload } = settingsPayloadWithBackup();
     const writerPreset = {
       ...payload.model_presets[0],
-      name: "writer",
+      name: "Writer",
       label: "Writer",
       active: false,
       model: "openai/gpt-4o-mini",
@@ -475,7 +573,7 @@ describe("Settings models", () => {
     };
     const orderedPayload: SettingsPayload = {
       ...createdPayload,
-      model_call_order: ["primary", "backup", "writer"],
+      model_call_order: ["primary", "backup", "Writer"],
       created_model_preset: undefined,
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -528,16 +626,51 @@ describe("Settings models", () => {
     await waitFor(() => {
       expect(requestMutationMock).toHaveBeenLastCalledWith(
         "settings.model_call_order.update",
-        { order: ["primary", "backup", "writer"] },
+        { order: ["primary", "backup", "Writer"] },
         20_000,
       );
     });
-    const writerRow = await screen.findByTestId("model-call-order-row-writer");
+    const writerRow = await screen.findByTestId("model-call-order-row-Writer");
     expect(writerRow).not.toHaveTextContent("Disabled");
     expect(writerRow).not.toHaveTextContent(/Fallback/);
     expect(within(writerRow).getByRole("switch", { name: "Disable preset" })).toBeChecked();
-    expect(screen.getByDisplayValue("Writer")).toBeInTheDocument();
+    expect(screen.getAllByText("Writer").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "Save order" })).not.toBeInTheDocument();
+  });
+
+  it("shows an inline error when a new preset name already exists", async () => {
+    const { payload } = settingsPayloadWithBackup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) }) as Response),
+    );
+
+    renderSettingsView({ initialSection: "models", initialSettings: payload });
+
+    fireEvent.click(screen.getByRole("button", { name: "New model preset" }));
+    const nameInput = screen.getByRole("textbox", { name: "Preset name" });
+    fireEvent.change(nameInput, { target: { value: "PRIMARY" } });
+    await openPopover(screen.getByRole("button", { name: "Select model" }));
+    const modelSearch = await screen.findByRole("combobox", {
+      name: "Search or type model ID",
+    });
+    fireEvent.change(modelSearch, { target: { value: "openai/gpt-4o-mini" } });
+    fireEvent.keyDown(modelSearch, { key: "Enter" });
+    fireEvent.click(screen.getByRole("button", { name: "Save preset" }));
+
+    expect(requestMutationMock).not.toHaveBeenCalled();
+    expect(nameInput).toHaveAttribute("aria-invalid", "true");
+    expect(nameInput).toHaveAttribute("aria-describedby", "model-preset-name-error");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "A preset with this name already exists.",
+    );
+    expect(nameInput.parentElement).toHaveClass(
+      "animate-[preset-name-shake_180ms_ease-in-out]",
+    );
+
+    fireEvent.change(nameInput, { target: { value: "Writer" } });
+    expect(nameInput).toHaveAttribute("aria-invalid", "false");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("converts legacy model settings into presets before editing call order", async () => {

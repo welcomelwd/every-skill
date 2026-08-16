@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "repository": "citrolabs/ego-lite",
+  "source_url": "https://github.com/citrolabs/ego-lite",
+  "ref": "main",
+  "resolved_commit": "c46a439e7fbad90ad33dbea6c6af329b6009809f",
+  "category": "agent",
+  "subcategory": "runtimes",
+  "slug": "ego-lite",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-16T10:03:59+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 142,
+  "copied_bytes": 925476,
+  "excluded_files": [
+    "assets/composer-icon.png: binary content",
+    "assets/logo.png: binary content",
+    "docs/assets/banner.png: binary content",
+    "docs/assets/ego-vs-agent-benchmark.png: binary content",
+    "skills/ego-browser/assets/composer-icon.png: binary content",
+    "skills/ego-browser/assets/logo.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

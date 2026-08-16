@@ -716,6 +716,63 @@
       "runtime_files": []
     },
     {
+      "id": "agent-qa-authoring",
+      "path": "skills/agent-qa-authoring",
+      "targets": {
+        "codex": "supported",
+        "claude": "supported"
+      },
+      "setup": {
+        "type": "none",
+        "summary": "",
+        "docs": null
+      },
+      "reasons": [],
+      "blocked_reasons": {
+        "codex": [],
+        "claude": []
+      },
+      "runtime_files": []
+    },
+    {
+      "id": "agent-qa-debug-fix",
+      "path": "skills/agent-qa-debug-fix",
+      "targets": {
+        "codex": "supported",
+        "claude": "supported"
+      },
+      "setup": {
+        "type": "none",
+        "summary": "",
+        "docs": null
+      },
+      "reasons": [],
+      "blocked_reasons": {
+        "codex": [],
+        "claude": []
+      },
+      "runtime_files": []
+    },
+    {
+      "id": "agent-qa-result-triage",
+      "path": "skills/agent-qa-result-triage",
+      "targets": {
+        "codex": "supported",
+        "claude": "supported"
+      },
+      "setup": {
+        "type": "none",
+        "summary": "",
+        "docs": null
+      },
+      "reasons": [],
+      "blocked_reasons": {
+        "codex": [],
+        "claude": []
+      },
+      "runtime_files": []
+    },
+    {
       "id": "agent-self-scheduling",
       "path": "skills/agent-self-scheduling",
       "targets": {
@@ -9182,6 +9239,25 @@
     {
       "id": "competitor-tracking",
       "path": "skills/competitor-tracking",
+      "targets": {
+        "codex": "supported",
+        "claude": "supported"
+      },
+      "setup": {
+        "type": "none",
+        "summary": "",
+        "docs": null
+      },
+      "reasons": [],
+      "blocked_reasons": {
+        "codex": [],
+        "claude": []
+      },
+      "runtime_files": []
+    },
+    {
+      "id": "compile-knowledge",
+      "path": "skills/compile-knowledge",
       "targets": {
         "codex": "supported",
         "claude": "supported"
@@ -38622,10 +38698,10 @@
     }
   ],
   "summary": {
-    "total_skills": 2009,
+    "total_skills": 2013,
     "supported": {
-      "codex": 1931,
-      "claude": 1952
+      "codex": 1935,
+      "claude": 1956
     },
     "blocked": {
       "codex": 78,

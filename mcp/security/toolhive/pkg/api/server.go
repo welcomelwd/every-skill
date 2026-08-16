@@ -1,0 +1,969 @@
+// SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+// Package api contains the REST API for ToolHive.
+package api
+
+// The OpenAPI spec is generated using "github.com/swaggo/swag/v2/cmd/swag@v2.0.0-rc4"
+// To update the OpenAPI spec, run:
+// install swag:
+//	go install github.com/swaggo/swag/v2/cmd/swag@v2.0.0-rc4
+// generate the spec:
+//	swag init -g pkg/api/server.go --v3.1 -o docs/server
+
+// @title           ToolHive API
+// @version         1.0
+// @description     This is the ToolHive API server.
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/opencontainers/go-digest"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
+	ociplugins "github.com/stacklok/toolhive-core/oci/plugins"
+	ociskills "github.com/stacklok/toolhive-core/oci/skills"
+	regtypes "github.com/stacklok/toolhive-core/registry/types"
+	v1 "github.com/stacklok/toolhive/pkg/api/v1"
+	"github.com/stacklok/toolhive/pkg/auth"
+	"github.com/stacklok/toolhive/pkg/bodylimit"
+	"github.com/stacklok/toolhive/pkg/client"
+	"github.com/stacklok/toolhive/pkg/config"
+	"github.com/stacklok/toolhive/pkg/container"
+	"github.com/stacklok/toolhive/pkg/container/runtime"
+	"github.com/stacklok/toolhive/pkg/fileutils"
+	"github.com/stacklok/toolhive/pkg/groups"
+	"github.com/stacklok/toolhive/pkg/networking"
+	"github.com/stacklok/toolhive/pkg/plugins"
+	"github.com/stacklok/toolhive/pkg/plugins/adapters"
+	"github.com/stacklok/toolhive/pkg/plugins/pluginsvc"
+	"github.com/stacklok/toolhive/pkg/recovery"
+	"github.com/stacklok/toolhive/pkg/registry"
+	"github.com/stacklok/toolhive/pkg/server/discovery"
+	"github.com/stacklok/toolhive/pkg/skills"
+	"github.com/stacklok/toolhive/pkg/skills/gitresolver"
+	"github.com/stacklok/toolhive/pkg/skills/skillsvc"
+	"github.com/stacklok/toolhive/pkg/storage/sqlite"
+	"github.com/stacklok/toolhive/pkg/updates"
+	"github.com/stacklok/toolhive/pkg/workloads"
+)
+
+// Not sure if these values need to be configurable.
+const (
+	middlewareTimeout = 60 * time.Second
+	readHeaderTimeout = 10 * time.Second
+	// readTimeout bounds reading the entire request (headers + body), mitigating
+	// slow-upload connection exhaustion. WriteTimeout is intentionally NOT set:
+	// the workload router serves multi-minute responses (image pulls) that a
+	// server-level write deadline would sever (see setupDefaultRoutes).
+	readTimeout        = 30 * time.Second
+	idleTimeout        = 120 * time.Second
+	shutdownTimeout    = 30 * time.Second
+	nonceBytes         = 16
+	socketPermissions  = 0660    // Socket file permissions (owner/group read-write)
+	maxRequestBodySize = 1 << 20 // 1MB - Maximum request body size
+)
+
+// ServerBuilder provides a fluent interface for building and configuring the API server
+type ServerBuilder struct {
+	address           string
+	isUnixSocket      bool
+	debugMode         bool
+	enableDocs        bool
+	nonce             string
+	oidcConfig        *auth.TokenValidatorConfig
+	otelEnabled       bool
+	middlewares       []func(http.Handler) http.Handler
+	customRoutes      map[string]http.Handler
+	containerRuntime  runtime.Runtime
+	clientManager     client.Manager
+	workloadManager   workloads.Manager
+	groupManager      groups.Manager
+	skillManager      skills.SkillService
+	skillStoreCloser  io.Closer
+	pluginManager     plugins.PluginService
+	pluginStoreCloser io.Closer
+}
+
+// NewServerBuilder creates a new ServerBuilder with default configuration
+func NewServerBuilder() *ServerBuilder {
+	return &ServerBuilder{
+		middlewares:  make([]func(http.Handler) http.Handler, 0),
+		customRoutes: make(map[string]http.Handler),
+	}
+}
+
+// WithAddress sets the server address
+func (b *ServerBuilder) WithAddress(address string) *ServerBuilder {
+	b.address = address
+	return b
+}
+
+// WithUnixSocket configures the server to use a Unix socket
+func (b *ServerBuilder) WithUnixSocket(isUnixSocket bool) *ServerBuilder {
+	b.isUnixSocket = isUnixSocket
+	return b
+}
+
+// WithDebugMode enables or disables debug mode
+func (b *ServerBuilder) WithDebugMode(debugMode bool) *ServerBuilder {
+	b.debugMode = debugMode
+	return b
+}
+
+// WithDocs enables or disables OpenAPI documentation
+func (b *ServerBuilder) WithDocs(enableDocs bool) *ServerBuilder {
+	b.enableDocs = enableDocs
+	return b
+}
+
+// WithNonce sets the server instance nonce used for discovery verification.
+// When non-empty, the server writes a discovery file on startup and returns
+// the nonce in the X-Toolhive-Nonce health check header.
+func (b *ServerBuilder) WithNonce(nonce string) *ServerBuilder {
+	b.nonce = nonce
+	return b
+}
+
+// WithOIDCConfig sets the OIDC configuration
+func (b *ServerBuilder) WithOIDCConfig(oidcConfig *auth.TokenValidatorConfig) *ServerBuilder {
+	b.oidcConfig = oidcConfig
+	return b
+}
+
+// WithOtelEnabled enables OTEL HTTP middleware for distributed tracing.
+// When enabled, the server extracts W3C traceparent headers from incoming requests
+// and creates child OTEL spans for each request. Requires OTEL to be initialized
+// (via telemetry.NewProvider) before the server starts.
+func (b *ServerBuilder) WithOtelEnabled(enabled bool) *ServerBuilder {
+	b.otelEnabled = enabled
+	return b
+}
+
+// WithMiddleware appends HTTP middleware that runs after the default middleware
+// stack (request-ID, body-size limit, headers, update-check, auth) and before
+// route handlers. Part of the ApplyServerExtensions extension point — used by
+// downstream consumers to inject custom authentication or request-scoping
+// middleware into the API server.
+//
+// Public extension API. Do not remove based on deadcode analysis alone:
+// callers may live in repositories that are not visible to this module's
+// analyzer. The test in server_test.go intentionally exercises this method
+// to keep it reachable.
+func (b *ServerBuilder) WithMiddleware(mw ...func(http.Handler) http.Handler) *ServerBuilder {
+	b.middlewares = append(b.middlewares, mw...)
+	return b
+}
+
+// WithRoute mounts a sub-router at the given prefix. The caller is responsible
+// for any per-route timeout middleware. Part of the ApplyServerExtensions
+// extension point — used by downstream consumers to add API surface alongside
+// the built-in routes.
+//
+// Public extension API. Do not remove based on deadcode analysis alone:
+// callers may live in repositories that are not visible to this module's
+// analyzer. The test in server_test.go intentionally exercises this method
+// to keep it reachable.
+func (b *ServerBuilder) WithRoute(prefix string, handler http.Handler) *ServerBuilder {
+	b.customRoutes[prefix] = handler
+	return b
+}
+
+// Build creates and configures the HTTP router
+func (b *ServerBuilder) Build(ctx context.Context) (*chi.Mux, error) {
+	r := chi.NewRouter()
+
+	// OTEL middleware must be outermost so its span is still active when recovery
+	// middleware catches a panic. If recovery were outer, otelhttp's defer span.End()
+	// would fire during panic unwinding — before recover() — leaving the span ended
+	// and making span.RecordError a no-op. With otelhttp outer:
+	//   1. otelhttp starts span with a provisional name, calls next
+	//   2. chiRouteTagMiddleware renames the span after routing has resolved
+	//   3. recovery catches any panic, calls span.RecordError, returns 500 normally
+	//   4. otelhttp's defer fires: span has error recorded + 500 status, then ends
+	//
+	// Note: otelhttp reads W3C traceparent/tracestate headers before authentication.
+	// Untrusted clients can inject trace IDs or set sampled=1 to influence sampling.
+	// The ParentBased sampler (in otlp/tracing.go) partially mitigates forced sampling
+	// by delegating root decisions to TraceIDRatioBased.
+	if b.otelEnabled {
+		r.Use(otelhttp.NewMiddleware("thv-api"))
+		// chiRouteTagMiddleware runs after routing so RoutePattern() is populated.
+		// It renames the span from the provisional "thv-api" to e.g.
+		// "GET /api/v1beta/workloads/{name}" for clean grouping in OTEL backends.
+		r.Use(chiRouteSpanNamer)
+	}
+
+	// Recovery middleware is inner so it runs inside the OTEL span lifetime,
+	// allowing panic details to be recorded on the span before it ends.
+	r.Use(recovery.Middleware)
+
+	// Apply default middleware
+	// NOTE: Timeout is NOT applied globally because workload create/update routes
+	// pull container images, which can take minutes. Instead, timeouts are applied
+	// per-route group in setupDefaultRoutes and within WorkloadRouter.
+	r.Use(
+		middleware.RequestID,
+		// TODO: Figure out logging middleware. We may want to use a different logger.
+		bodylimit.Middleware(maxRequestBodySize),
+		headersMiddleware,
+	)
+
+	// Add update check middleware
+	r.Use(updateCheckMiddleware())
+
+	// Add authentication middleware
+	authMiddleware, _, err := auth.GetAuthenticationMiddleware(ctx, b.oidcConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create authentication middleware: %w", err)
+	}
+	r.Use(authMiddleware)
+
+	// Apply custom middleware
+	for _, mw := range b.middlewares {
+		r.Use(mw)
+	}
+
+	// Create default managers if not provided
+	if err := b.createDefaultManagers(ctx); err != nil {
+		return nil, err
+	}
+
+	// Setup default routes
+	b.setupDefaultRoutes(r)
+
+	// Add custom routes (callers of WithRoute are responsible for their own timeout management)
+	for prefix, handler := range b.customRoutes {
+		r.Mount(prefix, handler)
+	}
+
+	return r, nil
+}
+
+// createDefaultManagers creates default managers if they weren't provided
+func (b *ServerBuilder) createDefaultManagers(ctx context.Context) error {
+	var err error
+
+	if b.containerRuntime == nil {
+		b.containerRuntime, err = container.NewFactory().Create(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to create container runtime: %w", err)
+		}
+	}
+
+	if b.clientManager == nil {
+		b.clientManager, err = client.NewManager(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to create client manager: %w", err)
+		}
+	}
+
+	if b.workloadManager == nil {
+		b.workloadManager, err = workloads.NewManagerFromRuntime(b.containerRuntime)
+		if err != nil {
+			return fmt.Errorf("failed to create workload manager: %w", err)
+		}
+	}
+
+	if b.groupManager == nil {
+		b.groupManager, err = groups.NewManager()
+		if err != nil {
+			return fmt.Errorf("failed to create group manager: %w", err)
+		}
+	}
+
+	if b.skillManager == nil {
+		if err := b.createDefaultSkillManager(); err != nil {
+			return err
+		}
+	}
+
+	if b.pluginManager == nil {
+		if err := b.createDefaultPluginManager(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// createDefaultSkillManager builds the default skill service (skillsvc.New)
+// wired with a SQLite skill store, the OCI skill store/packager/registry,
+// a path resolver backed by the client manager, the group manager, the
+// lazy registry lookup, and the git resolver.
+func (b *ServerBuilder) createDefaultSkillManager() error {
+	store, storeErr := sqlite.NewDefaultSkillStore()
+	if storeErr != nil {
+		return fmt.Errorf("failed to create skill store: %w", storeErr)
+	}
+	b.skillStoreCloser = store
+	cm, cmErr := client.NewClientManager()
+	if cmErr != nil {
+		_ = store.Close()
+		return fmt.Errorf("failed to create client manager for skills: %w", cmErr)
+	}
+
+	ociStore, ociErr := ociskills.NewStore(ociskills.DefaultStoreRoot())
+	if ociErr != nil {
+		_ = store.Close()
+		return fmt.Errorf("failed to create OCI skill store: %w", ociErr)
+	}
+	ociRegistry, regErr := newOCIRegistryClient()
+	if regErr != nil {
+		_ = store.Close()
+		// ociStore is directory-backed with no open handles; no cleanup needed.
+		return fmt.Errorf("failed to create OCI registry client: %w", regErr)
+	}
+	packager := ociskills.NewPackager(ociStore)
+
+	skillOpts := []skillsvc.Option{
+		skillsvc.WithPathResolver(&clientPathAdapter{cm: cm}),
+		skillsvc.WithOCIStore(ociStore),
+		skillsvc.WithPackager(packager),
+		skillsvc.WithRegistryClient(ociRegistry),
+		skillsvc.WithGroupManager(b.groupManager),
+	}
+
+	skillOpts = append(skillOpts,
+		skillsvc.WithSkillLookup(lazySkillLookup{}),
+		skillsvc.WithGitResolver(gitresolver.NewResolver()),
+	)
+
+	b.skillManager = skillsvc.New(store, skillOpts...)
+	return nil
+}
+
+// createDefaultPluginManager builds the default plugin service (pluginsvc.New)
+// wired with a SQLite plugin store, the OCI plugin store/packager/registry,
+// per-client materialization adapters, and the group manager. Mirrors the
+// skill-manager block in createDefaultManagers.
+func (b *ServerBuilder) createDefaultPluginManager() error {
+	store, storeErr := sqlite.NewDefaultPluginStore()
+	if storeErr != nil {
+		return fmt.Errorf("failed to create plugin store: %w", storeErr)
+	}
+	b.pluginStoreCloser = store
+	cm, cmErr := client.NewClientManager()
+	if cmErr != nil {
+		_ = store.Close()
+		return fmt.Errorf("failed to create client manager for plugins: %w", cmErr)
+	}
+
+	ociStore, ociErr := ociplugins.NewStore(ociplugins.DefaultStoreRoot())
+	if ociErr != nil {
+		_ = store.Close()
+		return fmt.Errorf("failed to create OCI plugin store: %w", ociErr)
+	}
+	ociRegistry, regErr := newPluginOCIRegistryClient()
+	if regErr != nil {
+		_ = store.Close()
+		// ociStore is directory-backed with no open handles; no cleanup needed.
+		return fmt.Errorf("failed to create plugin OCI registry client: %w", regErr)
+	}
+	packager := ociplugins.NewPackager(ociStore)
+
+	materializers := map[string]plugins.MaterializationAdapter{
+		string(client.ClaudeCode): adapters.NewClaudeCodeAdapter(cm),
+		string(client.Codex):      adapters.NewCodexAdapter(cm),
+	}
+
+	pluginOpts := []pluginsvc.Option{
+		pluginsvc.WithStore(store),
+		pluginsvc.WithOCIStore(ociStore),
+		pluginsvc.WithPackager(packager),
+		pluginsvc.WithRegistryClient(ociRegistry),
+		pluginsvc.WithGroupManager(b.groupManager),
+		pluginsvc.WithMaterializers(materializers),
+		pluginsvc.WithClientManager(cm),
+		pluginsvc.WithPluginLookup(lazyPluginLookup{}),
+	}
+
+	b.pluginManager = pluginsvc.New(pluginOpts...)
+	return nil
+}
+
+// setupDefaultRoutes sets up the default API routes
+func (b *ServerBuilder) setupDefaultRoutes(r *chi.Mux) {
+	standardTimeout := middleware.Timeout(middlewareTimeout)
+
+	// Workload router manages its own per-route timeouts (image pulls can take minutes)
+	r.Mount("/api/v1beta/workloads", v1.WorkloadRouter(
+		b.workloadManager,
+		b.containerRuntime,
+		b.groupManager,
+		b.debugMode,
+	))
+
+	// Skills router does the same: install, sync, and upgrade pull OCI
+	// artifacts, so a flat 60s cap would sever them mid-transfer.
+	r.Mount("/api/v1beta/skills", v1.SkillsRouter(b.skillManager))
+
+	// Plugins router likewise: install, build, and push move OCI artifacts.
+	r.Mount("/api/v1beta/plugins", v1.PluginsRouter(b.pluginManager))
+
+	// All other routes get standard timeout
+	standardRouters := map[string]http.Handler{
+		"/health":               v1.HealthcheckRouter(b.containerRuntime, b.nonce),
+		"/api/v1beta/version":   v1.VersionRouter(),
+		"/api/v1beta/registry":  v1.RegistryRouter(true),
+		"/api/v1beta/discovery": v1.DiscoveryRouter(),
+		"/api/v1beta/clients":   v1.ClientRouter(b.clientManager, b.workloadManager, b.groupManager),
+		"/api/v1beta/secrets":   v1.SecretsRouter(),
+		"/api/v1beta/groups":    v1.GroupsRouter(b.groupManager, b.workloadManager, b.clientManager),
+		"/registry":             v1.RegistryV01Router(),
+	}
+	for prefix, router := range standardRouters {
+		r.Mount(prefix, standardTimeout(router))
+	}
+
+	// Only mount docs router if enabled
+	if b.enableDocs {
+		r.Mount("/api/", standardTimeout(DocsRouter()))
+	}
+}
+
+// namedPipePrefix is the Windows named-pipe namespace prefix. The canonical
+// definition lives in pkg/server/discovery so the listener and dialer cannot
+// drift; pkg/api re-aliases it here so per-platform socket files do not need
+// to import discovery directly.
+const namedPipePrefix = discovery.NamedPipePrefix
+
+// isNamedPipeAddress reports whether address is a Windows named-pipe path.
+// The check is platform-agnostic so callers on non-Windows can fail fast with
+// a clear error before reaching the listener code. The comparison is
+// case-insensitive because the Windows pipe namespace is case-insensitive at
+// the kernel layer; without EqualFold an address like \\.\Pipe\foo would
+// silently fall through to AF_UNIX and then fail to bind.
+func isNamedPipeAddress(address string) bool {
+	return len(address) >= len(namedPipePrefix) &&
+		strings.EqualFold(address[:len(namedPipePrefix)], namedPipePrefix)
+}
+
+func setupTCPListener(address string) (net.Listener, error) {
+	return net.Listen("tcp", address)
+}
+
+func headersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Content-Type", "application/json")
+		}
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// updateCheckMiddleware triggers update checks for API usage
+func updateCheckMiddleware() func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			go func() {
+				if updates.ShouldSkipUpdateChecks() {
+					return
+				}
+				component, version, uiReleaseBuild := getComponentAndVersionFromRequest(r)
+				versionClient := updates.NewVersionClientForComponent(component, version, uiReleaseBuild)
+
+				updateChecker, err := updates.NewUpdateChecker(versionClient)
+				if err != nil {
+					//nolint:gosec // G706: component is an internal string constant
+					slog.Warn("unable to create update client", "component", component, "error", err)
+					return
+				}
+
+				err = updateChecker.CheckLatestVersion()
+				if err != nil {
+					//nolint:gosec // G706: component is an internal string constant
+					slog.Warn("could not check for updates", "component", component, "error", err)
+				}
+			}()
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// getComponentAndVersionFromRequest determines the component name, version, and ui release build from the request
+func getComponentAndVersionFromRequest(r *http.Request) (string, string, bool) {
+	clientType := r.Header.Get("X-Client-Type")
+
+	if clientType == "toolhive-studio" {
+		version := r.Header.Get("X-Client-Version")
+		// Checks if the UI is calling from an official release
+		uiReleaseBuild := r.Header.Get("X-Client-Release-Build") == "true"
+		return "UI", version, uiReleaseBuild
+	}
+
+	return "API", "", false
+}
+
+// Server represents a configured HTTP server
+type Server struct {
+	httpServer        *http.Server
+	listener          net.Listener
+	address           string
+	isUnixSocket      bool
+	addrType          string
+	nonce             string
+	skillStoreCloser  io.Closer
+	pluginStoreCloser io.Closer
+}
+
+// NewServer creates a new Server instance from a pre-configured builder
+func NewServer(ctx context.Context, builder *ServerBuilder) (*Server, error) {
+	handler, err := builder.Build(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build server handler: %w", err)
+	}
+
+	listener, addrType, err := createListener(builder.address, builder.isUnixSocket)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create listener: %w", err)
+	}
+
+	httpServer := &http.Server{
+		BaseContext:       func(net.Listener) context.Context { return ctx },
+		Addr:              builder.address,
+		Handler:           handler,
+		ReadHeaderTimeout: readHeaderTimeout,
+		// ReadTimeout bounds reading the entire request (headers + body) so a
+		// slow client upload cannot hold a connection open indefinitely.
+		ReadTimeout: readTimeout,
+		// IdleTimeout caps how long a keep-alive connection can sit idle.
+		// On Windows named pipes winio.MaxInstances defaults to 255, so a
+		// slow client cannot hold an instance forever and starve new
+		// connections; on POSIX it bounds keep-alive resource use the same
+		// way the http stdlib defaults would for a tcp listener.
+		IdleTimeout: idleTimeout,
+	}
+
+	return &Server{
+		httpServer:        httpServer,
+		listener:          listener,
+		address:           builder.address,
+		isUnixSocket:      builder.isUnixSocket,
+		addrType:          addrType,
+		nonce:             builder.nonce,
+		skillStoreCloser:  builder.skillStoreCloser,
+		pluginStoreCloser: builder.pluginStoreCloser,
+	}, nil
+}
+
+// ListenURL returns the URL where the server is listening, using the actual
+// bound address from the listener (important when binding to port 0).
+func (s *Server) ListenURL() string {
+	if s.isUnixSocket {
+		return socketURL(s.address)
+	}
+	return fmt.Sprintf("http://%s", s.listener.Addr().String())
+}
+
+// Start starts the server and blocks until the context is cancelled
+func (s *Server) Start(ctx context.Context) error {
+	slog.Info("starting server", "type", s.addrType, "address", s.address)
+
+	// Write server discovery file so clients can find this instance.
+	if err := s.writeDiscoveryFile(ctx); err != nil {
+		return err
+	}
+
+	// Start server in a goroutine
+	serverErr := make(chan error, 1)
+	go func() {
+		if err := s.httpServer.Serve(s.listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- fmt.Errorf("server stopped with error: %w", err)
+		}
+		close(serverErr)
+	}()
+
+	// Wait for context cancellation or server error
+	select {
+	case <-ctx.Done():
+		return s.shutdown()
+	case err := <-serverErr:
+		if err != nil {
+			s.cleanup()
+			return err
+		}
+		return nil
+	}
+}
+
+// writeDiscoveryFile writes the server discovery file if a nonce is configured.
+// It checks for an existing healthy server first to prevent silent orphaning.
+// The entire check-then-write sequence is wrapped in a file lock to prevent
+// TOCTOU races when two servers start simultaneously.
+func (s *Server) writeDiscoveryFile(ctx context.Context) error {
+	if s.nonce == "" {
+		return nil
+	}
+
+	// Create and lock down the discovery directory before acquiring the lock,
+	// since the lock file is created in the same directory and Discover below
+	// trusts whatever server.json it finds there. Restricting only on the write
+	// would be too late: a StateRunning result returns before the write, and
+	// the lock file itself would be taken in a directory other accounts can
+	// still write to.
+	secure, err := discovery.EnsureSecureDirEx()
+	if err != nil {
+		return err
+	}
+	discoveryPath := discovery.FilePath()
+
+	return fileutils.WithFileLock(discoveryPath, func() error {
+		if err := discovery.ReconcileDiscoveryAfterInsecureUpgrade(ctx, secure.RepairedInsecureChain); err != nil {
+			return err
+		}
+
+		// Guard against overwriting another server's discovery file.
+		result, err := discovery.Discover(ctx)
+		if err != nil {
+			slog.Debug("discovery check failed, proceeding with startup", "error", err)
+		} else {
+			switch result.State {
+			case discovery.StateRunning:
+				return fmt.Errorf("another ToolHive server is already running at %s (PID %d)", result.Info.URL, result.Info.PID)
+			case discovery.StateStale:
+				slog.Debug("cleaning up stale discovery file", "pid", result.Info.PID)
+				if err := discovery.CleanupStale(); err != nil {
+					slog.Warn("failed to clean up stale discovery file", "error", err)
+				}
+			case discovery.StateUnhealthy:
+				// The process is alive but not responding to health checks.
+				// This can happen after a crash-restart where the old process
+				// is hung. We intentionally overwrite the discovery file so
+				// this new server becomes discoverable.
+				slog.Warn("existing server is unhealthy, overwriting discovery file", "pid", result.Info.PID)
+			case discovery.StateNotFound:
+				// No existing server, proceed normally.
+			}
+		}
+
+		info := &discovery.ServerInfo{
+			URL:       s.ListenURL(),
+			PID:       os.Getpid(),
+			Nonce:     s.nonce,
+			StartedAt: time.Now().UTC(),
+		}
+		if err := discovery.WriteServerInfo(info); err != nil {
+			return fmt.Errorf("failed to write discovery file: %w", err)
+		}
+		slog.Debug("wrote discovery file", "url", info.URL, "pid", info.PID)
+		return nil
+	})
+}
+
+// shutdown gracefully shuts down the server
+func (s *Server) shutdown() error {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+
+	if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
+		s.cleanup()
+		return fmt.Errorf("server shutdown failed: %w", err)
+	}
+
+	s.cleanup()
+	slog.Debug("server stopped", "type", s.addrType)
+	return nil
+}
+
+// cleanup performs cleanup operations
+func (s *Server) cleanup() {
+	if s.nonce != "" {
+		if err := discovery.RemoveServerInfo(); err != nil {
+			slog.Warn("failed to remove discovery file", "error", err)
+		}
+	}
+	if s.skillStoreCloser != nil {
+		if err := s.skillStoreCloser.Close(); err != nil {
+			slog.Warn("failed to close skill store", "error", err)
+		}
+	}
+	if s.pluginStoreCloser != nil {
+		if err := s.pluginStoreCloser.Close(); err != nil {
+			slog.Warn("failed to close plugin store", "error", err)
+		}
+	}
+	if s.isUnixSocket {
+		cleanupUnixSocket(s.address)
+	}
+}
+
+// createListener creates the appropriate listener based on the configuration.
+// Named-pipe addresses are only supported on Windows; other platforms reject
+// them up front rather than creating a literal-backslash file via AF_UNIX.
+func createListener(address string, isUnixSocket bool) (net.Listener, string, error) {
+	if !isUnixSocket {
+		listener, err := setupTCPListener(address)
+		if err != nil {
+			return nil, "", err
+		}
+		return listener, "HTTP", nil
+	}
+
+	addrType := "UNIX socket"
+	if isNamedPipeAddress(address) {
+		if !supportsNamedPipe() {
+			return nil, "", fmt.Errorf("named pipe addresses are only supported on Windows: %s", address)
+		}
+		addrType = "Windows named pipe"
+	}
+
+	listener, err := setupUnixSocket(address)
+	if err != nil {
+		return nil, "", err
+	}
+	return listener, addrType, nil
+}
+
+// newOCIRegistryClient creates an OCI registry client. In dev mode
+// (TOOLHIVE_DEV=true), plain HTTP is used for loopback registries only (e.g.
+// a local test registry started by e2e tests) via devModeOCIRegistryClient.
+//
+// Plain HTTP must NOT be applied to real registries such as ghcr.io: those
+// registries redirect an initial plain-HTTP request to HTTPS, and oras-go
+// refuses to complete the WWW-Authenticate/token-fetch handshake across that
+// redirect (a guard against leaking credentials across origins on redirect,
+// see GHSA-vh4v-2xq2-g5cg). The pull then fails with a bare 401 instead of
+// retrying with a fetched (possibly anonymous) bearer token.
+func newOCIRegistryClient() (ociskills.RegistryClient, error) {
+	secure, err := ociskills.NewRegistry()
+	if err != nil {
+		return nil, err
+	}
+	if os.Getenv("TOOLHIVE_DEV") != "true" {
+		return secure, nil
+	}
+	plain, err := ociskills.NewRegistry(ociskills.WithPlainHTTP(true))
+	if err != nil {
+		return nil, err
+	}
+	return &devModeOCIRegistryClient{secure: secure, plain: plain}, nil
+}
+
+// devModeOCIRegistryClient dispatches each Pull/Push to a plain-HTTP client
+// when the target reference's host is loopback (a local test registry), and
+// to a normal TLS client otherwise. This keeps TOOLHIVE_DEV=true's
+// local-test-registry support (see gitresolver.isDevMode for the analogous
+// SSRF relaxation) without silently disabling TLS for real registries.
+type devModeOCIRegistryClient struct {
+	secure ociskills.RegistryClient
+	plain  ociskills.RegistryClient
+}
+
+func (c *devModeOCIRegistryClient) Pull(
+	ctx context.Context, store *ociskills.Store, ref string,
+) (digest.Digest, error) {
+	return c.clientFor(ref).Pull(ctx, store, ref)
+}
+
+func (c *devModeOCIRegistryClient) Push(
+	ctx context.Context, store *ociskills.Store, manifestDigest digest.Digest, ref string,
+) error {
+	return c.clientFor(ref).Push(ctx, store, manifestDigest, ref)
+}
+
+func (c *devModeOCIRegistryClient) clientFor(ref string) ociskills.RegistryClient {
+	if networking.IsLocalhost(ociRefHost(ref)) {
+		return c.plain
+	}
+	return c.secure
+}
+
+// ociRefHost extracts the "host[:port]" portion of an OCI reference such as
+// "ghcr.io/org/repo:tag" or "localhost:5000/repo@sha256:...".
+func ociRefHost(ref string) string {
+	if idx := strings.IndexByte(ref, '/'); idx >= 0 {
+		return ref[:idx]
+	}
+	return ref
+}
+
+// newPluginOCIRegistryClient creates an OCI registry client for plugin
+// artifacts. In dev mode (TOOLHIVE_DEV=true), plain HTTP is used for loopback
+// registries only via devModePluginRegistryClient. Mirrors
+// newOCIRegistryClient (which is the skills analogue) but typed for the
+// toolhive-core oci/plugins package.
+func newPluginOCIRegistryClient() (ociplugins.RegistryClient, error) {
+	secure, err := ociplugins.NewRegistry()
+	if err != nil {
+		return nil, err
+	}
+	if os.Getenv("TOOLHIVE_DEV") != "true" {
+		return secure, nil
+	}
+	plain, err := ociplugins.NewRegistry(ociplugins.WithPlainHTTP(true))
+	if err != nil {
+		return nil, err
+	}
+	return &devModePluginRegistryClient{secure: secure, plain: plain}, nil
+}
+
+// devModePluginRegistryClient dispatches each Pull/Push to a plain-HTTP client
+// when the target reference's host is loopback (a local test registry), and to
+// a normal TLS client otherwise. Mirrors devModeOCIRegistryClient.
+type devModePluginRegistryClient struct {
+	secure ociplugins.RegistryClient
+	plain  ociplugins.RegistryClient
+}
+
+func (c *devModePluginRegistryClient) Pull(
+	ctx context.Context, store *ociplugins.Store, ref string,
+) (digest.Digest, error) {
+	return c.clientFor(ref).Pull(ctx, store, ref)
+}
+
+func (c *devModePluginRegistryClient) Push(
+	ctx context.Context, store *ociplugins.Store, manifestDigest digest.Digest, ref string,
+) error {
+	return c.clientFor(ref).Push(ctx, store, manifestDigest, ref)
+}
+
+func (c *devModePluginRegistryClient) clientFor(ref string) ociplugins.RegistryClient {
+	if networking.IsLocalhost(ociRefHost(ref)) {
+		return c.plain
+	}
+	return c.secure
+}
+
+// lazySkillLookup implements skillsvc.SkillLookup by resolving the registry
+// provider on each call. This ensures that registry config changes (via
+// thv config set-registry or the API) are picked up without restarting
+// the server, because ResetDefaultProvider clears the cached provider and
+// the next GetDefaultProviderWithConfig call creates a fresh one.
+type lazySkillLookup struct{}
+
+func (lazySkillLookup) SearchSkills(query string) ([]regtypes.Skill, error) {
+	provider, err := registry.GetDefaultProviderWithConfig(config.NewDefaultProvider())
+	if err != nil {
+		return nil, err
+	}
+	return provider.SearchSkills(query)
+}
+
+// lazyPluginLookup implements pluginsvc.PluginLookup by resolving the registry
+// provider on each call, mirroring lazySkillLookup. Registry config changes are
+// picked up without restarting the server.
+type lazyPluginLookup struct{}
+
+func (lazyPluginLookup) SearchPlugins(_ context.Context, query string) ([]pluginsvc.PluginSearchHit, error) {
+	provider, err := registry.GetDefaultProviderWithConfig(config.NewDefaultProvider())
+	if err != nil {
+		return nil, err
+	}
+	found, err := provider.SearchPlugins(query)
+	if err != nil {
+		return nil, err
+	}
+	return pluginHitsFromRegistry(found), nil
+}
+
+// pluginHitsFromRegistry adapts registry plugin search results to the
+// pluginsvc lookup shape. The OCI reference lives in SkillPackage.Identifier
+// on the wire; pluginsvc consumes it as PluginPackage.Reference. Namespace,
+// Version, and Digest are carried through so the install flow can disambiguate
+// by namespace, honor an explicit version request, and pin to a verified
+// digest.
+func pluginHitsFromRegistry(regPlugins []regtypes.Plugin) []pluginsvc.PluginSearchHit {
+	hits := make([]pluginsvc.PluginSearchHit, 0, len(regPlugins))
+	for i := range regPlugins {
+		p := &regPlugins[i]
+		pkgs := make([]pluginsvc.PluginPackage, 0, len(p.Packages))
+		for _, sp := range p.Packages {
+			pkgs = append(pkgs, pluginsvc.PluginPackage{
+				Reference: sp.Identifier,
+				Type:      sp.RegistryType,
+				Digest:    sp.Digest,
+			})
+		}
+		hits = append(hits, pluginsvc.PluginSearchHit{
+			Name:        p.Name,
+			Namespace:   p.Namespace,
+			Version:     p.Version,
+			Description: p.Description,
+			Packages:    pkgs,
+		})
+	}
+	return hits
+}
+
+// clientPathAdapter adapts *client.ClientManager to the skills.PathResolver interface.
+type clientPathAdapter struct {
+	cm *client.ClientManager
+}
+
+func (a *clientPathAdapter) GetSkillPath(clientType, skillName string, scope skills.Scope, projectRoot string) (string, error) {
+	return a.cm.GetSkillPath(client.ClientApp(clientType), skillName, scope, projectRoot)
+}
+
+func (a *clientPathAdapter) ListSkillSupportingClients() []string {
+	clients := a.cm.ListSkillSupportingClients()
+	var result []string
+	for _, c := range clients {
+		if a.cm.IsClientInstalled(c) {
+			result = append(result, string(c))
+		} else {
+			slog.Debug("skipping client for skill install: not detected on system", "client", c)
+		}
+	}
+	return result
+}
+
+// chiRouteSpanNamer is a middleware that renames the active OTEL span to reflect
+// the matched chi route pattern (e.g. "GET /api/v1beta/workloads/{name}") and
+// records each URL path parameter as a span attribute for drill-down visibility.
+//
+// otelhttp creates the span with a provisional name at request start, before
+// chi has matched the route. This middleware runs after chi routing completes
+// (i.e. it wraps next.ServeHTTP and renames the span on the way back up), so
+// RouteContext.RoutePattern() is guaranteed to be populated.
+//
+// Low-cardinality span names group spans in OTEL/Sentry backends; the path
+// parameter attributes (e.g. url.path_param.name="my-server") retain the
+// concrete values for trace-level debugging without inflating cardinality.
+func chiRouteSpanNamer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r)
+		rctx := chi.RouteContext(r.Context())
+		if rctx == nil || rctx.RoutePattern() == "" {
+			return
+		}
+		span := trace.SpanFromContext(r.Context())
+		span.SetName(r.Method + " " + rctx.RoutePattern())
+		// Add each matched URL parameter as a span attribute so the actual
+		// value (e.g. the workload/MCP name) is visible in the trace without
+		// raising span-name cardinality.
+		attrs := make([]attribute.KeyValue, 0, len(rctx.URLParams.Keys))
+		for i, key := range rctx.URLParams.Keys {
+			attrs = append(attrs, attribute.String("url.path_param."+key, rctx.URLParams.Values[i]))
+		}
+		if len(attrs) > 0 {
+			span.SetAttributes(attrs...)
+		}
+	})
+}
+
+// GenerateNonce generates a random nonce for server instance identification.
+func GenerateNonce() (string, error) {
+	b := make([]byte, nonceBytes)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate server nonce: %w", err)
+	}
+	return hex.EncodeToString(b), nil
+}

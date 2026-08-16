@@ -4,7 +4,7 @@
 
 | 项目 | 状态 | 目录或原因 |
 | --- | --- | --- |
-| `google/skills` | downloaded | `skill/development/google-skills @ 8f57a0d9839ba9e33aa5367dfeb7ba37598175e3 (535 files, 3282175 bytes)` |
-| `hashicorp/terraform-mcp-server` | downloaded | `mcp/servers/terraform-mcp-server @ 407136375bcc64a40342ecf4ad6603eeab2f3e69 (197 files, 903639 bytes)` |
-| `microsoft/agent-framework` | downloaded | `agent/runtimes/agent-framework @ 12621e0a746517068300f7b9445225c3ee2406ea (3474 files, 26214400 bytes); excluded 1419 files` |
-| `MakazhanAlpamys/Soup` | downloaded | `knowledge/tools/soup @ 33cce1a4ca8954110f2ff365d59dbd65f2912844 (963 files, 14119355 bytes); excluded 3 files` |
+| `google/skills` | up-to-date | `skill/development/google-skills @ 8f57a0d9839ba9e33aa5367dfeb7ba37598175e3` |
+| `hashicorp/terraform-mcp-server` | up-to-date | `mcp/servers/terraform-mcp-server @ 407136375bcc64a40342ecf4ad6603eeab2f3e69` |
+| `microsoft/agent-framework` | up-to-date | `agent/runtimes/agent-framework @ 12621e0a746517068300f7b9445225c3ee2406ea` |
+| `MakazhanAlpamys/Soup` | up-to-date | `knowledge/tools/soup @ 33cce1a4ca8954110f2ff365d59dbd65f2912844` |

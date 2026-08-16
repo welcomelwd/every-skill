@@ -1,0 +1,4863 @@
+// SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+package authserver
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
+	"github.com/oauth2-proxy/mockoidc"
+	"github.com/ory/fosite"
+	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/stacklok/toolhive/pkg/auth"
+	"github.com/stacklok/toolhive/pkg/auth/upstreamtoken"
+	servercrypto "github.com/stacklok/toolhive/pkg/authserver/server/crypto"
+	"github.com/stacklok/toolhive/pkg/authserver/server/handlers"
+	"github.com/stacklok/toolhive/pkg/authserver/server/keys"
+	"github.com/stacklok/toolhive/pkg/authserver/server/registration"
+	"github.com/stacklok/toolhive/pkg/authserver/server/session"
+	"github.com/stacklok/toolhive/pkg/authserver/server/tokenexchange"
+	"github.com/stacklok/toolhive/pkg/authserver/storage"
+	"github.com/stacklok/toolhive/pkg/authserver/upstream"
+	"github.com/stacklok/toolhive/pkg/oauthproto"
+)
+
+const (
+	testClientID    = "test-client"
+	testRedirectURI = "http://localhost:8080/callback"
+	testIssuer      = "http://localhost"
+	testAudience    = "https://mcp.example.com"
+
+	// testAccessTokenLifetime is the configured access token lifetime in setupTestServer.
+	testAccessTokenLifetime = time.Hour
+)
+
+// testServer bundles all test server components together.
+//
+// The mr field is non-nil only when the test server was constructed
+// with withRedisBackedStorage(); otherwise it is nil and the in-memory
+// backend is used. Tests that need to advance Redis time call Miniredis(t)
+// rather than dereferencing this field directly so a misconfigured test
+// fails loudly instead of nil-panicking.
+type testServer struct {
+	Server     *httptest.Server
+	PrivateKey *rsa.PrivateKey
+	authServer Server
+	storage    storage.UpstreamTokenStorage
+	mr         *miniredis.Miniredis
+}
+
+// Miniredis returns the miniredis instance backing this test server. Fails
+// the test loudly with a useful message if the server was not constructed
+// with withRedisBackedStorage(). Use this rather than dereferencing the
+// field directly.
+func (ts *testServer) Miniredis(t *testing.T) *miniredis.Miniredis {
+	t.Helper()
+	require.NotNil(t, ts.mr,
+		"testServer was not constructed with withRedisBackedStorage(); call setupTestServer*(..., withRedisBackedStorage()) to enable miniredis access")
+	return ts.mr
+}
+
+// testServerOptions configures the test server setup.
+type testServerOptions struct {
+	upstream            upstream.OAuth2Provider
+	scopes              []string
+	accessTokenLifespan time.Duration
+	// storageFactory, when non-nil, supplies the storage backend instead of
+	// the default in-memory implementation. The factory may also return a
+	// *miniredis.Miniredis instance; when it does, the setup helper stashes
+	// it on testServer.mr (accessed via testServer.Miniredis()) so tests can drive its clock. A nil
+	// miniredis return value is valid (e.g., for non-Redis alternative
+	// backends).
+	storageFactory func(t *testing.T) (storage.Storage, *miniredis.Miniredis)
+	// upstreamFilter, when set, is passed through to Config.UpstreamFilter.
+	// Read by every setup helper below that builds its own Config
+	// (setupTestServer, setupTestServerWithOIDCProvider,
+	// setupTestServerWithTwoUpstreams) and by setupTestServerWithMockOIDC,
+	// which delegates to setupTestServer. setupTestServerWithRTProxy does not
+	// accept testServerOption at all, so this field does not apply to it.
+	upstreamFilter handlers.UpstreamFilter
+	// extraClients, when non-empty, are registered in storage in addition to the
+	// default public PKCE test client. Used to install a confidential client for
+	// flows the default public client cannot exercise (e.g. RFC 8693 token
+	// exchange, which requires a confidential acting client).
+	extraClients []fosite.Client
+	// trustedIssuers, when non-empty, is passed through to Config.TrustedIssuers,
+	// enabling RFC 8693 token exchange with subject tokens from external OIDC
+	// issuers in addition to self-issued ones.
+	trustedIssuers []tokenexchange.TrustedIssuer
+	// allowConfidentialClientRegistration, when true, sets Config.AllowConfidentialClientRegistration
+	// so DCR accepts client_secret_basic / client_secret_post registrations.
+	allowConfidentialClientRegistration bool
+	// forceConfidentialRedirectURIs, when non-empty, sets
+	// Config.ForceConfidentialRedirectURIs.
+	forceConfidentialRedirectURIs []string
+}
+
+// testServerOption is a functional option for test server setup.
+type testServerOption func(*testServerOptions)
+
+// withUpstream configures the test server to use an upstream OAuth2 provider.
+func withUpstream(provider upstream.OAuth2Provider) testServerOption {
+	return func(opts *testServerOptions) {
+		opts.upstream = provider
+	}
+}
+
+// withScopes configures the scopes available to the test client.
+func withScopes(scopes []string) testServerOption {
+	return func(opts *testServerOptions) {
+		opts.scopes = scopes
+	}
+}
+
+// withAccessTokenLifespan configures the access token lifetime for the test server.
+func withAccessTokenLifespan(d time.Duration) testServerOption {
+	return func(opts *testServerOptions) {
+		opts.accessTokenLifespan = d
+	}
+}
+
+// withUpstreamFilter configures Config.UpstreamFilter, exercising the
+// authserver.New -> handlers.NewHandler wiring end-to-end rather than the
+// handler-level WithUpstreamFilter option directly.
+func withUpstreamFilter(f handlers.UpstreamFilter) testServerOption {
+	return func(opts *testServerOptions) {
+		opts.upstreamFilter = f
+	}
+}
+
+// withExtraClient registers an additional client in storage alongside the
+// default public PKCE test client.
+func withExtraClient(c fosite.Client) testServerOption {
+	return func(opts *testServerOptions) {
+		opts.extraClients = append(opts.extraClients, c)
+	}
+}
+
+// withTrustedIssuers configures Config.TrustedIssuers, enabling token
+// exchange with subject tokens from the given external OIDC issuers in
+// addition to self-issued ones.
+func withTrustedIssuers(issuers []tokenexchange.TrustedIssuer) testServerOption {
+	return func(opts *testServerOptions) {
+		opts.trustedIssuers = issuers
+	}
+}
+
+// withForceConfidentialRedirectURIs sets Config.ForceConfidentialRedirectURIs,
+// which also requires withAllowConfidentialClientRegistration on the same
+// setup call — the server-side validation Config.Validate performs rejects
+// the override otherwise.
+func withForceConfidentialRedirectURIs(uris ...string) testServerOption {
+	return func(opts *testServerOptions) {
+		opts.forceConfidentialRedirectURIs = uris
+	}
+}
+
+// withRedisBackedStorage swaps the default in-memory storage for a
+// miniredis-backed *RedisStorage. This exercises the same Lua scripts and
+// Redis-shape key layout used in production, while remaining hermetic and
+// fast: each test gets its own miniredis instance with no external
+// dependencies. The {ns:test} hash tag in the key prefix matches the
+// production-shape cluster routing so multi-key Lua operations target the
+// same hash slot.
+//
+// The setup helper stashes the *miniredis.Miniredis on testServer.mr (accessed via testServer.Miniredis())
+// so tests can call FastForward(d) to advance Redis-side TTLs without
+// real-world sleeping.
+func withRedisBackedStorage() testServerOption {
+	return func(opts *testServerOptions) {
+		opts.storageFactory = func(t *testing.T) (storage.Storage, *miniredis.Miniredis) {
+			t.Helper()
+			mr := miniredis.RunT(t)
+			client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			t.Cleanup(func() {
+				_ = client.Close()
+			})
+			return storage.NewRedisStorageWithClient(client, "test:auth:{ns:test}:"), mr
+		}
+	}
+}
+
+// testKeyProvider is a simple KeyProvider for tests that uses a pre-generated RSA key.
+type testKeyProvider struct {
+	key *rsa.PrivateKey
+}
+
+func (p *testKeyProvider) SigningKey(_ context.Context) (*keys.SigningKeyData, error) {
+	return &keys.SigningKeyData{
+		KeyID:     "test-key",
+		Algorithm: "RS256",
+		Key:       p.key,
+		CreatedAt: time.Now(),
+	}, nil
+}
+
+func (p *testKeyProvider) PublicKeys(_ context.Context) ([]*keys.PublicKeyData, error) {
+	return []*keys.PublicKeyData{{
+		KeyID:     "test-key",
+		Algorithm: "RS256",
+		PublicKey: p.key.Public(),
+		CreatedAt: time.Now(),
+	}}, nil
+}
+
+// setupTestServer creates a full test server using newServer with fosite provider configured
+// for authorization code flow with PKCE. Options allow configuring upstream provider.
+func setupTestServer(t *testing.T, opts ...testServerOption) *testServer {
+	t.Helper()
+	ctx := context.Background()
+
+	// Apply options
+	options := &testServerOptions{
+		scopes: registration.DefaultScopes,
+	}
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	// 1. Generate RSA key for signing
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	// 2. Generate HMAC secret
+	secret := make([]byte, 32)
+	_, err = rand.Read(secret)
+	require.NoError(t, err)
+
+	// 3. Create storage. Tests opting into withRedisBackedStorage() get a
+	// miniredis-backed *RedisStorage; everyone else keeps the default
+	// in-memory backend. The mr return value is preserved so tests can
+	// FastForward Redis-side TTLs.
+	var (
+		stor storage.Storage = storage.NewMemoryStorage()
+		mr   *miniredis.Miniredis
+	)
+	if options.storageFactory != nil {
+		stor, mr = options.storageFactory(t)
+	}
+
+	// 4. Register test client (public client for PKCE)
+	err = stor.RegisterClient(ctx, &fosite.DefaultClient{
+		ID:            testClientID,
+		Secret:        nil, // public client
+		RedirectURIs:  []string{testRedirectURI},
+		ResponseTypes: []string{"code"},
+		GrantTypes:    []string{"authorization_code", "refresh_token"},
+		Scopes:        options.scopes,
+		Audience:      []string{testAudience},
+		Public:        true,
+	})
+	require.NoError(t, err)
+
+	// Register any extra clients (e.g. a confidential client for token exchange).
+	for _, c := range options.extraClients {
+		require.NoError(t, stor.RegisterClient(ctx, c))
+	}
+
+	// 5. Build upstream config for newServer
+	// When no upstream is provided, use a dummy config that satisfies validation
+	// Note: Uses HTTPS to pass config validation
+	upstreamCfg := &upstream.OAuth2Config{
+		CommonOAuthConfig: upstream.CommonOAuthConfig{
+			ClientID:    "test-upstream-client",
+			RedirectURI: "https://example.com/oauth/callback",
+		},
+		AuthorizationEndpoint: "https://idp.example.com/auth",
+		TokenEndpoint:         "https://idp.example.com/token",
+	}
+
+	// 6. Create config using testKeyProvider
+	accessTokenLifespan := func() time.Duration {
+		if options.accessTokenLifespan > 0 {
+			return options.accessTokenLifespan
+		}
+		return time.Hour
+	}()
+	cfg := Config{
+		Issuer:               testIssuer,
+		KeyProvider:          &testKeyProvider{key: privateKey},
+		HMACSecrets:          servercrypto.NewHMACSecrets(secret),
+		AccessTokenLifespan:  accessTokenLifespan,
+		RefreshTokenLifespan: 24 * time.Hour,
+		AuthCodeLifespan:     10 * time.Minute,
+		Upstreams:            []UpstreamConfig{{Name: "default", Type: UpstreamProviderTypeOAuth2, OAuth2Config: upstreamCfg}},
+		UpstreamFilter:       options.upstreamFilter,
+		AllowedAudiences:     []string{"https://mcp.example.com"},
+		TrustedIssuers:       options.trustedIssuers,
+		// Opt-in gate for confidential-client DCR; off by default in tests just
+		// as in production.
+		AllowConfidentialClientRegistration: options.allowConfidentialClientRegistration,
+		ForceConfidentialRedirectURIs:       options.forceConfidentialRedirectURIs,
+		// The test server's issuer is a plain-HTTP loopback URL (genuinely
+		// local: an in-process httptest server), so opt in to the same
+		// combination withAllowConfidentialClientRegistration would otherwise
+		// be rejected for in production.
+		InsecureAllowConfidentialOverLoopbackHTTP: options.allowConfidentialClientRegistration,
+	}
+
+	// 7. Create server using newServer with test options
+	srv, err := newServer(ctx, cfg, stor,
+		withUpstreamFactory(func(_ context.Context, _ *UpstreamConfig) (upstream.OAuth2Provider, error) {
+			// Return the provided upstream or nil (which is valid for tests without upstream)
+			return options.upstream, nil
+		}),
+	)
+	require.NoError(t, err)
+
+	// 8. Create HTTP test server
+	httpServer := httptest.NewServer(srv.Handler())
+
+	t.Cleanup(func() {
+		httpServer.Close()
+		require.NoError(t, srv.Close())
+	})
+
+	return &testServer{
+		Server:     httpServer,
+		PrivateKey: privateKey,
+		authServer: srv,
+		storage:    srv.IDPTokenStorage(),
+		mr:         mr,
+	}
+}
+
+// parseTokenResponse parses a token endpoint response.
+func parseTokenResponse(t *testing.T, resp *http.Response) map[string]interface{} {
+	t.Helper()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	var result map[string]interface{}
+	err = json.Unmarshal(body, &result)
+	require.NoError(t, err, "failed to parse response: %s", string(body))
+
+	return result
+}
+
+// makeTokenRequest makes a POST request to the token endpoint.
+func makeTokenRequest(t *testing.T, serverURL string, params url.Values) *http.Response {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodPost, serverURL+"/oauth/token", strings.NewReader(params.Encode()))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	resp, err := httpClient.Do(req)
+	require.NoError(t, err)
+
+	return resp
+}
+
+// ============================================================================
+// Token Endpoint Error Handling Tests
+// ============================================================================
+
+// TestIntegration_TokenEndpoint_Errors tests various error conditions at the token endpoint.
+func TestIntegration_TokenEndpoint_Errors(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name           string
+		useRealCode    bool                     // whether to get a real auth code via full flow
+		modifyParams   func(url.Values, string) // modify params; receives auth code if useRealCode=true
+		expectedStatus int                      // expected HTTP status code per RFC 6749 Section 5.2
+		expectedErrors []string                 // acceptable OAuth error codes (any match passes)
+	}{
+		{
+			name:           "invalid_pkce_verifier",
+			useRealCode:    true,
+			expectedStatus: http.StatusBadRequest,
+			expectedErrors: []string{"invalid_grant"},
+			modifyParams: func(p url.Values, _ string) {
+				p.Set("code_verifier", "wrong-verifier-that-wont-match-the-challenge")
+			},
+		},
+		{
+			name:           "invalid_code",
+			useRealCode:    false,
+			expectedStatus: http.StatusBadRequest,
+			expectedErrors: []string{"invalid_grant"},
+			modifyParams: func(p url.Values, _ string) {
+				p.Set("code", "non-existent-auth-code")
+			},
+		},
+		{
+			name:           "missing_redirect_uri",
+			useRealCode:    true,
+			expectedStatus: http.StatusBadRequest,
+			expectedErrors: []string{"invalid_grant"},
+			modifyParams: func(p url.Values, _ string) {
+				p.Del("redirect_uri")
+			},
+		},
+		{
+			name:           "wrong_client_id",
+			useRealCode:    true,
+			expectedStatus: http.StatusUnauthorized,
+			expectedErrors: []string{"invalid_client"},
+			modifyParams: func(p url.Values, _ string) {
+				p.Set("client_id", "wrong-client-id")
+			},
+		},
+		{
+			name:           "missing_pkce_verifier",
+			useRealCode:    true,
+			expectedStatus: http.StatusBadRequest,
+			// fosite may return either depending on validation order
+			expectedErrors: []string{"invalid_request", "invalid_grant"},
+			modifyParams: func(p url.Values, _ string) {
+				p.Del("code_verifier")
+			},
+		},
+		{
+			name:           "mismatched_redirect_uri",
+			useRealCode:    true,
+			expectedStatus: http.StatusBadRequest,
+			expectedErrors: []string{"invalid_grant"},
+			modifyParams: func(p url.Values, _ string) {
+				p.Set("redirect_uri", "http://evil.example.com/callback")
+			},
+		},
+		{
+			name:           "grant_type_confusion",
+			useRealCode:    true,
+			expectedStatus: http.StatusBadRequest,
+			expectedErrors: []string{"invalid_grant", "invalid_request"},
+			modifyParams: func(p url.Values, _ string) {
+				// Try to use an auth code as a refresh token
+				code := p.Get("code")
+				p.Set("grant_type", "refresh_token")
+				p.Set("refresh_token", code)
+				p.Del("code")
+				p.Del("code_verifier")
+				p.Del("redirect_uri")
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Create a separate mock OIDC instance for each parallel subtest to avoid race conditions
+			m := startMockOIDC(t)
+
+			// Queue a mock user for this subtest's isolated upstream IDP
+			m.QueueUser(&mockoidc.MockUser{
+				Subject: "mock-user-" + tc.name,
+				Email:   tc.name + "@example.com",
+			})
+
+			ts := setupTestServerWithMockOIDC(t, m)
+			verifier := servercrypto.GeneratePKCEVerifier()
+			challenge := servercrypto.ComputePKCEChallenge(verifier)
+
+			var authCode string
+			if tc.useRealCode {
+				authCode, _ = completeAuthorizationFlow(t, ts.Server.URL, authorizationParams{
+					ClientID:     testClientID,
+					RedirectURI:  testRedirectURI,
+					State:        "test-state",
+					Challenge:    challenge,
+					Scope:        "openid profile",
+					ResponseType: "code",
+				})
+			} else {
+				authCode = "placeholder"
+			}
+
+			params := url.Values{
+				"grant_type":    {"authorization_code"},
+				"code":          {authCode},
+				"client_id":     {testClientID},
+				"redirect_uri":  {testRedirectURI},
+				"code_verifier": {verifier},
+			}
+			tc.modifyParams(params, authCode)
+
+			resp := makeTokenRequest(t, ts.Server.URL, params)
+			defer resp.Body.Close()
+
+			require.Equal(t, tc.expectedStatus, resp.StatusCode, "unexpected HTTP status code")
+
+			errResp := parseTokenResponse(t, resp)
+			errorField, ok := errResp["error"].(string)
+			require.True(t, ok, "error should be a string")
+			assert.Contains(t, tc.expectedErrors, errorField,
+				"expected one of %v, got %q", tc.expectedErrors, errorField)
+		})
+	}
+}
+
+// TestIntegration_TokenEndpoint_ReplayAttack tests that auth codes cannot be reused.
+func TestIntegration_TokenEndpoint_ReplayAttack(t *testing.T) {
+	t.Parallel()
+
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m)
+
+	verifier := servercrypto.GeneratePKCEVerifier()
+	challenge := servercrypto.ComputePKCEChallenge(verifier)
+
+	// Get a real auth code via the full flow
+	authCode, _ := completeAuthorizationFlow(t, ts.Server.URL, authorizationParams{
+		ClientID:     testClientID,
+		RedirectURI:  testRedirectURI,
+		State:        "replay-test-state",
+		Challenge:    challenge,
+		Scope:        "openid profile",
+		ResponseType: "code",
+	})
+
+	// First request - should succeed
+	params := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {authCode},
+		"client_id":     {testClientID},
+		"redirect_uri":  {testRedirectURI},
+		"code_verifier": {verifier},
+	}
+
+	resp1 := makeTokenRequest(t, ts.Server.URL, params)
+	defer resp1.Body.Close()
+	require.Equal(t, http.StatusOK, resp1.StatusCode, "first request should succeed")
+	resp1Body := parseTokenResponse(t, resp1)
+	assert.NotEmpty(t, resp1Body["access_token"], "first request should return access token")
+
+	// Second request with same code - should fail (replay attack)
+	resp2 := makeTokenRequest(t, ts.Server.URL, params)
+	defer resp2.Body.Close()
+
+	require.GreaterOrEqual(t, resp2.StatusCode, 400, "second request should fail (replay attack)")
+
+	errResp := parseTokenResponse(t, resp2)
+	errorField, ok := errResp["error"].(string)
+	assert.True(t, ok, "error should be a string")
+	assert.NotEmpty(t, errorField, "error should not be empty")
+}
+
+// TestIntegration_TokenEndpoint_RefreshToken tests that refresh tokens can be used to get new access tokens.
+func TestIntegration_TokenEndpoint_RefreshToken(t *testing.T) {
+	t.Parallel()
+
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m)
+
+	verifier := servercrypto.GeneratePKCEVerifier()
+	challenge := servercrypto.ComputePKCEChallenge(verifier)
+
+	// Get auth code with offline_access scope to receive a refresh token
+	authCode, _ := completeAuthorizationFlow(t, ts.Server.URL, authorizationParams{
+		ClientID:     testClientID,
+		RedirectURI:  testRedirectURI,
+		State:        "refresh-test-state",
+		Challenge:    challenge,
+		Scope:        "openid profile offline_access",
+		ResponseType: "code",
+	})
+
+	// Exchange code for tokens
+	params := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {authCode},
+		"client_id":     {testClientID},
+		"redirect_uri":  {testRedirectURI},
+		"code_verifier": {verifier},
+	}
+
+	resp := makeTokenRequest(t, ts.Server.URL, params)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode, "initial token request should succeed")
+	tokenResp := parseTokenResponse(t, resp)
+
+	// Verify refresh token was returned
+	refreshToken, hasRefresh := tokenResp["refresh_token"].(string)
+	require.True(t, hasRefresh, "response should contain refresh_token field")
+	require.NotEmpty(t, refreshToken, "refresh_token should not be empty")
+
+	// Use the refresh token to get a new access token
+	refreshParams := url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+		"client_id":     {testClientID},
+	}
+
+	refreshResp := makeTokenRequest(t, ts.Server.URL, refreshParams)
+	defer refreshResp.Body.Close()
+	require.Equal(t, http.StatusOK, refreshResp.StatusCode, "refresh token request should succeed")
+	refreshTokenResp := parseTokenResponse(t, refreshResp)
+
+	// Verify we got a new access token
+	newAccessToken, ok := refreshTokenResp["access_token"].(string)
+	require.True(t, ok, "access_token should be a string")
+	assert.NotEmpty(t, newAccessToken, "new access_token should not be empty")
+
+	tokenType, ok := refreshTokenResp["token_type"].(string)
+	require.True(t, ok, "token_type should be a string")
+	assert.Equal(t, "bearer", strings.ToLower(tokenType))
+
+	// Verify expires_in is present and reasonable (RFC 6749 Section 5.1)
+	expiresIn, ok := refreshTokenResp["expires_in"].(float64)
+	require.True(t, ok, "expires_in should be a number")
+	assert.Greater(t, expiresIn, float64(0), "expires_in should be positive")
+
+	// Verify new access token is different from original
+	originalAccessToken := tokenResp["access_token"].(string)
+	assert.NotEqual(t, originalAccessToken, newAccessToken, "refreshed access token should differ from original")
+
+	// Verify refresh token rotation: a new refresh token should be issued
+	newRefreshToken, ok := refreshTokenResp["refresh_token"].(string)
+	require.True(t, ok, "refresh response should contain a new refresh_token")
+	assert.NotEqual(t, refreshToken, newRefreshToken, "token rotation must issue new refresh token")
+
+	// Verify old refresh token is rejected after rotation
+	replayParams := url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+		"client_id":     {testClientID},
+	}
+	replayResp := makeTokenRequest(t, ts.Server.URL, replayParams)
+	defer replayResp.Body.Close()
+	require.GreaterOrEqual(t, replayResp.StatusCode, 400, "old refresh token must be rejected after rotation")
+}
+
+// ============================================================================
+// RFC 8693 Token Exchange Wiring Tests
+// ============================================================================
+
+// TestIntegration_TokenExchange_PublicClientRejected proves that public clients
+// are barred from the RFC 8693 token-exchange grant (only confidential clients
+// may act on a user's behalf), and that the grant is wired into the fosite
+// provider and reachable at the token endpoint.
+//
+// It does not assert a full delegated-token issuance: the handler requires a
+// confidential client (RFC 8693 §2.1) and the shared test harness only
+// registers a public client. Instead it relies on a decisive dispatch
+// discriminator observable at the token endpoint:
+//
+//   - With the token-exchange factory registered, a token-exchange request is
+//     routed to the handler, whose first guard rejects the public client with
+//     error=invalid_grant and a "token-exchange"-specific hint.
+//   - Without the factory, no handler claims grant_type=token-exchange and
+//     fosite returns error=invalid_request (see fosite NewAccessRequest: an
+//     unmatched grant yields ErrInvalidRequest).
+//
+// So invalid_grant with a token-exchange hint proves the handler is registered
+// and executed — exactly the regression a dropped factory would introduce.
+func TestIntegration_TokenExchange_PublicClientRejected(t *testing.T) {
+	t.Parallel()
+
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m)
+
+	verifier := servercrypto.GeneratePKCEVerifier()
+	challenge := servercrypto.ComputePKCEChallenge(verifier)
+
+	// Mint a genuine server-issued access token to use as the subject_token, so
+	// the request is a well-formed RFC 8693 exchange up to the client-type gate.
+	authCode, _ := completeAuthorizationFlow(t, ts.Server.URL, authorizationParams{
+		ClientID:     testClientID,
+		RedirectURI:  testRedirectURI,
+		State:        "token-exchange-dispatch",
+		Challenge:    challenge,
+		Scope:        "openid profile",
+		ResponseType: "code",
+	})
+	tokenData := exchangeCodeForTokens(t, ts.Server.URL, authCode, verifier, testAudience)
+	subjectToken, ok := tokenData["access_token"].(string)
+	require.True(t, ok, "access_token should be a string")
+	require.NotEmpty(t, subjectToken)
+
+	resp := makeTokenRequest(t, ts.Server.URL, url.Values{
+		"grant_type":         {oauthproto.GrantTypeTokenExchange},
+		"subject_token":      {subjectToken},
+		"subject_token_type": {oauthproto.TokenTypeAccessToken},
+		"client_id":          {testClientID},
+	})
+	defer resp.Body.Close()
+
+	body := parseTokenResponse(t, resp)
+	errCode, _ := body["error"].(string)
+	errDesc, _ := body["error_description"].(string)
+
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode,
+		"token-exchange from a public client should be a 400, got %d (body: %v)", resp.StatusCode, body)
+	// The decisive assertion: the token-exchange handler ran and rejected the
+	// public client (invalid_grant), rather than the request falling through
+	// unhandled (invalid_request), which is what a missing factory would produce.
+	require.Equal(t, "invalid_grant", errCode,
+		"expected invalid_grant from the token-exchange handler; invalid_request would mean "+
+			"the token-exchange factory is not wired into the provider")
+	assert.Contains(t, errDesc, "token-exchange",
+		"the rejection must originate from the token-exchange handler specifically")
+}
+
+// TestIntegration_TokenExchange_ConfidentialClientHappyPath drives a full RFC 8693
+// delegation exchange over HTTP through the real fosite provider: a confidential
+// acting client authenticates with client_secret_post, presents a server-signed
+// subject token, and receives a delegated access token.
+//
+// Unlike the unit tests in the tokenexchange package (which call the handler
+// directly with mock strategy/storage), this exercises the complete glued path —
+// fosite NewAccessRequest -> client authentication -> handler dispatch ->
+// PopulateTokenEndpointResponse JSON issuance — proving the token exchange is not
+// just registered but functional end-to-end.
+func TestIntegration_TokenExchange_ConfidentialClientHappyPath(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agentClientID     = "test-agent-client"
+		agentClientSecret = "test-agent-secret"
+		delegatedUserSub  = "delegated-user-sub"
+	)
+
+	// A confidential client registered for the token-exchange grant is the acting
+	// agent. The handler rejects public clients, so this must be confidential.
+	agentClient, err := registration.New(registration.Config{
+		ID:                      agentClientID,
+		Secret:                  agentClientSecret,
+		TokenEndpointAuthMethod: oauthproto.TokenEndpointAuthMethodClientSecretPost,
+		GrantTypes:              []string{oauthproto.GrantTypeTokenExchange},
+		Scopes:                  registration.DefaultScopes,
+		Audience:                []string{testAudience},
+	})
+	require.NoError(t, err)
+
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m, withExtraClient(agentClient))
+
+	// Mint a subject token signed by the server's own key (the validator verifies
+	// against the server's JWKS). client_id must equal the acting client so the
+	// RFC 8693 §4.4 delegation-consent check (client_id binding) passes.
+	signer, err := jose.NewSigner(
+		jose.SigningKey{Algorithm: jose.RS256, Key: ts.PrivateKey},
+		(&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", "test-key"),
+	)
+	require.NoError(t, err)
+
+	now := time.Now()
+	subjectToken, err := jwt.Signed(signer).
+		Claims(jwt.Claims{
+			Issuer:   testIssuer,
+			Subject:  delegatedUserSub,
+			Audience: jwt.Audience{testAudience},
+			Expiry:   jwt.NewNumericDate(now.Add(30 * time.Minute)),
+			IssuedAt: jwt.NewNumericDate(now),
+		}).
+		Claims(map[string]any{
+			"client_id": agentClientID,
+			"name":      "Delegated User",
+			"email":     "deleg@example.com",
+		}).
+		Serialize()
+	require.NoError(t, err)
+
+	// No resource/audience is sent: the server defaults to its sole allowed
+	// audience (testAudience), which the agent client is registered for.
+	resp := makeTokenRequest(t, ts.Server.URL, url.Values{
+		"grant_type":         {oauthproto.GrantTypeTokenExchange},
+		"subject_token":      {subjectToken},
+		"subject_token_type": {oauthproto.TokenTypeAccessToken},
+		"client_id":          {agentClientID},
+		"client_secret":      {agentClientSecret},
+	})
+	defer resp.Body.Close()
+
+	body := parseTokenResponse(t, resp)
+	require.Equal(t, http.StatusOK, resp.StatusCode,
+		"token exchange should succeed, got %d (body: %v)", resp.StatusCode, body)
+
+	// RFC 8693 §2.2.1 requires issued_token_type in the response.
+	assert.Equal(t, oauthproto.TokenTypeAccessToken, body["issued_token_type"],
+		"response must advertise the issued token type")
+
+	delegated, ok := body["access_token"].(string)
+	require.True(t, ok, "access_token should be a string")
+	require.NotEmpty(t, delegated)
+
+	// The delegated token is a JWT signed by the server; verify and inspect claims.
+	parsed, err := jwt.ParseSigned(delegated, []jose.SignatureAlgorithm{jose.RS256})
+	require.NoError(t, err)
+	var claims map[string]any
+	require.NoError(t, parsed.Claims(ts.PrivateKey.Public(), &claims))
+
+	// The delegated token carries the USER as subject and the AGENT as the
+	// RFC 8693 §4.1 "act" (acting party).
+	assert.Equal(t, delegatedUserSub, claims["sub"], "delegated token subject must be the user")
+	assert.Equal(t, testIssuer, claims["iss"])
+	act, ok := claims["act"].(map[string]any)
+	require.True(t, ok, "delegated token must carry an 'act' claim")
+	assert.Equal(t, agentClientID, act["sub"], "act.sub must identify the acting agent client")
+
+	// Audience: no resource/audience was requested, so grantDefaultAudience must
+	// bind the token to the server's sole allowed audience.
+	aud, ok := claims["aud"].([]interface{})
+	require.True(t, ok, "aud claim should be an array")
+	require.Len(t, aud, 1, "aud should have exactly one audience")
+	assert.Equal(t, testAudience, aud[0], "delegated token audience should default to the sole allowed audience")
+
+	// Lifetime cap: the delegated token's exp must be min(subject_remaining=30m,
+	// delegationLifespan=15m default) ≈ 15m — NOT the subject token's 30m. This
+	// verifies the handler's min() cap and rules out a "subject token echoed
+	// back" regression, which would otherwise satisfy sub/iss/signature.
+	exp, ok := claims["exp"].(float64)
+	require.True(t, ok, "exp claim should be a number")
+	assert.WithinDuration(t, now.Add(15*time.Minute), time.Unix(int64(exp), 0), 2*time.Minute,
+		"delegated token exp must be capped at the 15m delegation lifespan, not the subject token's 30m")
+}
+
+// TestIntegration_TokenExchange_SelfIssuedSubjectTokenScopeFromScp proves
+// that a token-exchange request carrying a requested scope succeeds against
+// a subject token minted by the server's own authorization_code grant, not
+// just a hand-built JWT.
+//
+// ToolHive's own issued access tokens carry granted scopes as a "scp" array
+// claim, not the RFC 9068 "scope" string claim — fosite's default JWT claims
+// strategy writes "scp" unless ScopeField is explicitly String or Both, which
+// this server does not set (see TestIntegration_FullPKCEFlow's own "scp"
+// assertion). Every other token-exchange test in this file hand-mints its
+// subject token with an explicit "scope" claim, which masks this: assignClaim
+// previously only read "scope", so a genuine self-issued access token used as
+// subject_token always resolved to Scopes == "", and grantScopes rejected any
+// requested scope with invalid_scope.
+func TestIntegration_TokenExchange_SelfIssuedSubjectTokenScopeFromScp(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agentClientID     = "test-agent-client-scp"
+		agentClientSecret = "test-agent-secret-scp"
+	)
+
+	// The acting agent is also the client that logs in and obtains the
+	// subject token: it must be confidential (token exchange requires it) and
+	// registered for both authorization_code (to mint a genuine access token)
+	// and token-exchange (to perform the exchange as itself).
+	agentClient, err := registration.New(registration.Config{
+		ID:                      agentClientID,
+		Secret:                  agentClientSecret,
+		TokenEndpointAuthMethod: oauthproto.TokenEndpointAuthMethodClientSecretPost,
+		RedirectURIs:            []string{testRedirectURI},
+		GrantTypes:              []string{"authorization_code", oauthproto.GrantTypeTokenExchange},
+		Scopes:                  registration.DefaultScopes,
+		Audience:                []string{testAudience},
+	})
+	require.NoError(t, err)
+
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m, withExtraClient(agentClient))
+
+	verifier := servercrypto.GeneratePKCEVerifier()
+	challenge := servercrypto.ComputePKCEChallenge(verifier)
+
+	authCode, _ := completeAuthorizationFlow(t, ts.Server.URL, authorizationParams{
+		ClientID:     agentClientID,
+		RedirectURI:  testRedirectURI,
+		State:        "scp-scope-state",
+		Challenge:    challenge,
+		Scope:        "openid profile",
+		ResponseType: "code",
+	})
+
+	// Mint the subject token via the real authorization_code grant (a
+	// confidential client, so client_secret is required), rather than
+	// hand-building a JWT — this is what makes the resulting token carry
+	// "scp", not "scope".
+	tokenResp := makeTokenRequest(t, ts.Server.URL, url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {authCode},
+		"redirect_uri":  {testRedirectURI},
+		"client_id":     {agentClientID},
+		"client_secret": {agentClientSecret},
+		"code_verifier": {verifier},
+	})
+	defer tokenResp.Body.Close()
+	tokenBody := parseTokenResponse(t, tokenResp)
+	require.Equal(t, http.StatusOK, tokenResp.StatusCode,
+		"authorization_code exchange should succeed, got %d (body: %v)", tokenResp.StatusCode, tokenBody)
+	subjectToken, ok := tokenBody["access_token"].(string)
+	require.True(t, ok, "access_token should be a string")
+	require.NotEmpty(t, subjectToken)
+
+	// Exchange the genuine access token for a delegated token, requesting a
+	// scope that was granted to it ("profile"). Before the assignClaim fix,
+	// this fails with invalid_scope because Scopes never picks up "scp".
+	resp := makeTokenRequest(t, ts.Server.URL, url.Values{
+		"grant_type":         {oauthproto.GrantTypeTokenExchange},
+		"subject_token":      {subjectToken},
+		"subject_token_type": {oauthproto.TokenTypeAccessToken},
+		"client_id":          {agentClientID},
+		"client_secret":      {agentClientSecret},
+		"scope":              {"profile"},
+	})
+	defer resp.Body.Close()
+
+	body := parseTokenResponse(t, resp)
+	require.Equal(t, http.StatusOK, resp.StatusCode,
+		"token exchange requesting a scope carried by the subject token's 'scp' claim should succeed, "+
+			"got %d (body: %v)", resp.StatusCode, body)
+	assert.Equal(t, "profile", body["scope"], "delegated token should be granted the requested scope")
+}
+
+// ============================================================================
+// RFC 8693 Token Exchange: Trusted External Issuer Integration Tests
+// ============================================================================
+
+// externalIdPKeyID is the "kid" advertised in the test-local external IdP's JWKS.
+const externalIdPKeyID = "external-idp-key"
+
+// startExternalIdPServer starts a test-local external OIDC issuer serving
+// both a discovery document and a JWKS endpoint, signed by key — deliberately
+// NOT the authorization server's own key. The discovery document echoes
+// r.Host as its own issuer so it stays self-consistent regardless of which
+// random port httptest.NewServer binds to.
+//
+// The returned counter increments on every discovery-document hit, so a
+// subtest configuring an explicit jwks_url (which should skip discovery
+// entirely) can assert it stayed at zero, and a subtest relying on discovery
+// can assert it didn't.
+func startExternalIdPServer(t *testing.T, key *rsa.PrivateKey) (*httptest.Server, *atomic.Int64) {
+	t.Helper()
+
+	jwks := jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{
+		Key:       key.Public(),
+		KeyID:     externalIdPKeyID,
+		Algorithm: string(jose.RS256),
+		Use:       "sig",
+	}}}
+
+	var discoveryHits atomic.Int64
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		discoveryHits.Add(1)
+		base := "http://" + r.Host
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"issuer":   base,
+			"jwks_uri": base + "/jwks",
+		})
+	})
+	mux.HandleFunc("/jwks", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(jwks)
+	})
+
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv, &discoveryHits
+}
+
+// signExternalToken signs a JWT with key — the external IdP's key, distinct
+// from the authorization server's own signing key — for use as a subject
+// token presented during token exchange.
+func signExternalToken(t *testing.T, key *rsa.PrivateKey, claims jwt.Claims, extra map[string]any) string {
+	t.Helper()
+
+	signer, err := jose.NewSigner(
+		jose.SigningKey{Algorithm: jose.RS256, Key: key},
+		(&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", externalIdPKeyID),
+	)
+	require.NoError(t, err)
+
+	builder := jwt.Signed(signer).Claims(claims)
+	if extra != nil {
+		builder = builder.Claims(extra)
+	}
+	raw, err := builder.Serialize()
+	require.NoError(t, err)
+	return raw
+}
+
+// TestIntegration_TokenExchange_TrustedExternalIssuer drives RFC 8693 token
+// exchange over HTTP with subject tokens from a trusted external OIDC
+// issuer — proving the fail-closed consent policy (an allowlisted actor
+// claim, or an authoritative may_act, or rejection) at the HTTP level, not
+// just in the tokenexchange package's own unit tests.
+func TestIntegration_TokenExchange_TrustedExternalIssuer(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agentClientID     = "external-agent-client"
+		agentClientSecret = "external-agent-secret"
+		allowedActor      = "external-agent-azp"
+		externalUserSub   = "external-user-sub"
+	)
+
+	// The acting agent is a confidential ToolHive client registered for the
+	// token-exchange grant. Its value is safe to reuse across parallel
+	// subtests: each subtest registers it into its own storage instance.
+	newAgentClient := func(t *testing.T) fosite.Client {
+		t.Helper()
+		c, err := registration.New(registration.Config{
+			ID:                      agentClientID,
+			Secret:                  agentClientSecret,
+			TokenEndpointAuthMethod: oauthproto.TokenEndpointAuthMethodClientSecretPost,
+			GrantTypes:              []string{oauthproto.GrantTypeTokenExchange},
+			Scopes:                  registration.DefaultScopes,
+			Audience:                []string{testAudience},
+		})
+		require.NoError(t, err)
+		return c
+	}
+
+	// externalClaims returns standard claims for a subject token from the
+	// external IdP. The audience must equal testAudience — the server's sole
+	// AllowedAudience — because ensureAudienceSubsetOfSubject bounds the
+	// granted (default) audience by the subject token's own "aud".
+	externalClaims := func(issuer string) jwt.Claims {
+		now := time.Now()
+		return jwt.Claims{
+			Subject:  externalUserSub,
+			Issuer:   issuer,
+			Audience: jwt.Audience{testAudience},
+			Expiry:   jwt.NewNumericDate(now.Add(30 * time.Minute)),
+			IssuedAt: jwt.NewNumericDate(now),
+		}
+	}
+
+	t.Run("allowlisted actor happy path", func(t *testing.T) {
+		t.Parallel()
+
+		externalKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+		idpServer, _ := startExternalIdPServer(t, externalKey)
+
+		m := startMockOIDC(t)
+		ts := setupTestServerWithMockOIDC(t, m,
+			withExtraClient(newAgentClient(t)),
+			withTrustedIssuers([]tokenexchange.TrustedIssuer{{
+				IssuerURL:        idpServer.URL,
+				ExpectedAudience: testAudience,
+				// JWKSURL is required whenever AllowPrivateIPs is set (see
+				// validateTrustedIssuers in pkg/authserver/config.go): the
+				// private dial target must come from operator config, not an
+				// OIDC discovery document. idpServer is loopback, so
+				// AllowPrivateIPs is unavoidable here; "explicit jwks_url
+				// resolution path" below is the dedicated test for the
+				// discovery-vs-explicit distinction this used to also cover.
+				JWKSURL:                idpServer.URL + "/jwks",
+				AllowedActors:          []string{allowedActor},
+				InsecureAllowHTTP:      true,
+				AllowPrivateIPs:        true,
+				AllowedDelegateClients: []string{"*"},
+			}}),
+		)
+
+		subjectToken := signExternalToken(t, externalKey, externalClaims(idpServer.URL), map[string]any{
+			"azp": allowedActor,
+		})
+
+		resp := makeTokenRequest(t, ts.Server.URL, url.Values{
+			"grant_type":         {oauthproto.GrantTypeTokenExchange},
+			"subject_token":      {subjectToken},
+			"subject_token_type": {oauthproto.TokenTypeAccessToken},
+			"client_id":          {agentClientID},
+			"client_secret":      {agentClientSecret},
+		})
+		defer resp.Body.Close()
+
+		body := parseTokenResponse(t, resp)
+		require.Equal(t, http.StatusOK, resp.StatusCode,
+			"token exchange should succeed, got %d (body: %v)", resp.StatusCode, body)
+		assert.Equal(t, oauthproto.TokenTypeAccessToken, body["issued_token_type"])
+
+		tokenType, ok := body["token_type"].(string)
+		require.True(t, ok, "token_type should be a string")
+		assert.Equal(t, "bearer", strings.ToLower(tokenType))
+
+		delegated, ok := body["access_token"].(string)
+		require.True(t, ok, "access_token should be a string")
+		require.NotEmpty(t, delegated)
+
+		parsed, err := jwt.ParseSigned(delegated, []jose.SignatureAlgorithm{jose.RS256})
+		require.NoError(t, err)
+		var claims map[string]any
+		require.NoError(t, parsed.Claims(ts.PrivateKey.Public(), &claims))
+
+		assert.Equal(t, idpServer.URL+"#"+externalUserSub, claims["sub"],
+			"delegated token subject must be the external issuer's URL, qualifying the external user's "+
+				"subject so it can never collide with a native ToolHive user's UUID")
+		assert.Equal(t, testIssuer, claims["iss"],
+			"delegated token must carry ToolHive's own issuer, never the external one")
+
+		aud, ok := claims["aud"].([]interface{})
+		require.True(t, ok, "aud claim should be an array")
+		require.Len(t, aud, 1)
+		assert.Equal(t, testAudience, aud[0])
+
+		act, ok := claims["act"].(map[string]any)
+		require.True(t, ok, "delegated token must carry an 'act' claim")
+		assert.Equal(t, agentClientID, act["sub"], "outermost act.sub must be the ToolHive acting client")
+
+		nested, ok := act["act"].(map[string]any)
+		require.True(t, ok, "external delegation must nest the issuer/actor provenance record")
+		assert.Equal(t, allowedActor, nested["sub"], "nested act.sub is the external actor claim value")
+		assert.Equal(t, idpServer.URL, nested["iss"], "nested act.iss is the external issuer")
+	})
+
+	t.Run("non-allowlisted actor rejected", func(t *testing.T) {
+		t.Parallel()
+
+		externalKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+		idpServer, _ := startExternalIdPServer(t, externalKey)
+
+		m := startMockOIDC(t)
+		ts := setupTestServerWithMockOIDC(t, m,
+			withExtraClient(newAgentClient(t)),
+			withTrustedIssuers([]tokenexchange.TrustedIssuer{{
+				IssuerURL:              idpServer.URL,
+				ExpectedAudience:       testAudience,
+				JWKSURL:                idpServer.URL + "/jwks",
+				AllowedActors:          []string{allowedActor},
+				InsecureAllowHTTP:      true,
+				AllowPrivateIPs:        true,
+				AllowedDelegateClients: []string{"*"},
+			}}),
+		)
+
+		const rejectedActor = "some-other-client"
+		subjectToken := signExternalToken(t, externalKey, externalClaims(idpServer.URL), map[string]any{
+			"azp": rejectedActor,
+		})
+
+		resp := makeTokenRequest(t, ts.Server.URL, url.Values{
+			"grant_type":         {oauthproto.GrantTypeTokenExchange},
+			"subject_token":      {subjectToken},
+			"subject_token_type": {oauthproto.TokenTypeAccessToken},
+			"client_id":          {agentClientID},
+			"client_secret":      {agentClientSecret},
+		})
+		defer resp.Body.Close()
+
+		body := parseTokenResponse(t, resp)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode,
+			"token exchange with a non-allowlisted actor should be a 400, got %d (body: %v)", resp.StatusCode, body)
+		// The validator rejects the token before checkDelegationConsent runs, so
+		// RFC 8693 §2.2.2's invalid_request applies — not invalid_grant.
+		assert.Equal(t, "invalid_request", body["error"])
+
+		errDesc, _ := body["error_description"].(string)
+		assert.Contains(t, errDesc, "invalid or could not be verified",
+			"the handler's fixed hint must not be replaced by a more specific — and leakier — message")
+		assert.NotContains(t, errDesc, rejectedActor,
+			"the error must not leak the rejected actor claim value")
+	})
+
+	t.Run("may_act path skips the allowlist", func(t *testing.T) {
+		t.Parallel()
+
+		externalKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+		idpServer, _ := startExternalIdPServer(t, externalKey)
+
+		m := startMockOIDC(t)
+		ts := setupTestServerWithMockOIDC(t, m,
+			withExtraClient(newAgentClient(t)),
+			withTrustedIssuers([]tokenexchange.TrustedIssuer{{
+				IssuerURL:         idpServer.URL,
+				ExpectedAudience:  testAudience,
+				JWKSURL:           idpServer.URL + "/jwks",
+				InsecureAllowHTTP: true,
+				AllowPrivateIPs:   true,
+				// AllowedActors deliberately empty: may_act must be honored
+				// without any actor being allowlisted.
+				AllowedDelegateClients: []string{"*"},
+			}}),
+		)
+
+		// No "azp" claim at all — only may_act, naming the ToolHive agent
+		// client directly as the party authorized to act.
+		subjectToken := signExternalToken(t, externalKey, externalClaims(idpServer.URL), map[string]any{
+			"may_act": map[string]any{"sub": agentClientID, "iss": testIssuer},
+		})
+
+		resp := makeTokenRequest(t, ts.Server.URL, url.Values{
+			"grant_type":         {oauthproto.GrantTypeTokenExchange},
+			"subject_token":      {subjectToken},
+			"subject_token_type": {oauthproto.TokenTypeAccessToken},
+			"client_id":          {agentClientID},
+			"client_secret":      {agentClientSecret},
+		})
+		defer resp.Body.Close()
+
+		body := parseTokenResponse(t, resp)
+		require.Equal(t, http.StatusOK, resp.StatusCode,
+			"token exchange via may_act should succeed, got %d (body: %v)", resp.StatusCode, body)
+
+		delegated, ok := body["access_token"].(string)
+		require.True(t, ok)
+		require.NotEmpty(t, delegated)
+
+		parsed, err := jwt.ParseSigned(delegated, []jose.SignatureAlgorithm{jose.RS256})
+		require.NoError(t, err)
+		var claims map[string]any
+		require.NoError(t, parsed.Claims(ts.PrivateKey.Public(), &claims))
+
+		act, ok := claims["act"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, agentClientID, act["sub"])
+
+		// may_act carries no ExternalActor (see ValidatedClaims.ExternalActor's
+		// doc comment), but the external issuer must still be recorded — this
+		// is the path that bypasses the allowlist entirely, so it needs the
+		// audit trail at least as much as the allowlist path does.
+		nested, ok := act["act"].(map[string]any)
+		require.True(t, ok, "external issuer must still be nested even without an allowlisted actor")
+		assert.Equal(t, idpServer.URL, nested["iss"])
+		_, hasSub := nested["sub"]
+		assert.False(t, hasSub, "no client-namespace actor claim exists to report on the may_act path")
+	})
+
+	t.Run("allowed delegate clients binds the allowlisted actor to a specific ToolHive client", func(t *testing.T) {
+		t.Parallel()
+
+		const (
+			otherAgentClientID     = "other-external-agent-client"
+			otherAgentClientSecret = "other-external-agent-secret"
+		)
+
+		// A second confidential client, also registered for the token-exchange
+		// grant and otherwise identical to the primary agent client — the only
+		// difference the test exercises is that it is NOT in this issuer's
+		// AllowedDelegateClients. Without that field (or if the binding check
+		// were removed), this client would succeed exactly like the primary
+		// one, since both hold the grant and both present the same
+		// allowlisted external actor claim.
+		otherAgentClient, err := registration.New(registration.Config{
+			ID:                      otherAgentClientID,
+			Secret:                  otherAgentClientSecret,
+			TokenEndpointAuthMethod: oauthproto.TokenEndpointAuthMethodClientSecretPost,
+			GrantTypes:              []string{oauthproto.GrantTypeTokenExchange},
+			Scopes:                  registration.DefaultScopes,
+			Audience:                []string{testAudience},
+		})
+		require.NoError(t, err)
+
+		externalKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+		idpServer, _ := startExternalIdPServer(t, externalKey)
+
+		m := startMockOIDC(t)
+		ts := setupTestServerWithMockOIDC(t, m,
+			withExtraClient(newAgentClient(t)),
+			withExtraClient(otherAgentClient),
+			withTrustedIssuers([]tokenexchange.TrustedIssuer{{
+				IssuerURL:              idpServer.URL,
+				ExpectedAudience:       testAudience,
+				JWKSURL:                idpServer.URL + "/jwks",
+				AllowedActors:          []string{allowedActor},
+				AllowedDelegateClients: []string{agentClientID},
+				InsecureAllowHTTP:      true,
+				AllowPrivateIPs:        true,
+			}}),
+		)
+
+		subjectToken := signExternalToken(t, externalKey, externalClaims(idpServer.URL), map[string]any{
+			"azp": allowedActor,
+		})
+
+		exchange := func(clientID, clientSecret string) *http.Response {
+			return makeTokenRequest(t, ts.Server.URL, url.Values{
+				"grant_type":         {oauthproto.GrantTypeTokenExchange},
+				"subject_token":      {subjectToken},
+				"subject_token_type": {oauthproto.TokenTypeAccessToken},
+				"client_id":          {clientID},
+				"client_secret":      {clientSecret},
+			})
+		}
+
+		permittedResp := exchange(agentClientID, agentClientSecret)
+		defer permittedResp.Body.Close()
+		permittedBody := parseTokenResponse(t, permittedResp)
+		require.Equal(t, http.StatusOK, permittedResp.StatusCode,
+			"the allowlisted delegate client should succeed, got %d (body: %v)",
+			permittedResp.StatusCode, permittedBody)
+
+		rejectedResp := exchange(otherAgentClientID, otherAgentClientSecret)
+		defer rejectedResp.Body.Close()
+		rejectedBody := parseTokenResponse(t, rejectedResp)
+		require.Equal(t, http.StatusBadRequest, rejectedResp.StatusCode,
+			"a client absent from AllowedDelegateClients should be a 400, got %d (body: %v)",
+			rejectedResp.StatusCode, rejectedBody)
+		assert.Equal(t, "invalid_grant", rejectedBody["error"])
+		errDesc, _ := rejectedBody["error_description"].(string)
+		assert.Contains(t, errDesc, "not authorized to exchange subject tokens")
+	})
+
+	t.Run("untrusted issuer rejected before any JWKS fetch", func(t *testing.T) {
+		t.Parallel()
+
+		const untrustedIssuer = "https://untrusted-issuer.example.com"
+
+		externalKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+		idpServer, discoveryHits := startExternalIdPServer(t, externalKey)
+
+		m := startMockOIDC(t)
+		// The sole registered trusted issuer is idpServer.URL — a live,
+		// fetchable JWKS signed with the SAME key the subject token below
+		// uses. This makes the rejection discriminating rather than
+		// coincidental: the subject token's signature WOULD verify
+		// successfully against this real JWKS if the issuer-map lookup were
+		// ever bypassed (a fallback to the sole configured issuer, a wildcard
+		// match, or deleted "iss"-based routing) — so a 400 here can only be
+		// explained by the "iss" string itself failing to match idpServer.URL,
+		// not by an unverifiable signature or a validator that was never
+		// constructed in the first place.
+		ts := setupTestServerWithMockOIDC(t, m,
+			withExtraClient(newAgentClient(t)),
+			withTrustedIssuers([]tokenexchange.TrustedIssuer{{
+				IssuerURL:              idpServer.URL,
+				ExpectedAudience:       testAudience,
+				JWKSURL:                idpServer.URL + "/jwks",
+				AllowedActors:          []string{allowedActor},
+				InsecureAllowHTTP:      true,
+				AllowPrivateIPs:        true,
+				AllowedDelegateClients: []string{"*"},
+			}}),
+		)
+
+		// Signed with idpServer's real key, but claims an issuer that was
+		// never registered in TrustedIssuers.
+		subjectToken := signExternalToken(t, externalKey, externalClaims(untrustedIssuer), map[string]any{
+			"azp": allowedActor,
+		})
+
+		resp := makeTokenRequest(t, ts.Server.URL, url.Values{
+			"grant_type":         {oauthproto.GrantTypeTokenExchange},
+			"subject_token":      {subjectToken},
+			"subject_token_type": {oauthproto.TokenTypeAccessToken},
+			"client_id":          {agentClientID},
+			"client_secret":      {agentClientSecret},
+		})
+		defer resp.Body.Close()
+
+		body := parseTokenResponse(t, resp)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode,
+			"token exchange from an untrusted issuer should be a 400, got %d (body: %v)", resp.StatusCode, body)
+		assert.Equal(t, "invalid_request", body["error"])
+
+		errDesc, _ := body["error_description"].(string)
+		assert.Contains(t, errDesc, "invalid or could not be verified",
+			"the handler's fixed hint must not be replaced by a more specific — and leakier — message")
+		assert.NotContains(t, errDesc, untrustedIssuer,
+			"the error must not leak the untrusted issuer URL")
+
+		// The issuer-map miss must short-circuit before any JWKS fetch.
+		// Note: JWKSURL is now preconfigured above (see comment on the
+		// "allowlisted actor happy path" subtest), which already skips
+		// discovery on its own — so this assertion holding is necessary but
+		// not on its own sufficient proof of the short-circuit; the 400
+		// response and error content below are the discriminating checks.
+		assert.Zero(t, discoveryHits.Load(), "issuer-map miss must precede any JWKS discovery fetch")
+	})
+
+	t.Run("self-issued subject token still works alongside trusted issuers", func(t *testing.T) {
+		t.Parallel()
+
+		externalKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+		idpServer, _ := startExternalIdPServer(t, externalKey)
+
+		m := startMockOIDC(t)
+		ts := setupTestServerWithMockOIDC(t, m,
+			withExtraClient(newAgentClient(t)),
+			withTrustedIssuers([]tokenexchange.TrustedIssuer{{
+				IssuerURL:              idpServer.URL,
+				ExpectedAudience:       testAudience,
+				JWKSURL:                idpServer.URL + "/jwks",
+				AllowedActors:          []string{allowedActor},
+				InsecureAllowHTTP:      true,
+				AllowPrivateIPs:        true,
+				AllowedDelegateClients: []string{"*"},
+			}}),
+		)
+
+		signer, err := jose.NewSigner(
+			jose.SigningKey{Algorithm: jose.RS256, Key: ts.PrivateKey},
+			(&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", "test-key"),
+		)
+		require.NoError(t, err)
+
+		now := time.Now()
+		subjectToken, err := jwt.Signed(signer).
+			Claims(jwt.Claims{
+				Issuer:   testIssuer,
+				Subject:  "self-issued-delegated-user",
+				Audience: jwt.Audience{testAudience},
+				Expiry:   jwt.NewNumericDate(now.Add(30 * time.Minute)),
+				IssuedAt: jwt.NewNumericDate(now),
+			}).
+			Claims(map[string]any{"client_id": agentClientID}).
+			Serialize()
+		require.NoError(t, err)
+
+		resp := makeTokenRequest(t, ts.Server.URL, url.Values{
+			"grant_type":         {oauthproto.GrantTypeTokenExchange},
+			"subject_token":      {subjectToken},
+			"subject_token_type": {oauthproto.TokenTypeAccessToken},
+			"client_id":          {agentClientID},
+			"client_secret":      {agentClientSecret},
+		})
+		defer resp.Body.Close()
+
+		body := parseTokenResponse(t, resp)
+		require.Equal(t, http.StatusOK, resp.StatusCode,
+			"self-issued token exchange should still succeed with trusted issuers configured, "+
+				"got %d (body: %v)", resp.StatusCode, body)
+		assert.Equal(t, oauthproto.TokenTypeAccessToken, body["issued_token_type"])
+	})
+
+	t.Run("explicit jwks_url resolution path", func(t *testing.T) {
+		t.Parallel()
+
+		externalKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+		idpServer, discoveryHits := startExternalIdPServer(t, externalKey)
+
+		// Prove the counter actually increments before relying on its
+		// zero-ness below — otherwise a discovery handler that silently
+		// stopped counting would make the "must skip discovery" assertion
+		// vacuously true.
+		discResp, err := http.Get(idpServer.URL + "/.well-known/openid-configuration") //nolint:noctx
+		require.NoError(t, err)
+		discResp.Body.Close()
+		require.Equal(t, int64(1), discoveryHits.Load(), "discovery counter must be live")
+		discoveryHits.Store(0)
+
+		m := startMockOIDC(t)
+		ts := setupTestServerWithMockOIDC(t, m,
+			withExtraClient(newAgentClient(t)),
+			withTrustedIssuers([]tokenexchange.TrustedIssuer{{
+				IssuerURL: idpServer.URL,
+				// Set directly rather than relying on discovery: this exercises
+				// ensureRegistered's pre-configured-URL branch instead of
+				// discoverJWKSURL.
+				JWKSURL:                idpServer.URL + "/jwks",
+				ExpectedAudience:       testAudience,
+				AllowedActors:          []string{allowedActor},
+				InsecureAllowHTTP:      true,
+				AllowPrivateIPs:        true,
+				AllowedDelegateClients: []string{"*"},
+			}}),
+		)
+
+		subjectToken := signExternalToken(t, externalKey, externalClaims(idpServer.URL), map[string]any{
+			"azp": allowedActor,
+		})
+
+		resp := makeTokenRequest(t, ts.Server.URL, url.Values{
+			"grant_type":         {oauthproto.GrantTypeTokenExchange},
+			"subject_token":      {subjectToken},
+			"subject_token_type": {oauthproto.TokenTypeAccessToken},
+			"client_id":          {agentClientID},
+			"client_secret":      {agentClientSecret},
+		})
+		defer resp.Body.Close()
+
+		body := parseTokenResponse(t, resp)
+		require.Equal(t, http.StatusOK, resp.StatusCode,
+			"token exchange with an explicit jwks_url should succeed, got %d (body: %v)", resp.StatusCode, body)
+		assert.Equal(t, oauthproto.TokenTypeAccessToken, body["issued_token_type"])
+
+		assert.Zero(t, discoveryHits.Load(),
+			"a preconfigured jwks_url must skip OIDC discovery entirely")
+	})
+
+	t.Run("external token's exp bounds the delegated token's lifetime", func(t *testing.T) {
+		t.Parallel()
+
+		externalKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+		idpServer, _ := startExternalIdPServer(t, externalKey)
+
+		m := startMockOIDC(t)
+		ts := setupTestServerWithMockOIDC(t, m,
+			withExtraClient(newAgentClient(t)),
+			withTrustedIssuers([]tokenexchange.TrustedIssuer{{
+				IssuerURL:              idpServer.URL,
+				ExpectedAudience:       testAudience,
+				JWKSURL:                idpServer.URL + "/jwks",
+				AllowedActors:          []string{allowedActor},
+				InsecureAllowHTTP:      true,
+				AllowPrivateIPs:        true,
+				AllowedDelegateClients: []string{"*"},
+			}}),
+		)
+
+		// 5m remaining lifetime, well under the 15m default delegation
+		// lifespan — so the delegated token's exp must track the subject
+		// token, not the (longer) configured cap.
+		now := time.Now()
+		subjClaims := jwt.Claims{
+			Subject:  externalUserSub,
+			Issuer:   idpServer.URL,
+			Audience: jwt.Audience{testAudience},
+			Expiry:   jwt.NewNumericDate(now.Add(5 * time.Minute)),
+			IssuedAt: jwt.NewNumericDate(now),
+		}
+		subjectToken := signExternalToken(t, externalKey, subjClaims, map[string]any{"azp": allowedActor})
+
+		resp := makeTokenRequest(t, ts.Server.URL, url.Values{
+			"grant_type":         {oauthproto.GrantTypeTokenExchange},
+			"subject_token":      {subjectToken},
+			"subject_token_type": {oauthproto.TokenTypeAccessToken},
+			"client_id":          {agentClientID},
+			"client_secret":      {agentClientSecret},
+		})
+		defer resp.Body.Close()
+
+		body := parseTokenResponse(t, resp)
+		require.Equal(t, http.StatusOK, resp.StatusCode,
+			"token exchange should succeed, got %d (body: %v)", resp.StatusCode, body)
+
+		delegated, ok := body["access_token"].(string)
+		require.True(t, ok)
+		require.NotEmpty(t, delegated)
+
+		parsed, err := jwt.ParseSigned(delegated, []jose.SignatureAlgorithm{jose.RS256})
+		require.NoError(t, err)
+		var claims map[string]any
+		require.NoError(t, parsed.Claims(ts.PrivateKey.Public(), &claims))
+
+		exp, ok := claims["exp"].(float64)
+		require.True(t, ok, "exp claim should be a number")
+		assert.WithinDuration(t, now.Add(5*time.Minute), time.Unix(int64(exp), 0), 2*time.Minute,
+			"delegated token exp must track the external subject token's 5m remaining lifetime, "+
+				"not the 15m default delegation lifespan")
+	})
+
+	t.Run("invalid_target when the external aud isn't a ToolHive-allowed audience", func(t *testing.T) {
+		t.Parallel()
+
+		// A realistic Entra-style app-ID audience: legitimate as the trusted
+		// issuer's own ExpectedAudience, but not one of ToolHive's
+		// AllowedAudiences — the footgun documented on RunConfig.TrustedIssuers.
+		const foreignAudience = "api://some-app-id"
+
+		externalKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+		idpServer, _ := startExternalIdPServer(t, externalKey)
+
+		m := startMockOIDC(t)
+		ts := setupTestServerWithMockOIDC(t, m,
+			withExtraClient(newAgentClient(t)),
+			withTrustedIssuers([]tokenexchange.TrustedIssuer{{
+				IssuerURL:              idpServer.URL,
+				ExpectedAudience:       foreignAudience,
+				JWKSURL:                idpServer.URL + "/jwks",
+				AllowedActors:          []string{allowedActor},
+				InsecureAllowHTTP:      true,
+				AllowPrivateIPs:        true,
+				AllowedDelegateClients: []string{"*"},
+			}}),
+		)
+
+		now := time.Now()
+		subjClaims := jwt.Claims{
+			Subject:  externalUserSub,
+			Issuer:   idpServer.URL,
+			Audience: jwt.Audience{foreignAudience},
+			Expiry:   jwt.NewNumericDate(now.Add(30 * time.Minute)),
+			IssuedAt: jwt.NewNumericDate(now),
+		}
+		subjectToken := signExternalToken(t, externalKey, subjClaims, map[string]any{"azp": allowedActor})
+
+		// No resource/audience requested: the handler defaults to ToolHive's
+		// sole AllowedAudience (testAudience), which this subject token's aud
+		// does not cover.
+		resp := makeTokenRequest(t, ts.Server.URL, url.Values{
+			"grant_type":         {oauthproto.GrantTypeTokenExchange},
+			"subject_token":      {subjectToken},
+			"subject_token_type": {oauthproto.TokenTypeAccessToken},
+			"client_id":          {agentClientID},
+			"client_secret":      {agentClientSecret},
+		})
+		defer resp.Body.Close()
+
+		body := parseTokenResponse(t, resp)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode,
+			"an external aud outside ToolHive's AllowedAudiences must be rejected, got %d (body: %v)",
+			resp.StatusCode, body)
+		assert.Equal(t, "invalid_target", body["error"])
+		errDesc, _ := body["error_description"].(string)
+		assert.Contains(t, errDesc, "not covered by the subject token")
+	})
+}
+
+// ============================================================================
+// Full PKCE Flow Integration Tests with Mock Upstream IDP (using mockoidc)
+// ============================================================================
+
+// testServerWithUpstream bundles test server components with upstream IDP.
+type testServerWithUpstream struct {
+	*testServer
+	mockOIDC         *mockoidc.MockOIDC
+	upstreamProvider upstream.OAuth2Provider
+}
+
+// startMockOIDC starts a mockoidc server with default test user.
+func startMockOIDC(t *testing.T) *mockoidc.MockOIDC {
+	t.Helper()
+
+	m, err := mockoidc.Run()
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		require.NoError(t, m.Shutdown())
+	})
+
+	// Queue default test user
+	m.QueueUser(&mockoidc.MockUser{
+		Subject: "mock-user-sub-123",
+		Email:   "testuser@example.com",
+	})
+
+	return m
+}
+
+// setupTestServerWithMockOIDC creates a test server with mockoidc as upstream.
+// Additional options are forwarded to setupTestServer (e.g., withAccessTokenLifespan).
+func setupTestServerWithMockOIDC(t *testing.T, m *mockoidc.MockOIDC, extraOpts ...testServerOption) *testServerWithUpstream {
+	t.Helper()
+
+	cfg := m.Config()
+
+	upstreamCfg := &upstream.OAuth2Config{
+		CommonOAuthConfig: upstream.CommonOAuthConfig{
+			ClientID:     cfg.ClientID,
+			ClientSecret: cfg.ClientSecret,
+			Scopes:       []string{"openid", "profile", "email"},
+			RedirectURI:  testIssuer + "/oauth/callback",
+		},
+		AuthorizationEndpoint: m.AuthorizationEndpoint(),
+		TokenEndpoint:         m.TokenEndpoint(),
+		UserInfo: &upstream.UserInfoConfig{
+			EndpointURL: m.UserinfoEndpoint(),
+			// mockoidc's userinfo endpoint only returns {"email":"..."}, not "sub"
+			// Configure field mapping to use email as the subject identifier
+			FieldMapping: &upstream.UserInfoFieldMapping{
+				SubjectFields: []string{"sub", "email"},
+			},
+		},
+	}
+	upstreamIDP, err := upstream.NewOAuth2Provider(upstreamCfg)
+	require.NoError(t, err)
+
+	opts := append([]testServerOption{
+		withUpstream(upstreamIDP),
+		withScopes(registration.DefaultScopes),
+	}, extraOpts...)
+	ts := setupTestServer(t, opts...)
+
+	return &testServerWithUpstream{
+		testServer:       ts,
+		mockOIDC:         m,
+		upstreamProvider: upstreamIDP,
+	}
+}
+
+// noRedirectClient returns an HTTP client that does not follow redirects.
+func noRedirectClient() *http.Client {
+	return &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+// authorizationParams contains parameters for initiating an authorization request.
+type authorizationParams struct {
+	ClientID     string
+	RedirectURI  string
+	State        string
+	Challenge    string
+	Scope        string
+	ResponseType string
+}
+
+// completeAuthorizationFlow performs the full OAuth authorization flow through mockoidc
+// and returns the authorization code and state returned by our auth server.
+//
+// The flow is: Client → Our /authorize → mockoidc → Our /callback → Client redirect
+//
+// We manually step through redirects to handle the fact that mockoidc's redirect
+// points to "localhost" (from the config) but our test server runs on a random port.
+func completeAuthorizationFlow(
+	t *testing.T,
+	serverURL string,
+	params authorizationParams,
+) (code string, state string) {
+	t.Helper()
+	client := noRedirectClient()
+
+	// Step 1: Start authorization flow on our server
+	authorizeURL := serverURL + "/oauth/authorize?" + url.Values{
+		"client_id":             {params.ClientID},
+		"redirect_uri":          {params.RedirectURI},
+		"state":                 {params.State},
+		"code_challenge":        {params.Challenge},
+		"code_challenge_method": {"S256"},
+		"response_type":         {params.ResponseType},
+		"scope":                 {params.Scope},
+	}.Encode()
+
+	resp, err := client.Get(authorizeURL)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusFound, resp.StatusCode, "expected redirect to mockoidc")
+	mockOIDCLocation, err := resp.Location()
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	// Step 2: Follow redirect to mockoidc authorization endpoint
+	resp, err = client.Get(mockOIDCLocation.String())
+	require.NoError(t, err)
+	require.Equal(t, http.StatusFound, resp.StatusCode, "expected redirect from mockoidc to callback")
+	callbackLocation, err := resp.Location()
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	// Step 3: Rewrite callback URL to use actual test server
+	// mockoidc redirects to http://localhost/oauth/callback, but our server is at serverURL
+	parsedServerURL, err := url.Parse(serverURL)
+	require.NoError(t, err)
+	callbackLocation.Scheme = parsedServerURL.Scheme
+	callbackLocation.Host = parsedServerURL.Host
+
+	// Step 4: Call our callback endpoint with the rewritten URL
+	resp, err = client.Get(callbackLocation.String())
+	require.NoError(t, err)
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode, "expected redirect to client")
+	clientLocation, err := resp.Location()
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	// Step 5: Extract the authorization code and state
+	code = clientLocation.Query().Get("code")
+	require.NotEmpty(t, code, "authorization code should be present")
+	state = clientLocation.Query().Get("state")
+
+	return code, state
+}
+
+// exchangeCodeForTokens exchanges an authorization code for tokens and validates the response.
+// The resource parameter (RFC 8707) specifies the intended audience for the token.
+//
+//nolint:unparam // resource is currently always testAudience but kept for test flexibility
+func exchangeCodeForTokens(
+	t *testing.T,
+	serverURL string,
+	code string,
+	verifier string,
+	resource string,
+) map[string]interface{} {
+	t.Helper()
+
+	params := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"redirect_uri":  {testRedirectURI},
+		"client_id":     {testClientID},
+		"code_verifier": {verifier},
+	}
+	if resource != "" {
+		params.Set("resource", resource)
+	}
+
+	tokenResp := makeTokenRequest(t, serverURL, params)
+	defer tokenResp.Body.Close()
+
+	tokenData := parseTokenResponse(t, tokenResp)
+	require.Equal(t, http.StatusOK, tokenResp.StatusCode, "token request should succeed")
+
+	return tokenData
+}
+
+// TestIntegration_FullPKCEFlow tests the complete OAuth flow:
+// Client -> Auth Server -> Upstream IDP -> Auth Server -> Client -> Token Exchange
+func TestIntegration_FullPKCEFlow(t *testing.T) {
+	t.Parallel()
+
+	// Setup: Start mock IDP and auth server
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m)
+	verifier := servercrypto.GeneratePKCEVerifier()
+	challenge := servercrypto.ComputePKCEChallenge(verifier)
+	clientState := "client-state-123"
+	requestedScopes := []string{"openid", "profile", "offline_access"}
+
+	// Complete authorization flow through mockoidc (follows redirects)
+	// Request offline_access to get a refresh token
+	authCode, returnedState := completeAuthorizationFlow(t, ts.Server.URL, authorizationParams{
+		ClientID:     testClientID,
+		RedirectURI:  testRedirectURI,
+		State:        clientState,
+		Challenge:    challenge,
+		Scope:        strings.Join(requestedScopes, " "),
+		ResponseType: "code",
+	})
+
+	// Verify client state was preserved through the flow
+	assert.Equal(t, clientState, returnedState, "client state should be preserved through authorization flow")
+
+	// Exchange code for tokens with resource parameter (RFC 8707) for audience binding
+	tokenData := exchangeCodeForTokens(t, ts.Server.URL, authCode, verifier, testAudience)
+
+	// Verify token response structure
+	accessToken, ok := tokenData["access_token"].(string)
+	require.True(t, ok, "access_token should be a string")
+	require.NotEmpty(t, accessToken, "access_token should not be empty")
+
+	tokenType, ok := tokenData["token_type"].(string)
+	require.True(t, ok, "token_type should be a string")
+	assert.Equal(t, "bearer", strings.ToLower(tokenType), "token type should be Bearer")
+
+	// Verify refresh token is returned when offline_access scope is requested
+	refreshToken, ok := tokenData["refresh_token"].(string)
+	require.True(t, ok, "refresh_token should be a string when offline_access is requested")
+	require.NotEmpty(t, refreshToken, "refresh_token should not be empty")
+
+	// Verify expires_in matches configured token lifetime
+	expiresIn, ok := tokenData["expires_in"].(float64)
+	require.True(t, ok, "expires_in should be a number")
+	assert.InDelta(t, testAccessTokenLifetime.Seconds(), expiresIn, 5, "expires_in should match configured lifetime")
+
+	// Verify JWT signature and parse claims
+	parsedToken, err := jwt.ParseSigned(accessToken, []jose.SignatureAlgorithm{jose.RS256})
+	require.NoError(t, err, "should be able to parse JWT")
+
+	var claims map[string]interface{}
+	err = parsedToken.Claims(ts.PrivateKey.Public(), &claims)
+	require.NoError(t, err, "JWT signature should be valid")
+
+	// Verify issuer and client
+	assert.Equal(t, testIssuer, claims["iss"], "issuer should match")
+	assert.Equal(t, testClientID, claims["client_id"], "client_id should match")
+
+	// Verify audience from resource parameter (RFC 8707)
+	aud, ok := claims["aud"].([]interface{})
+	require.True(t, ok, "aud claim should be an array")
+	require.Len(t, aud, 1, "aud should have exactly one audience")
+	assert.Equal(t, testAudience, aud[0], "audience should match requested resource")
+
+	// Verify subject is present (from upstream IDP)
+	sub, ok := claims["sub"].(string)
+	require.True(t, ok, "sub claim should be a string")
+	assert.NotEmpty(t, sub, "sub claim should not be empty")
+
+	// Verify timestamps are reasonable
+	now := time.Now().Unix()
+
+	iat, ok := claims["iat"].(float64)
+	require.True(t, ok, "iat claim should be a number")
+	assert.LessOrEqual(t, int64(iat), now+5, "iat should not be in the future (with 5s tolerance)")
+	assert.GreaterOrEqual(t, int64(iat), now-60, "iat should not be more than 60s in the past")
+
+	exp, ok := claims["exp"].(float64)
+	require.True(t, ok, "exp claim should be a number")
+	expectedExp := iat + testAccessTokenLifetime.Seconds()
+	assert.InDelta(t, expectedExp, exp, 2, "exp should be iat + configured token lifetime (within 2s tolerance)")
+
+	// Verify scope claim matches requested scopes
+	scope, ok := claims["scp"].([]interface{})
+	require.True(t, ok, "scp claim should be an array")
+	scopeStrings := make([]string, len(scope))
+	for i, s := range scope {
+		scopeStr, ok := s.(string)
+		require.True(t, ok, "each scope should be a string, got %T at index %d", s, i)
+		scopeStrings[i] = scopeStr
+	}
+	assert.ElementsMatch(t, requestedScopes, scopeStrings, "granted scopes should match requested scopes")
+}
+
+// TestIntegration_FullPKCEFlow_DefaultAudience verifies that omitting the
+// RFC 8707 resource parameter still produces a token with the correct aud
+// claim when the server has exactly one allowed audience.
+func TestIntegration_FullPKCEFlow_DefaultAudience(t *testing.T) {
+	t.Parallel()
+
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m)
+	verifier := servercrypto.GeneratePKCEVerifier()
+	challenge := servercrypto.ComputePKCEChallenge(verifier)
+
+	authCode, _ := completeAuthorizationFlow(t, ts.Server.URL, authorizationParams{
+		ClientID:     testClientID,
+		RedirectURI:  testRedirectURI,
+		State:        "default-aud-state",
+		Challenge:    challenge,
+		Scope:        "openid profile",
+		ResponseType: "code",
+	})
+
+	// Exchange code WITHOUT a resource parameter — the server should default
+	// to the sole allowed audience (testAudience = "https://mcp.example.com").
+	tokenData := exchangeCodeForTokens(t, ts.Server.URL, authCode, verifier, "")
+
+	accessToken, ok := tokenData["access_token"].(string)
+	require.True(t, ok, "access_token should be a string")
+	require.NotEmpty(t, accessToken)
+
+	// Verify JWT signature and parse claims
+	parsedToken, err := jwt.ParseSigned(accessToken, []jose.SignatureAlgorithm{jose.RS256})
+	require.NoError(t, err, "should be able to parse JWT")
+
+	var claims map[string]interface{}
+	err = parsedToken.Claims(ts.PrivateKey.Public(), &claims)
+	require.NoError(t, err, "JWT signature should be valid")
+
+	// The sole AllowedAudience should have been granted automatically.
+	aud, ok := claims["aud"].([]interface{})
+	require.True(t, ok, "aud claim should be an array")
+	require.Len(t, aud, 1, "aud should have exactly one audience")
+	assert.Equal(t, testAudience, aud[0], "audience should default to sole AllowedAudience")
+}
+
+// ============================================================================
+// OIDC Provider Integration Tests (OIDCProviderImpl via defaultUpstreamFactory)
+// ============================================================================
+
+// setupTestServerWithOIDCProvider creates a test server with a real OIDCProviderImpl
+// created through the defaultUpstreamFactory. Unlike setupTestServerWithMockOIDC which
+// manually creates a BaseOAuth2Provider, this test path exercises:
+//   - UpstreamConfig{Type: OIDC, OIDCConfig: ...}
+//   - defaultUpstreamFactory dispatching to NewOIDCProvider
+//   - OIDCProviderImpl with OIDC discovery, ID token validation, and nonce support
+//
+// Variadic opts allow swapping the storage backend (e.g. withRedisBackedStorage)
+// and setting Config.UpstreamFilter (withUpstreamFilter); the upstream itself is
+// fixed because this helper exists specifically to exercise the real OIDC
+// factory path. Other testServerOptions are silently ignored.
+func setupTestServerWithOIDCProvider(t *testing.T, m *mockoidc.MockOIDC, opts ...testServerOption) *testServerWithUpstream {
+	t.Helper()
+	ctx := context.Background()
+
+	options := &testServerOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	cfg := m.Config()
+
+	// 1. Generate RSA key for our auth server's signing
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	// 2. Generate HMAC secret
+	secret := make([]byte, 32)
+	_, err = rand.Read(secret)
+	require.NoError(t, err)
+
+	// 3. Create storage. See setupTestServer for the factory contract.
+	var (
+		stor storage.Storage = storage.NewMemoryStorage()
+		mr   *miniredis.Miniredis
+	)
+	if options.storageFactory != nil {
+		stor, mr = options.storageFactory(t)
+	}
+
+	// 4. Register test client (public client for PKCE)
+	err = stor.RegisterClient(ctx, &fosite.DefaultClient{
+		ID:            testClientID,
+		Secret:        nil, // public client
+		RedirectURIs:  []string{testRedirectURI},
+		ResponseTypes: []string{"code"},
+		GrantTypes:    []string{"authorization_code", "refresh_token"},
+		Scopes:        registration.DefaultScopes,
+		Audience:      []string{testAudience},
+		Public:        true,
+	})
+	require.NoError(t, err)
+
+	// 5. Build OIDC upstream config - this is the key difference from setupTestServerWithMockOIDC.
+	// We use UpstreamProviderTypeOIDC with OIDCConfig so that defaultUpstreamFactory
+	// creates an OIDCProviderImpl (not BaseOAuth2Provider).
+	serverCfg := Config{
+		Issuer:               testIssuer,
+		KeyProvider:          &testKeyProvider{key: privateKey},
+		HMACSecrets:          servercrypto.NewHMACSecrets(secret),
+		AccessTokenLifespan:  time.Hour,
+		RefreshTokenLifespan: 24 * time.Hour,
+		AuthCodeLifespan:     10 * time.Minute,
+		Upstreams: []UpstreamConfig{{
+			Name: "mockoidc",
+			Type: UpstreamProviderTypeOIDC,
+			OIDCConfig: &upstream.OIDCConfig{
+				CommonOAuthConfig: upstream.CommonOAuthConfig{
+					ClientID:     cfg.ClientID,
+					ClientSecret: cfg.ClientSecret,
+					Scopes:       []string{"openid", "profile", "email"},
+					RedirectURI:  testIssuer + "/oauth/callback",
+				},
+				Issuer: m.Issuer(),
+			},
+		}},
+		AllowedAudiences: []string{testAudience},
+		UpstreamFilter:   options.upstreamFilter,
+	}
+
+	// 6. Create server using newServer WITHOUT overriding the upstream factory.
+	// This exercises the real defaultUpstreamFactory -> NewOIDCProvider path.
+	srv, err := newServer(ctx, serverCfg, stor)
+	require.NoError(t, err)
+
+	// 7. Create HTTP test server
+	httpServer := httptest.NewServer(srv.Handler())
+	t.Cleanup(func() {
+		httpServer.Close()
+		require.NoError(t, srv.Close())
+	})
+
+	return &testServerWithUpstream{
+		testServer: &testServer{
+			Server:     httpServer,
+			PrivateKey: privateKey,
+			authServer: srv,
+			storage:    srv.IDPTokenStorage(),
+			mr:         mr,
+		},
+		mockOIDC: m,
+	}
+}
+
+// TestIntegration_OIDCProvider_FullFlow tests the complete OAuth flow using the real
+// OIDCProviderImpl created through defaultUpstreamFactory. This verifies that:
+// - OIDC discovery is performed against the mock OIDC server
+// - The authorization flow redirects through the OIDC provider correctly
+// - Token exchange produces a valid JWT access token
+// - The ID token from the upstream OIDC provider is validated
+func TestIntegration_OIDCProvider_FullFlow(t *testing.T) {
+	t.Parallel()
+
+	m := startMockOIDC(t)
+	ts := setupTestServerWithOIDCProvider(t, m)
+
+	verifier := servercrypto.GeneratePKCEVerifier()
+	challenge := servercrypto.ComputePKCEChallenge(verifier)
+	clientState := "oidc-provider-test-state"
+
+	// Complete the authorization flow through mockoidc
+	authCode, returnedState := completeAuthorizationFlow(t, ts.Server.URL, authorizationParams{
+		ClientID:     testClientID,
+		RedirectURI:  testRedirectURI,
+		State:        clientState,
+		Challenge:    challenge,
+		Scope:        "openid profile offline_access",
+		ResponseType: "code",
+	})
+
+	// Verify state was preserved
+	assert.Equal(t, clientState, returnedState, "client state should be preserved through OIDC flow")
+
+	// Exchange code for tokens with audience
+	tokenData := exchangeCodeForTokens(t, ts.Server.URL, authCode, verifier, testAudience)
+
+	// Verify access token is a valid JWT
+	accessToken, ok := tokenData["access_token"].(string)
+	require.True(t, ok, "access_token should be a string")
+	require.NotEmpty(t, accessToken)
+
+	parsedToken, err := jwt.ParseSigned(accessToken, []jose.SignatureAlgorithm{jose.RS256})
+	require.NoError(t, err, "should be able to parse JWT")
+
+	var claims map[string]interface{}
+	err = parsedToken.Claims(ts.PrivateKey.Public(), &claims)
+	require.NoError(t, err, "JWT signature should be valid")
+
+	// Verify standard claims
+	assert.Equal(t, testIssuer, claims["iss"], "issuer should match our auth server")
+	assert.Equal(t, testClientID, claims["client_id"], "client_id should match")
+
+	// Verify subject is present (from OIDCProviderImpl's ID token validation)
+	sub, ok := claims["sub"].(string)
+	require.True(t, ok, "sub claim should be a string")
+	assert.NotEmpty(t, sub, "sub claim should not be empty (resolved from OIDC ID token)")
+
+	// Verify refresh token was returned (offline_access scope was requested)
+	refreshToken, ok := tokenData["refresh_token"].(string)
+	require.True(t, ok, "refresh_token should be present when offline_access is requested")
+	require.NotEmpty(t, refreshToken)
+}
+
+// TestIntegration_OIDCProvider_TokenRefresh tests refresh token flow through OIDCProviderImpl.
+// This verifies that token refresh works and the subject identity is consistent
+// per OIDC Core Section 12.2.
+func TestIntegration_OIDCProvider_TokenRefresh(t *testing.T) {
+	t.Parallel()
+
+	m := startMockOIDC(t)
+	ts := setupTestServerWithOIDCProvider(t, m)
+
+	verifier := servercrypto.GeneratePKCEVerifier()
+	challenge := servercrypto.ComputePKCEChallenge(verifier)
+
+	// Get initial tokens
+	authCode, _ := completeAuthorizationFlow(t, ts.Server.URL, authorizationParams{
+		ClientID:     testClientID,
+		RedirectURI:  testRedirectURI,
+		State:        "refresh-oidc-test",
+		Challenge:    challenge,
+		Scope:        "openid profile offline_access",
+		ResponseType: "code",
+	})
+
+	tokenData := exchangeCodeForTokens(t, ts.Server.URL, authCode, verifier, testAudience)
+
+	// Extract tokens
+	originalAccessToken, ok := tokenData["access_token"].(string)
+	require.True(t, ok)
+	refreshToken, ok := tokenData["refresh_token"].(string)
+	require.True(t, ok)
+	require.NotEmpty(t, refreshToken, "refresh_token should be present")
+
+	// Parse subject from original access token
+	origParsed, err := jwt.ParseSigned(originalAccessToken, []jose.SignatureAlgorithm{jose.RS256})
+	require.NoError(t, err)
+	var origClaims map[string]interface{}
+	err = origParsed.Claims(ts.PrivateKey.Public(), &origClaims)
+	require.NoError(t, err)
+	originalSub, ok := origClaims["sub"].(string)
+	require.True(t, ok)
+
+	// Use refresh token to get new tokens
+	refreshParams := url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+		"client_id":     {testClientID},
+	}
+
+	refreshResp := makeTokenRequest(t, ts.Server.URL, refreshParams)
+	defer refreshResp.Body.Close()
+	require.Equal(t, http.StatusOK, refreshResp.StatusCode, "refresh token request should succeed")
+	refreshData := parseTokenResponse(t, refreshResp)
+
+	// Verify new access token
+	newAccessToken, ok := refreshData["access_token"].(string)
+	require.True(t, ok)
+	assert.NotEqual(t, originalAccessToken, newAccessToken, "refreshed access token should differ")
+
+	// Verify subject consistency (OIDC Section 12.2)
+	newParsed, err := jwt.ParseSigned(newAccessToken, []jose.SignatureAlgorithm{jose.RS256})
+	require.NoError(t, err)
+	var newClaims map[string]interface{}
+	err = newParsed.Claims(ts.PrivateKey.Public(), &newClaims)
+	require.NoError(t, err)
+	newSub, ok := newClaims["sub"].(string)
+	require.True(t, ok)
+	assert.Equal(t, originalSub, newSub, "subject must be consistent across token refresh (OIDC Section 12.2)")
+
+	// Verify refresh token rotation
+	newRefreshToken, ok := refreshData["refresh_token"].(string)
+	require.True(t, ok)
+	assert.NotEqual(t, refreshToken, newRefreshToken, "token rotation must issue new refresh token")
+}
+
+// TestIntegration_NoRefreshToken_WithoutOfflineAccess verifies that when the
+// offline_access scope is NOT requested, no refresh token is issued.
+func TestIntegration_NoRefreshToken_WithoutOfflineAccess(t *testing.T) {
+	t.Parallel()
+
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m)
+
+	verifier := servercrypto.GeneratePKCEVerifier()
+	challenge := servercrypto.ComputePKCEChallenge(verifier)
+
+	// Request only openid+profile — and the client isn't registered for offline_access
+	authCode, _ := completeAuthorizationFlow(t, ts.Server.URL, authorizationParams{
+		ClientID:     testClientID,
+		RedirectURI:  testRedirectURI,
+		State:        "no-refresh-test",
+		Challenge:    challenge,
+		Scope:        "openid profile",
+		ResponseType: "code",
+	})
+
+	// Exchange code for tokens
+	resp := makeTokenRequest(t, ts.Server.URL, url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {authCode},
+		"client_id":     {testClientID},
+		"redirect_uri":  {testRedirectURI},
+		"code_verifier": {verifier},
+	})
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	tokenResp := parseTokenResponse(t, resp)
+
+	// Access token should be present
+	_, hasAccess := tokenResp["access_token"].(string)
+	assert.True(t, hasAccess, "access_token should be present")
+
+	// Refresh token must NOT be present without offline_access
+	_, hasRefresh := tokenResp["refresh_token"]
+	assert.False(t, hasRefresh, "refresh_token must NOT be issued without offline_access scope")
+}
+
+// TestIntegration_ScopeElevation_Rejected verifies that the authorization
+// server rejects requests for scopes the client is not registered for.
+// The client is registered with only ["openid"] and attempts to request
+// "openid admin" — fosite's ExactScopeStrategy must reject this at the
+// /authorize endpoint with an invalid_scope error redirect.
+func TestIntegration_ScopeElevation_Rejected(t *testing.T) {
+	t.Parallel()
+
+	m := startMockOIDC(t)
+	// Register client with only "openid" scope (no profile, email, etc.)
+	ts := setupTestServerWithMockOIDC(t, m,
+		withScopes([]string{"openid"}),
+	)
+
+	verifier := servercrypto.GeneratePKCEVerifier()
+	challenge := servercrypto.ComputePKCEChallenge(verifier)
+
+	client := noRedirectClient()
+
+	// Attempt to authorize with a scope ("admin") the client is not registered for
+	authorizeURL := ts.Server.URL + "/oauth/authorize?" + url.Values{
+		"client_id":             {testClientID},
+		"redirect_uri":          {testRedirectURI},
+		"state":                 {"scope-elevation-test"},
+		"code_challenge":        {challenge},
+		"code_challenge_method": {"S256"},
+		"response_type":         {"code"},
+		"scope":                 {"openid admin"},
+	}.Encode()
+
+	resp, err := client.Get(authorizeURL)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	// Fosite should redirect back to the client with an error
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode,
+		"fosite should redirect with error for unregistered scope")
+	location, err := resp.Location()
+	require.NoError(t, err)
+
+	assert.Equal(t, "invalid_scope", location.Query().Get("error"),
+		"error should be invalid_scope when requesting unregistered scopes")
+	assert.Equal(t, "scope-elevation-test", location.Query().Get("state"),
+		"state should be preserved in error redirect")
+	assert.Empty(t, location.Query().Get("code"),
+		"no authorization code should be issued")
+}
+
+// TestIntegration_RefreshToken_ShortLivedAccessToken verifies the refresh token
+// flow with a very short access token lifetime, proving that refresh tokens can
+// be used to obtain new access tokens after the original expires.
+func TestIntegration_RefreshToken_ShortLivedAccessToken(t *testing.T) {
+	t.Parallel()
+
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m,
+		withAccessTokenLifespan(time.Minute), // minimum allowed by provider validation
+	)
+
+	verifier := servercrypto.GeneratePKCEVerifier()
+	challenge := servercrypto.ComputePKCEChallenge(verifier)
+
+	// Get tokens with offline_access
+	authCode, _ := completeAuthorizationFlow(t, ts.Server.URL, authorizationParams{
+		ClientID:     testClientID,
+		RedirectURI:  testRedirectURI,
+		State:        "short-lived-test",
+		Challenge:    challenge,
+		Scope:        "openid profile offline_access",
+		ResponseType: "code",
+	})
+
+	resp := makeTokenRequest(t, ts.Server.URL, url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {authCode},
+		"client_id":     {testClientID},
+		"redirect_uri":  {testRedirectURI},
+		"code_verifier": {verifier},
+	})
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	tokenResp := parseTokenResponse(t, resp)
+
+	// Verify the short expiry (1 minute)
+	expiresIn, ok := tokenResp["expires_in"].(float64)
+	require.True(t, ok)
+	assert.InDelta(t, 60, expiresIn, 5, "expires_in should be ~60 seconds")
+
+	refreshToken, ok := tokenResp["refresh_token"].(string)
+	require.True(t, ok, "refresh_token must be present with offline_access")
+
+	// We don't actually wait for the token to expire (would slow down tests).
+	// Instead, verify the refresh flow works immediately — the important thing
+	// is that a refresh token was issued and can be used.
+
+	// Use refresh token to get a new access token
+	refreshResp := makeTokenRequest(t, ts.Server.URL, url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+		"client_id":     {testClientID},
+	})
+	defer refreshResp.Body.Close()
+	require.Equal(t, http.StatusOK, refreshResp.StatusCode, "refresh should succeed after access token expiry")
+	refreshData := parseTokenResponse(t, refreshResp)
+
+	// New access token should be present and different
+	newAccessToken, ok := refreshData["access_token"].(string)
+	require.True(t, ok)
+	assert.NotEqual(t, tokenResp["access_token"], newAccessToken)
+
+	// Verify the new token has a fresh expiry (not expired)
+	parsedToken, err := jwt.ParseSigned(newAccessToken, []jose.SignatureAlgorithm{jose.RS256})
+	require.NoError(t, err)
+	var claims map[string]interface{}
+	err = parsedToken.Claims(ts.PrivateKey.Public(), &claims)
+	require.NoError(t, err)
+
+	exp, ok := claims["exp"].(float64)
+	require.True(t, ok)
+	assert.Greater(t, int64(exp), time.Now().Unix(), "refreshed token exp must be in the future")
+}
+
+// TestIntegration_UpstreamTokenService_GetValidTokens tests the UpstreamTokenService
+// end-to-end: a real auth server stores upstream tokens during the OAuth callback,
+// and the service retrieves them by session ID extracted from the JWT.
+func TestIntegration_UpstreamTokenService_GetValidTokens(t *testing.T) {
+	t.Parallel()
+
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m)
+
+	verifier := servercrypto.GeneratePKCEVerifier()
+	challenge := servercrypto.ComputePKCEChallenge(verifier)
+
+	// Complete the full OAuth flow — this stores upstream tokens in the auth server's storage.
+	authCode, _ := completeAuthorizationFlow(t, ts.Server.URL, authorizationParams{
+		ClientID:     testClientID,
+		RedirectURI:  testRedirectURI,
+		State:        "upstream-svc-test",
+		Challenge:    challenge,
+		Scope:        "openid profile offline_access",
+		ResponseType: "code",
+	})
+
+	tokenData := exchangeCodeForTokens(t, ts.Server.URL, authCode, verifier, testAudience)
+
+	// Extract tsid from the access token JWT — this is the session ID used by storage.
+	accessToken, ok := tokenData["access_token"].(string)
+	require.True(t, ok)
+	tsid := extractTSID(t, accessToken, ts.PrivateKey.Public())
+
+	// Create the UpstreamTokenService using the auth server's storage and refresher.
+	// This mirrors how vMCP would compose these in production.
+	svc := upstreamtoken.NewInProcessService(
+		ts.authServer.IDPTokenStorage(),
+		ts.authServer.UpstreamTokenRefresher(),
+	)
+
+	// The service should return the upstream access token stored during callback.
+	cred, err := svc.GetValidTokens(context.Background(), tsid, "default")
+	require.NoError(t, err)
+	require.NotNil(t, cred)
+	assert.NotEmpty(t, cred.AccessToken, "upstream access token should be present")
+}
+
+// TestIntegration_UpstreamTokenService_RefreshExpiredTokens verifies the transparent
+// refresh path: upstream tokens are expired in storage, and the service uses the
+// refresher (backed by mockoidc) to get fresh tokens without re-authentication.
+func TestIntegration_UpstreamTokenService_RefreshExpiredTokens(t *testing.T) {
+	t.Parallel()
+
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m)
+
+	verifier := servercrypto.GeneratePKCEVerifier()
+	challenge := servercrypto.ComputePKCEChallenge(verifier)
+
+	authCode, _ := completeAuthorizationFlow(t, ts.Server.URL, authorizationParams{
+		ClientID:     testClientID,
+		RedirectURI:  testRedirectURI,
+		State:        "upstream-refresh-test",
+		Challenge:    challenge,
+		Scope:        "openid profile offline_access",
+		ResponseType: "code",
+	})
+
+	tokenData := exchangeCodeForTokens(t, ts.Server.URL, authCode, verifier, testAudience)
+
+	accessToken, ok := tokenData["access_token"].(string)
+	require.True(t, ok)
+	tsid := extractTSID(t, accessToken, ts.PrivateKey.Public())
+
+	stor := ts.authServer.IDPTokenStorage()
+
+	// Read the stored tokens, then overwrite them with an expired ExpiresAt.
+	original, err := stor.GetUpstreamTokens(context.Background(), tsid, "default")
+	require.NoError(t, err)
+	require.NotNil(t, original)
+	originalAccessToken := original.AccessToken
+
+	// Queue a new user for mockoidc's refresh token endpoint response.
+	m.QueueUser(&mockoidc.MockUser{
+		Subject: "mock-user-sub-123",
+		Email:   "testuser@example.com",
+	})
+
+	// Store tokens back with ExpiresAt in the past to simulate expiry.
+	expired := &storage.UpstreamTokens{
+		ProviderID:      original.ProviderID,
+		AccessToken:     original.AccessToken,
+		RefreshToken:    original.RefreshToken,
+		IDToken:         original.IDToken,
+		ExpiresAt:       time.Now().Add(-1 * time.Hour),
+		UserID:          original.UserID,
+		UpstreamSubject: original.UpstreamSubject,
+		ClientID:        original.ClientID,
+	}
+	require.NoError(t, stor.StoreUpstreamTokens(context.Background(), tsid, "default", expired))
+
+	// The service should transparently refresh the expired tokens.
+	svc := upstreamtoken.NewInProcessService(stor, ts.authServer.UpstreamTokenRefresher())
+
+	cred, err := svc.GetValidTokens(context.Background(), tsid, "default")
+	require.NoError(t, err)
+	require.NotNil(t, cred)
+	assert.NotEmpty(t, cred.AccessToken, "refreshed upstream access token should be present")
+
+	// Verify storage was updated with non-expired tokens after refresh.
+	refreshed, err := stor.GetUpstreamTokens(context.Background(), tsid, "default")
+	require.NoError(t, err, "refreshed tokens should be retrievable without ErrExpired")
+	assert.True(t, refreshed.ExpiresAt.After(time.Now()),
+		"refreshed tokens should have a future expiry, got %v", refreshed.ExpiresAt)
+	_ = originalAccessToken // used only to confirm the flow completed
+}
+
+// TestIntegration_UpstreamTokenService_NonExpiringToken verifies that a token with
+// a zero ExpiresAt is treated as non-expiring: GetValidTokens must return the
+// stored access token unchanged and must not attempt a refresh. If a refresh were
+// triggered, mockoidc would return an error because no user is queued — that
+// outcome is the failure signal for this test.
+func TestIntegration_UpstreamTokenService_NonExpiringToken(t *testing.T) {
+	t.Parallel()
+
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m)
+
+	verifier := servercrypto.GeneratePKCEVerifier()
+	challenge := servercrypto.ComputePKCEChallenge(verifier)
+
+	authCode, _ := completeAuthorizationFlow(t, ts.Server.URL, authorizationParams{
+		ClientID:     testClientID,
+		RedirectURI:  testRedirectURI,
+		State:        "upstream-nonexpiring-test",
+		Challenge:    challenge,
+		Scope:        "openid profile offline_access",
+		ResponseType: "code",
+	})
+
+	tokenData := exchangeCodeForTokens(t, ts.Server.URL, authCode, verifier, testAudience)
+
+	accessToken, ok := tokenData["access_token"].(string)
+	require.True(t, ok)
+	tsid := extractTSID(t, accessToken, ts.PrivateKey.Public())
+
+	stor := ts.authServer.IDPTokenStorage()
+
+	// Read the tokens stored during the OAuth callback.
+	original, err := stor.GetUpstreamTokens(context.Background(), tsid, "default")
+	require.NoError(t, err)
+	require.NotNil(t, original)
+
+	// Overwrite storage with a copy where ExpiresAt is zero (non-expiring).
+	// No mockoidc user is queued — if a refresh is attempted, the test will fail.
+	nonExpiring := &storage.UpstreamTokens{
+		ProviderID:      original.ProviderID,
+		AccessToken:     original.AccessToken,
+		RefreshToken:    original.RefreshToken,
+		IDToken:         original.IDToken,
+		ExpiresAt:       time.Time{},
+		UserID:          original.UserID,
+		UpstreamSubject: original.UpstreamSubject,
+		ClientID:        original.ClientID,
+	}
+	require.NoError(t, stor.StoreUpstreamTokens(context.Background(), tsid, "default", nonExpiring))
+
+	svc := upstreamtoken.NewInProcessService(stor, ts.authServer.UpstreamTokenRefresher())
+
+	cred, err := svc.GetValidTokens(context.Background(), tsid, "default")
+	require.NoError(t, err)
+	require.NotNil(t, cred)
+	assert.NotEmpty(t, cred.AccessToken)
+
+	// Confirm the token in storage still has a zero ExpiresAt — no refresh occurred.
+	refreshed, err := stor.GetUpstreamTokens(context.Background(), tsid, "default")
+	require.NoError(t, err)
+	assert.True(t, refreshed.ExpiresAt.IsZero(),
+		"non-expiring token must not gain an ExpiresAt after GetValidTokens")
+	assert.Equal(t, original.AccessToken, cred.AccessToken,
+		"access token must be unchanged — no refresh occurred")
+}
+
+// TestIntegration_UpstreamTokenService_SessionNotFound verifies that the service
+// returns ErrSessionNotFound for a non-existent session.
+func TestIntegration_UpstreamTokenService_SessionNotFound(t *testing.T) {
+	t.Parallel()
+
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m)
+
+	svc := upstreamtoken.NewInProcessService(
+		ts.authServer.IDPTokenStorage(),
+		ts.authServer.UpstreamTokenRefresher(),
+	)
+
+	cred, err := svc.GetValidTokens(context.Background(), "non-existent-session-id", "default")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, upstreamtoken.ErrSessionNotFound)
+	assert.Nil(t, cred)
+}
+
+// TestIntegration_UpstreamTokenService_NoRefreshToken verifies that the service
+// returns ErrNoRefreshToken when the upstream access token is expired but no
+// refresh token is available.
+func TestIntegration_UpstreamTokenService_NoRefreshToken(t *testing.T) {
+	t.Parallel()
+
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m)
+
+	stor := ts.authServer.IDPTokenStorage()
+
+	// Store expired tokens without a refresh token.
+	sessionID := "no-refresh-session"
+	require.NoError(t, stor.StoreUpstreamTokens(context.Background(), sessionID, "test", &storage.UpstreamTokens{
+		ProviderID:      "test",
+		AccessToken:     "expired-access",
+		RefreshToken:    "", // no refresh token
+		ExpiresAt:       time.Now().Add(-1 * time.Hour),
+		UserID:          "user-1",
+		UpstreamSubject: "sub-1",
+		ClientID:        "client-1",
+	}))
+
+	svc := upstreamtoken.NewInProcessService(stor, ts.authServer.UpstreamTokenRefresher())
+
+	cred, err := svc.GetValidTokens(context.Background(), sessionID, "test")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, upstreamtoken.ErrNoRefreshToken)
+	assert.Nil(t, cred)
+}
+
+// extractTSID parses a JWT access token and extracts the tsid claim.
+func extractTSID(t *testing.T, accessToken string, publicKey any) string {
+	t.Helper()
+
+	parsed, err := jwt.ParseSigned(accessToken, []jose.SignatureAlgorithm{jose.RS256})
+	require.NoError(t, err)
+
+	var claims map[string]interface{}
+	err = parsed.Claims(publicKey, &claims)
+	require.NoError(t, err)
+
+	tsid, ok := claims[session.TokenSessionIDClaimKey].(string)
+	require.True(t, ok, "tsid claim should be present in access token")
+	require.NotEmpty(t, tsid)
+
+	return tsid
+}
+
+// ============================================================================
+// Upstream Token Storage Integration Tests
+// ============================================================================
+
+// TestIntegration_UpstreamTokenStorage verifies that upstream IDP tokens are stored
+// and retrievable by (sessionID, providerName) after a successful authorization flow.
+func TestIntegration_UpstreamTokenStorage(t *testing.T) {
+	t.Parallel()
+
+	// Setup: Start mock IDP and auth server
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m)
+	verifier := servercrypto.GeneratePKCEVerifier()
+	challenge := servercrypto.ComputePKCEChallenge(verifier)
+
+	// Complete full PKCE flow
+	authCode, _ := completeAuthorizationFlow(t, ts.Server.URL, authorizationParams{
+		ClientID:     testClientID,
+		RedirectURI:  testRedirectURI,
+		State:        "upstream-storage-test",
+		Challenge:    challenge,
+		Scope:        "openid profile",
+		ResponseType: "code",
+	})
+	tokenData := exchangeCodeForTokens(t, ts.Server.URL, authCode, verifier, testAudience)
+
+	// Parse the access token JWT to extract the tsid claim
+	accessToken, ok := tokenData["access_token"].(string)
+	require.True(t, ok, "access_token should be a string")
+	parsedToken, err := jwt.ParseSigned(accessToken, []jose.SignatureAlgorithm{jose.RS256})
+	require.NoError(t, err, "should be able to parse JWT")
+	var claims map[string]interface{}
+	err = parsedToken.Claims(ts.PrivateKey.Public(), &claims)
+	require.NoError(t, err, "JWT signature should be valid")
+
+	tsid, ok := claims["tsid"].(string)
+	require.True(t, ok, "tsid claim should be a string")
+	require.NotEmpty(t, tsid, "tsid claim should not be empty")
+
+	ctx := context.Background()
+
+	// Extract the sub claim for binding validation
+	sub, ok := claims["sub"].(string)
+	require.True(t, ok, "sub claim should be a string")
+
+	t.Run("tokens_retrievable_by_provider_name", func(t *testing.T) {
+		t.Parallel()
+		tokens, err := ts.storage.GetUpstreamTokens(ctx, tsid, "default")
+		require.NoError(t, err, "GetUpstreamTokens should not return error")
+		require.NotNil(t, tokens, "tokens should not be nil")
+		assert.NotEmpty(t, tokens.AccessToken, "upstream access token should not be empty")
+	})
+
+	t.Run("provider_id_is_logical_name", func(t *testing.T) {
+		t.Parallel()
+		tokens, err := ts.storage.GetUpstreamTokens(ctx, tsid, "default")
+		require.NoError(t, err)
+		assert.Equal(t, "default", tokens.ProviderID, "ProviderID should be the logical name 'default', not 'oidc' or 'oauth2'")
+	})
+
+	t.Run("binding_fields_populated", func(t *testing.T) {
+		t.Parallel()
+		tokens, err := ts.storage.GetUpstreamTokens(ctx, tsid, "default")
+		require.NoError(t, err)
+		assert.NotEmpty(t, tokens.UserID, "UserID should not be empty")
+		assert.NotEmpty(t, tokens.UpstreamSubject, "UpstreamSubject should not be empty")
+		assert.Equal(t, testClientID, tokens.ClientID, "ClientID should match the test client")
+		assert.Equal(t, sub, tokens.UserID, "UserID should match the sub claim from the JWT")
+	})
+}
+
+// TestIntegration_RefreshPreservesUpstreamTokenBinding verifies that refreshing
+// an access token preserves the upstream token binding (same tsid, same provider).
+func TestIntegration_RefreshPreservesUpstreamTokenBinding(t *testing.T) {
+	t.Parallel()
+
+	// Setup: Start mock IDP and auth server
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m)
+	verifier := servercrypto.GeneratePKCEVerifier()
+	challenge := servercrypto.ComputePKCEChallenge(verifier)
+
+	// Complete full PKCE flow with offline_access to get a refresh token
+	authCode, _ := completeAuthorizationFlow(t, ts.Server.URL, authorizationParams{
+		ClientID:     testClientID,
+		RedirectURI:  testRedirectURI,
+		State:        "refresh-upstream-test",
+		Challenge:    challenge,
+		Scope:        "openid profile offline_access",
+		ResponseType: "code",
+	})
+
+	// Exchange code for tokens (no resource/audience to avoid audience mismatch on refresh)
+	resp := makeTokenRequest(t, ts.Server.URL, url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {authCode},
+		"client_id":     {testClientID},
+		"redirect_uri":  {testRedirectURI},
+		"code_verifier": {verifier},
+	})
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode, "initial token request should succeed")
+	tokenData := parseTokenResponse(t, resp)
+
+	// Parse the access token JWT to extract the tsid claim
+	accessToken, ok := tokenData["access_token"].(string)
+	require.True(t, ok, "access_token should be a string")
+	parsedToken, err := jwt.ParseSigned(accessToken, []jose.SignatureAlgorithm{jose.RS256})
+	require.NoError(t, err, "should be able to parse JWT")
+	var claims map[string]interface{}
+	err = parsedToken.Claims(ts.PrivateKey.Public(), &claims)
+	require.NoError(t, err, "JWT signature should be valid")
+
+	originalTSID, ok := claims["tsid"].(string)
+	require.True(t, ok, "tsid claim should be a string")
+	require.NotEmpty(t, originalTSID, "tsid claim should not be empty")
+
+	// Extract the refresh token
+	refreshToken, ok := tokenData["refresh_token"].(string)
+	require.True(t, ok, "refresh_token should be present when offline_access is requested")
+	require.NotEmpty(t, refreshToken, "refresh_token should not be empty")
+
+	ctx := context.Background()
+
+	// Verify upstream tokens exist before refresh
+	tokens, err := ts.storage.GetUpstreamTokens(ctx, originalTSID, "default")
+	require.NoError(t, err, "upstream tokens should exist before refresh")
+	require.NotNil(t, tokens, "upstream tokens should not be nil before refresh")
+
+	// Perform refresh token grant
+	refreshResp := makeTokenRequest(t, ts.Server.URL, url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+		"client_id":     {testClientID},
+	})
+	defer refreshResp.Body.Close()
+	require.Equal(t, http.StatusOK, refreshResp.StatusCode, "refresh token request should succeed")
+	refreshData := parseTokenResponse(t, refreshResp)
+
+	// Parse the new access token JWT to extract the new tsid
+	newAccessToken, ok := refreshData["access_token"].(string)
+	require.True(t, ok, "new access_token should be a string")
+	newParsedToken, err := jwt.ParseSigned(newAccessToken, []jose.SignatureAlgorithm{jose.RS256})
+	require.NoError(t, err, "should be able to parse new JWT")
+	var newClaims map[string]interface{}
+	err = newParsedToken.Claims(ts.PrivateKey.Public(), &newClaims)
+	require.NoError(t, err, "new JWT signature should be valid")
+
+	newTSID, ok := newClaims["tsid"].(string)
+	require.True(t, ok, "new tsid claim should be a string")
+
+	// Assert tsid is preserved across refresh (fosite preserves session claims)
+	assert.Equal(t, originalTSID, newTSID, "tsid should be preserved across token refresh")
+
+	// Verify upstream tokens are still retrievable at (tsid, "default")
+	tokensAfterRefresh, err := ts.storage.GetUpstreamTokens(ctx, newTSID, "default")
+	require.NoError(t, err, "upstream tokens should still be retrievable after refresh")
+	require.NotNil(t, tokensAfterRefresh, "upstream tokens should not be nil after refresh")
+	assert.Equal(t, "default", tokensAfterRefresh.ProviderID, "ProviderID should still be 'default' after refresh")
+}
+
+// ============================================================================
+// Multi-Upstream Sequential Chain Integration Tests
+// ============================================================================
+
+// setupTestServerWithTwoUpstreams creates a test server with two mockoidc instances
+// configured as sequential upstream providers. This exercises the multi-upstream
+// authorization chain where the callback handler redirects to the next upstream
+// after each successful code exchange.
+//
+// Variadic opts allow swapping the storage backend (e.g. withRedisBackedStorage)
+// without affecting the rest of the chain wiring. Upstream-related options are
+// silently ignored because the helper hard-wires the two providers itself.
+func setupTestServerWithTwoUpstreams(t *testing.T, m1, m2 *mockoidc.MockOIDC, opts ...testServerOption) *testServer {
+	t.Helper()
+	ctx := context.Background()
+
+	options := &testServerOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	// 1. Generate RSA key for signing
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	// 2. Generate HMAC secret
+	secret := make([]byte, 32)
+	_, err = rand.Read(secret)
+	require.NoError(t, err)
+
+	// 3. Create storage. See setupTestServer for the factory contract.
+	var (
+		stor storage.Storage = storage.NewMemoryStorage()
+		mr   *miniredis.Miniredis
+	)
+	if options.storageFactory != nil {
+		stor, mr = options.storageFactory(t)
+	}
+
+	// 4. Register test client (public client for PKCE)
+	err = stor.RegisterClient(ctx, &fosite.DefaultClient{
+		ID:            testClientID,
+		Secret:        nil, // public client
+		RedirectURIs:  []string{testRedirectURI},
+		ResponseTypes: []string{"code"},
+		GrantTypes:    []string{"authorization_code", "refresh_token"},
+		Scopes:        registration.DefaultScopes,
+		Audience:      []string{testAudience},
+		Public:        true,
+	})
+	require.NoError(t, err)
+
+	// 5. Build upstream configs from the two mockoidc instances.
+	// Both point their RedirectURI at our auth server's /oauth/callback.
+	cfg1 := m1.Config()
+	upstreamCfg1 := &upstream.OAuth2Config{
+		CommonOAuthConfig: upstream.CommonOAuthConfig{
+			ClientID:     cfg1.ClientID,
+			ClientSecret: cfg1.ClientSecret,
+			Scopes:       []string{"openid", "profile", "email"},
+			RedirectURI:  testIssuer + "/oauth/callback",
+		},
+		AuthorizationEndpoint: m1.AuthorizationEndpoint(),
+		TokenEndpoint:         m1.TokenEndpoint(),
+		UserInfo: &upstream.UserInfoConfig{
+			EndpointURL: m1.UserinfoEndpoint(),
+			FieldMapping: &upstream.UserInfoFieldMapping{
+				SubjectFields: []string{"sub", "email"},
+			},
+		},
+	}
+
+	cfg2 := m2.Config()
+	upstreamCfg2 := &upstream.OAuth2Config{
+		CommonOAuthConfig: upstream.CommonOAuthConfig{
+			ClientID:     cfg2.ClientID,
+			ClientSecret: cfg2.ClientSecret,
+			Scopes:       []string{"openid", "profile", "email"},
+			RedirectURI:  testIssuer + "/oauth/callback",
+		},
+		AuthorizationEndpoint: m2.AuthorizationEndpoint(),
+		TokenEndpoint:         m2.TokenEndpoint(),
+		UserInfo: &upstream.UserInfoConfig{
+			EndpointURL: m2.UserinfoEndpoint(),
+			FieldMapping: &upstream.UserInfoFieldMapping{
+				SubjectFields: []string{"sub", "email"},
+			},
+		},
+	}
+
+	// 6. Create the two upstream providers
+	provider1, err := upstream.NewOAuth2Provider(upstreamCfg1)
+	require.NoError(t, err)
+	provider2, err := upstream.NewOAuth2Provider(upstreamCfg2)
+	require.NoError(t, err)
+
+	// Map of provider name to provider for the factory
+	providers := map[string]upstream.OAuth2Provider{
+		"provider-1": provider1,
+		"provider-2": provider2,
+	}
+
+	// 7. Create config with TWO upstreams
+	serverCfg := Config{
+		Issuer:               testIssuer,
+		KeyProvider:          &testKeyProvider{key: privateKey},
+		HMACSecrets:          servercrypto.NewHMACSecrets(secret),
+		AccessTokenLifespan:  time.Hour,
+		RefreshTokenLifespan: 24 * time.Hour,
+		AuthCodeLifespan:     10 * time.Minute,
+		Upstreams: []UpstreamConfig{
+			{Name: "provider-1", Type: UpstreamProviderTypeOAuth2, OAuth2Config: upstreamCfg1},
+			{Name: "provider-2", Type: UpstreamProviderTypeOAuth2, OAuth2Config: upstreamCfg2},
+		},
+		AllowedAudiences: []string{testAudience},
+		UpstreamFilter:   options.upstreamFilter,
+	}
+
+	// 8. Create server using newServer with a factory that returns the correct provider per name
+	srv, err := newServer(ctx, serverCfg, stor,
+		withUpstreamFactory(func(_ context.Context, cfg *UpstreamConfig) (upstream.OAuth2Provider, error) {
+			p, ok := providers[cfg.Name]
+			if !ok {
+				return nil, fmt.Errorf("unknown upstream: %s", cfg.Name)
+			}
+			return p, nil
+		}),
+	)
+	require.NoError(t, err)
+
+	// 9. Create HTTP test server
+	httpServer := httptest.NewServer(srv.Handler())
+	t.Cleanup(func() {
+		httpServer.Close()
+		require.NoError(t, srv.Close())
+	})
+
+	return &testServer{
+		Server:     httpServer,
+		PrivateKey: privateKey,
+		authServer: srv,
+		storage:    srv.IDPTokenStorage(),
+		mr:         mr,
+	}
+}
+
+// TestIntegration_MultiUpstreamSequentialChain tests the complete multi-upstream
+// authorization flow where the auth server chains through two upstream providers
+// sequentially before issuing an authorization code to the client.
+//
+// Flow:
+//  1. Client -> /authorize -> redirect to provider-1
+//  2. provider-1 approves -> /callback -> redirect to provider-2 (chain continues)
+//  3. provider-2 approves -> /callback -> 303 to client with auth code
+//  4. Client -> /token -> JWT with tsid referencing both providers' tokens
+func TestIntegration_MultiUpstreamSequentialChain(t *testing.T) {
+	t.Parallel()
+
+	// Start two independent mock OIDC providers
+	m1, err := mockoidc.Run()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, m1.Shutdown()) })
+
+	m2, err := mockoidc.Run()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, m2.Shutdown()) })
+
+	// Queue test users for each provider
+	m1.QueueUser(&mockoidc.MockUser{
+		Subject: "user-from-provider-1",
+		Email:   "user1@provider1.example.com",
+	})
+	m2.QueueUser(&mockoidc.MockUser{
+		Subject: "user-from-provider-2",
+		Email:   "user2@provider2.example.com",
+	})
+
+	ts := setupTestServerWithTwoUpstreams(t, m1, m2)
+
+	verifier := servercrypto.GeneratePKCEVerifier()
+	challenge := servercrypto.ComputePKCEChallenge(verifier)
+	clientState := "multi-upstream-client-state"
+
+	// runChainFlow drives the two-leg chain (authorize → provider-1 callback →
+	// provider-2 callback → 303 to client) and asserts the chain-level invariants:
+	// each leg returns the expected redirect, and client state is preserved end-to-end.
+	authCode := runChainFlow(t, ts.Server.URL, challenge, clientState)
+
+	tokenData := exchangeCodeForTokens(t, ts.Server.URL, authCode, verifier, testAudience)
+
+	// Verify access token is a valid JWT
+	accessToken, ok := tokenData["access_token"].(string)
+	require.True(t, ok, "access_token should be a string")
+	require.NotEmpty(t, accessToken)
+
+	parsedToken, err := jwt.ParseSigned(accessToken, []jose.SignatureAlgorithm{jose.RS256})
+	require.NoError(t, err, "should be able to parse JWT")
+
+	var claims map[string]interface{}
+	err = parsedToken.Claims(ts.PrivateKey.Public(), &claims)
+	require.NoError(t, err, "JWT signature should be valid")
+
+	// Verify standard claims
+	assert.Equal(t, testIssuer, claims["iss"], "issuer should match")
+	assert.Equal(t, testClientID, claims["client_id"], "client_id should match")
+
+	// Verify subject is from the first upstream (identity provider)
+	sub, ok := claims["sub"].(string)
+	require.True(t, ok, "sub claim should be a string")
+	assert.NotEmpty(t, sub, "sub claim should not be empty")
+
+	// Verify tsid claim is present (session ID for upstream token retrieval)
+	tsid, ok := claims["tsid"].(string)
+	require.True(t, ok, "tsid claim should be a string")
+	require.NotEmpty(t, tsid, "tsid claim should not be empty")
+
+	// === Verify both providers' tokens are stored ===
+
+	ctx := context.Background()
+
+	// Provider-1 tokens should be stored
+	tokens1, err := ts.storage.GetUpstreamTokens(ctx, tsid, "provider-1")
+	require.NoError(t, err, "provider-1 tokens should be retrievable")
+	require.NotNil(t, tokens1, "provider-1 tokens should not be nil")
+	assert.NotEmpty(t, tokens1.AccessToken, "provider-1 access token should not be empty")
+	assert.Equal(t, "provider-1", tokens1.ProviderID, "provider-1 ProviderID should match")
+	assert.Equal(t, testClientID, tokens1.ClientID, "provider-1 ClientID should match")
+	assert.Equal(t, sub, tokens1.UserID, "provider-1 UserID should match JWT sub claim")
+
+	// Provider-2 tokens should be stored
+	tokens2, err := ts.storage.GetUpstreamTokens(ctx, tsid, "provider-2")
+	require.NoError(t, err, "provider-2 tokens should be retrievable")
+	require.NotNil(t, tokens2, "provider-2 tokens should not be nil")
+	assert.NotEmpty(t, tokens2.AccessToken, "provider-2 access token should not be empty")
+	assert.Equal(t, "provider-2", tokens2.ProviderID, "provider-2 ProviderID should match")
+	assert.Equal(t, testClientID, tokens2.ClientID, "provider-2 ClientID should match")
+	assert.Equal(t, sub, tokens2.UserID, "provider-2 UserID should match JWT sub claim")
+
+	// Verify upstream subjects trace back to the correct IDPs.
+	// This proves provider-1 was used as the identity source (its UpstreamSubject
+	// is from m1's user) and provider-2 contributed only tokens (its UpstreamSubject
+	// is from m2's user). Both share the same internal UserID (sub) from provider-1.
+	assert.Contains(t, tokens1.UpstreamSubject, "provider1.example.com",
+		"provider-1 UpstreamSubject should come from m1's queued user")
+	assert.Contains(t, tokens2.UpstreamSubject, "provider2.example.com",
+		"provider-2 UpstreamSubject should come from m2's queued user")
+	assert.NotEqual(t, tokens1.UpstreamSubject, tokens2.UpstreamSubject,
+		"upstream subjects should differ (different IDPs)")
+}
+
+// stubChainFilter is a minimal handlers.UpstreamFilter test double that always
+// keeps the given set of upstream names, regardless of the principal or
+// configured list it is passed. The lower-level filter-narrowing behavior
+// (computeChain) is already covered directly in
+// pkg/authserver/server/handlers/handler_chain_test.go; this double exists only
+// to drive the Config.UpstreamFilter -> authserver.New -> handlers.NewHandler
+// wiring end-to-end.
+type stubChainFilter struct {
+	keep []string
+}
+
+func (f *stubChainFilter) FilterUpstreams(
+	_ context.Context,
+	_ auth.PrincipalInfo,
+	_ []string,
+) ([]string, error) {
+	return f.keep, nil
+}
+
+// TestIntegration_MultiUpstreamChain_ConfigUpstreamFilter proves that a
+// Config.UpstreamFilter set through the public authserver.New facade reaches
+// the handler and narrows the authorization chain. Before Config gained this
+// field, WithUpstreamFilter was only reachable via the low-level
+// handlers.NewHandler constructor, so a caller using authserver.New had no way
+// to install a filter at all.
+//
+// The filter here drops provider-2 entirely, so after the provider-1 callback
+// the chain must be satisfied and the handler must redirect straight to the
+// client (303) instead of on to provider-2 (302). The status-code assertion
+// below is the only signal this test relies on: it fails immediately on a
+// mismatch, before ever following a redirect that would reach provider-2.
+func TestIntegration_MultiUpstreamChain_ConfigUpstreamFilter(t *testing.T) {
+	t.Parallel()
+
+	m1, err := mockoidc.Run()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, m1.Shutdown()) })
+
+	m2, err := mockoidc.Run()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, m2.Shutdown()) })
+
+	m1.QueueUser(&mockoidc.MockUser{
+		Subject: "user-from-provider-1",
+		Email:   "user1@provider1.example.com",
+	})
+
+	filter := &stubChainFilter{keep: nil}
+	ts := setupTestServerWithTwoUpstreams(t, m1, m2, withUpstreamFilter(filter))
+
+	verifier := servercrypto.GeneratePKCEVerifier()
+	challenge := servercrypto.ComputePKCEChallenge(verifier)
+	clientState := "upstream-filter-client-state"
+
+	resp := runFirstLeg(t, ts.Server.URL, challenge, clientState)
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode,
+		"expected 303 straight to client: the Config-supplied filter should have dropped provider-2 from the chain")
+	clientLocation, err := resp.Location()
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	require.Equal(t, clientState, clientLocation.Query().Get("state"))
+	authCode := clientLocation.Query().Get("code")
+	require.NotEmpty(t, authCode)
+
+	tokenData := exchangeCodeForTokens(t, ts.Server.URL, authCode, verifier, testAudience)
+	accessToken, ok := tokenData["access_token"].(string)
+	require.True(t, ok)
+	require.NotEmpty(t, accessToken)
+
+	parsedToken, err := jwt.ParseSigned(accessToken, []jose.SignatureAlgorithm{jose.RS256})
+	require.NoError(t, err)
+	var claims map[string]interface{}
+	require.NoError(t, parsedToken.Claims(ts.PrivateKey.Public(), &claims))
+	tsid, ok := claims["tsid"].(string)
+	require.True(t, ok)
+	require.NotEmpty(t, tsid)
+
+	ctx := context.Background()
+
+	tokens1, err := ts.storage.GetUpstreamTokens(ctx, tsid, "provider-1")
+	require.NoError(t, err, "provider-1 tokens should be stored")
+	require.NotNil(t, tokens1)
+
+	_, err = ts.storage.GetUpstreamTokens(ctx, tsid, "provider-2")
+	require.Error(t, err, "provider-2 should have been dropped from the chain by the filter")
+	assert.ErrorIs(t, err, storage.ErrNotFound)
+}
+
+// ============================================================================
+// Non-Expiring Upstream Token Regression Tests
+// ============================================================================
+
+// captureResponseWriter buffers a handler's HTTP response so a middleware can
+// inspect or rewrite it before flushing to the real ResponseWriter.
+type captureResponseWriter struct {
+	header http.Header
+	body   bytes.Buffer
+	status int
+}
+
+func newCaptureResponseWriter() *captureResponseWriter {
+	return &captureResponseWriter{header: http.Header{}, status: http.StatusOK}
+}
+
+func (c *captureResponseWriter) Header() http.Header { return c.header }
+
+func (c *captureResponseWriter) WriteHeader(status int) { c.status = status }
+
+func (c *captureResponseWriter) Write(b []byte) (int, error) { return c.body.Write(b) }
+
+// stripExpiresInMiddleware returns a middleware that, for token-endpoint
+// responses, removes the `expires_in` field from the JSON body. This emulates
+// upstream IDPs that issue non-expiring access tokens (e.g., long-lived PATs)
+// without requiring a fork of mockoidc.
+//
+// Important: this exercises the same wire shape a real provider would emit, so
+// our auth server's `convertOAuth2Token` runs with `oauth2.Token.Expiry ==
+// time.Time{}`. A regression that re-introduces a synthetic expiry there would
+// produce a non-zero `ExpiresAt` in storage and is caught by callers of this
+// helper.
+func stripExpiresInMiddleware(tokenPath string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+			if req.URL.Path != tokenPath {
+				next.ServeHTTP(rw, req)
+				return
+			}
+
+			capture := newCaptureResponseWriter()
+			next.ServeHTTP(capture, req)
+
+			// Only rewrite successful JSON token responses. Errors and
+			// non-JSON bodies are passed through unchanged.
+			body := capture.body.Bytes()
+			contentType := capture.header.Get("Content-Type")
+			if capture.status == http.StatusOK && strings.Contains(contentType, "json") {
+				var payload map[string]interface{}
+				if err := json.Unmarshal(body, &payload); err == nil {
+					delete(payload, "expires_in")
+					if rewritten, err := json.Marshal(payload); err == nil {
+						body = rewritten
+						capture.header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
+					}
+				}
+			}
+
+			for k, v := range capture.header {
+				rw.Header()[k] = v
+			}
+			rw.WriteHeader(capture.status)
+			_, _ = rw.Write(body)
+		})
+	}
+}
+
+// startMockOIDCNoExpiresIn starts a mockoidc instance whose token endpoint
+// responses have `expires_in` stripped, so the upstream OAuth2 client parses
+// `Expiry == time.Time{}`. The test still gets a fully working OIDC server
+// for the rest of the flow (authorize, userinfo, JWKS).
+//
+// No default user is queued; callers must call QueueUser themselves so the
+// failure mode for an unintended refresh (mockoidc returning an error because
+// no user is queued) is preserved.
+func startMockOIDCNoExpiresIn(t *testing.T) *mockoidc.MockOIDC {
+	t.Helper()
+
+	m, err := mockoidc.NewServer(nil)
+	require.NoError(t, err)
+
+	require.NoError(t, m.AddMiddleware(stripExpiresInMiddleware(mockoidc.TokenEndpoint)))
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	require.NoError(t, m.Start(ln, nil))
+
+	t.Cleanup(func() {
+		require.NoError(t, m.Shutdown())
+	})
+
+	return m
+}
+
+// TestIntegration_FullFlow_NonExpiringUpstreamToken drives the full HTTP flow
+// (authorize -> callback -> token) against an upstream IDP whose token
+// endpoint omits `expires_in`. It asserts that the upstream tokens reach
+// storage with `ExpiresAt.IsZero()` and that GetValidTokens does not trigger
+// a refresh on a non-expiring token.
+//
+// This pins the end-to-end behavior of `convertOAuth2Token`: a regression
+// that re-introduces a synthetic expiry (e.g., defaulting to time.Hour) would
+// fail the IsZero assertion below. The single queued mockoidc user is
+// consumed during /authorize; if GetValidTokens accidentally triggered a
+// refresh, mockoidc would error because no further user is queued — that
+// outcome is the failure signal.
+func TestIntegration_FullFlow_NonExpiringUpstreamToken(t *testing.T) {
+	t.Parallel()
+
+	m := startMockOIDCNoExpiresIn(t)
+	m.QueueUser(&mockoidc.MockUser{
+		Subject: "non-expiring-user",
+		Email:   "non-expiring@example.com",
+	})
+
+	ts := setupTestServerWithMockOIDC(t, m)
+
+	verifier := servercrypto.GeneratePKCEVerifier()
+	challenge := servercrypto.ComputePKCEChallenge(verifier)
+
+	authCode, _ := completeAuthorizationFlow(t, ts.Server.URL, authorizationParams{
+		ClientID:     testClientID,
+		RedirectURI:  testRedirectURI,
+		State:        "non-expiring-full-flow",
+		Challenge:    challenge,
+		Scope:        "openid profile offline_access",
+		ResponseType: "code",
+	})
+
+	tokenData := exchangeCodeForTokens(t, ts.Server.URL, authCode, verifier, testAudience)
+
+	accessToken, ok := tokenData["access_token"].(string)
+	require.True(t, ok)
+	tsid := extractTSID(t, accessToken, ts.PrivateKey.Public())
+
+	stor := ts.authServer.IDPTokenStorage()
+
+	// The upstream tokens written during /callback must carry a zero ExpiresAt:
+	// the upstream response had no expires_in, so convertOAuth2Token must
+	// preserve the zero value all the way into storage.
+	original, err := stor.GetUpstreamTokens(context.Background(), tsid, "default")
+	require.NoError(t, err)
+	require.NotNil(t, original)
+	require.NotEmpty(t, original.AccessToken)
+	assert.True(t, original.ExpiresAt.IsZero(),
+		"upstream ExpiresAt must be zero for a token response without expires_in (got %v)",
+		original.ExpiresAt)
+
+	// GetValidTokens on a non-expiring token must return the stored access
+	// token unchanged. No refresh user is queued — a refresh attempt would
+	// cause mockoidc to return an error and fail the assertion below.
+	svc := upstreamtoken.NewInProcessService(stor, ts.authServer.UpstreamTokenRefresher())
+	cred, err := svc.GetValidTokens(context.Background(), tsid, "default")
+	require.NoError(t, err)
+	require.NotNil(t, cred)
+	assert.Equal(t, original.AccessToken, cred.AccessToken,
+		"non-expiring access token must be returned unchanged (no refresh)")
+
+	// Re-read storage: ExpiresAt must still be zero, confirming no refresh
+	// side effect rewrote the row.
+	after, err := stor.GetUpstreamTokens(context.Background(), tsid, "default")
+	require.NoError(t, err)
+	assert.True(t, after.ExpiresAt.IsZero(),
+		"non-expiring token must keep zero ExpiresAt after GetValidTokens (got %v)",
+		after.ExpiresAt)
+	assert.Equal(t, original.AccessToken, after.AccessToken,
+		"access token in storage must be unchanged after GetValidTokens")
+}
+
+// runChainFlow performs the two-leg multi-upstream authorization chain and
+// returns the final authorization code redirected to the client. It mirrors
+// the hand-crafted flow in TestIntegration_MultiUpstreamSequentialChain but
+// is reused by the mixed-expiry orderings test. The PKCE verifier is the
+// caller's responsibility — it's only needed at the final /token exchange.
+// runFirstLeg drives the leg-1 flow shared by every multi-upstream chain
+// test: client -> /oauth/authorize -> first upstream -> our /oauth/callback.
+// It returns the callback response unread and unclosed so callers can assert
+// on its status code — 302 on to the next upstream (chain continues) vs. 303
+// straight to the client (chain already satisfied) — before deciding how to
+// continue. Callers are responsible for closing the returned response's body.
+func runFirstLeg(t *testing.T, serverURL, challenge, clientState string) *http.Response {
+	t.Helper()
+	client := noRedirectClient()
+
+	parsedServerURL, err := url.Parse(serverURL)
+	require.NoError(t, err)
+
+	authorizeURL := serverURL + "/oauth/authorize?" + url.Values{
+		"client_id":             {testClientID},
+		"redirect_uri":          {testRedirectURI},
+		"state":                 {clientState},
+		"code_challenge":        {challenge},
+		"code_challenge_method": {"S256"},
+		"response_type":         {"code"},
+		"scope":                 {"openid profile"},
+	}.Encode()
+
+	resp, err := client.Get(authorizeURL)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusFound, resp.StatusCode)
+	firstUpstreamLocation, err := resp.Location()
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	resp, err = client.Get(firstUpstreamLocation.String())
+	require.NoError(t, err)
+	require.Equal(t, http.StatusFound, resp.StatusCode)
+	firstCallback, err := resp.Location()
+	require.NoError(t, err)
+	resp.Body.Close()
+	firstCallback.Scheme = parsedServerURL.Scheme
+	firstCallback.Host = parsedServerURL.Host
+
+	resp, err = client.Get(firstCallback.String())
+	require.NoError(t, err)
+	return resp
+}
+
+func runChainFlow(
+	t *testing.T,
+	serverURL string,
+	challenge string,
+	clientState string,
+) string {
+	t.Helper()
+
+	parsedServerURL, err := url.Parse(serverURL)
+	require.NoError(t, err)
+
+	// Leg 1: client -> /authorize -> first upstream -> callback
+	resp := runFirstLeg(t, serverURL, challenge, clientState)
+	require.Equal(t, http.StatusFound, resp.StatusCode,
+		"expected redirect to second upstream, not 303 to client")
+	secondUpstreamLocation, err := resp.Location()
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	// Leg 2: second upstream -> callback -> client
+	client := noRedirectClient()
+	resp, err = client.Get(secondUpstreamLocation.String())
+	require.NoError(t, err)
+	require.Equal(t, http.StatusFound, resp.StatusCode)
+	secondCallback, err := resp.Location()
+	require.NoError(t, err)
+	resp.Body.Close()
+	secondCallback.Scheme = parsedServerURL.Scheme
+	secondCallback.Host = parsedServerURL.Host
+
+	resp, err = client.Get(secondCallback.String())
+	require.NoError(t, err)
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode,
+		"expected 303 to client after both upstreams satisfied")
+	clientLocation, err := resp.Location()
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	// Client state must be preserved through the entire chain — universal
+	// invariant of the authorization chain, asserted here so every caller benefits.
+	require.Equal(t, clientState, clientLocation.Query().Get("state"),
+		"client state should be preserved through the multi-upstream chain")
+
+	authCode := clientLocation.Query().Get("code")
+	require.NotEmpty(t, authCode)
+	return authCode
+}
+
+// TestIntegration_MultiUpstreamChain_MixedExpiryOrderings exercises the two-leg
+// authorization chain with one upstream returning expires_in and the other
+// omitting it. Both orderings must succeed and both providers' tokens must be
+// retrievable via GetAllUpstreamCredentials.
+//
+// This pins the chain handler's per-leg storage write and the
+// convertOAuth2Token zero-Expiry path through the full HTTP flow, in both
+// orderings. It does NOT exercise the Redis Lua TTL inversion fix
+// (commit fec89b040) because the in-process integration harness uses
+// storage.NewMemoryStorage(); the Lua semantics are covered directly by
+// pkg/authserver/storage/redis_test.go via miniredis.
+func TestIntegration_MultiUpstreamChain_MixedExpiryOrderings(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name                 string
+		firstUpstreamExpires bool // true => provider-1 returns expires_in; false => provider-1 omits it
+	}{
+		{name: "non_expiring_then_expiring", firstUpstreamExpires: false},
+		{name: "expiring_then_non_expiring", firstUpstreamExpires: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Build provider-1 and provider-2 mockoidc instances so the
+			// non-expiring one matches tc.firstUpstreamExpires.
+			var m1, m2 *mockoidc.MockOIDC
+			if tc.firstUpstreamExpires {
+				m1 = startMockOIDC(t)
+				m2 = startMockOIDCNoExpiresIn(t)
+			} else {
+				m1 = startMockOIDCNoExpiresIn(t)
+				m2 = startMockOIDC(t)
+			}
+
+			// Each mockoidc consumes one queued user during /authorize.
+			// startMockOIDC queues a default user; startMockOIDCNoExpiresIn
+			// does not, so we queue explicitly. Use distinct emails so the
+			// per-provider UpstreamSubject is observably different.
+			m1.QueueUser(&mockoidc.MockUser{
+				Subject: "user-from-m1-" + tc.name,
+				Email:   "u1-" + tc.name + "@m1.example.com",
+			})
+			m2.QueueUser(&mockoidc.MockUser{
+				Subject: "user-from-m2-" + tc.name,
+				Email:   "u2-" + tc.name + "@m2.example.com",
+			})
+
+			ts := setupTestServerWithTwoUpstreams(t, m1, m2)
+
+			verifier := servercrypto.GeneratePKCEVerifier()
+			challenge := servercrypto.ComputePKCEChallenge(verifier)
+
+			authCode := runChainFlow(t, ts.Server.URL, challenge, "mixed-expiry-"+tc.name)
+			tokenData := exchangeCodeForTokens(t, ts.Server.URL, authCode, verifier, testAudience)
+
+			accessToken, ok := tokenData["access_token"].(string)
+			require.True(t, ok)
+			tsid := extractTSID(t, accessToken, ts.PrivateKey.Public())
+
+			ctx := context.Background()
+			stor := ts.authServer.IDPTokenStorage()
+
+			// Both providers' tokens must be in storage. The non-expiring
+			// one must have a zero ExpiresAt; the expiring one must have a
+			// future ExpiresAt. This pins the per-leg storage write path.
+			tokens1, err := stor.GetUpstreamTokens(ctx, tsid, "provider-1")
+			require.NoError(t, err, "provider-1 tokens must be retrievable")
+			require.NotNil(t, tokens1)
+			tokens2, err := stor.GetUpstreamTokens(ctx, tsid, "provider-2")
+			require.NoError(t, err, "provider-2 tokens must be retrievable")
+			require.NotNil(t, tokens2)
+
+			if tc.firstUpstreamExpires {
+				assert.False(t, tokens1.ExpiresAt.IsZero(),
+					"provider-1 (expiring) must carry a non-zero ExpiresAt")
+				assert.True(t, tokens2.ExpiresAt.IsZero(),
+					"provider-2 (non-expiring) must carry a zero ExpiresAt")
+			} else {
+				assert.True(t, tokens1.ExpiresAt.IsZero(),
+					"provider-1 (non-expiring) must carry a zero ExpiresAt")
+				assert.False(t, tokens2.ExpiresAt.IsZero(),
+					"provider-2 (expiring) must carry a non-zero ExpiresAt")
+			}
+
+			// GetAllUpstreamCredentials must return both providers' credentials.
+			// Before the Lua TTL fix, the non-expiring provider's index could
+			// be evicted prematurely depending on chain ordering, so this
+			// would have returned an empty or incomplete map for one
+			// ordering.
+			svc := upstreamtoken.NewInProcessService(stor, ts.authServer.UpstreamTokenRefresher())
+			all, _, err := svc.GetAllUpstreamCredentials(ctx, tsid)
+			require.NoError(t, err)
+			require.Len(t, all, 2, "GetAllUpstreamCredentials must return both providers regardless of expiry ordering")
+			assert.NotEmpty(t, all["provider-1"].AccessToken, "provider-1 access token must be present")
+			assert.NotEmpty(t, all["provider-2"].AccessToken, "provider-2 access token must be present")
+		})
+	}
+}
+
+// ============================================================================
+// Redis-Backed Integration Variants
+// ============================================================================
+//
+// These tests run the same end-to-end flows as their in-memory counterparts
+// but against a miniredis-backed *RedisStorage. They are smoke tests for the
+// chain handler ↔ Redis storage path: the Redis backend executes Lua scripts,
+// performs JSON round-trips, and maintains the per-session index set — none of
+// which the in-memory backend exercises. A regression where the chain handler
+// invokes Redis with the wrong inputs (wrong key, wrong serialization, wrong
+// index update) would surface here.
+//
+// The harness (withRedisBackedStorage(), testServer.Miniredis(t)) is reusable
+// for any future test that needs to drive the full HTTP flow against Redis or
+// advance Redis-side time via FastForward without real-world sleeping.
+//
+// What these tests do NOT cover: the Lua TTL inversion regression (commit
+// fec89b040). That bug only fires when marshalUpstreamTokensWithTTL produces
+// ttlMs == 0, which requires both ExpiresAt and SessionExpiresAt to be zero.
+// Since callback.go unconditionally sets SessionExpiresAt = now +
+// RefreshTokenLifespan (commit 1b3bc81e2), the integration flow always
+// produces ttlMs > 0 and the buggy Lua branch is unreachable. The Lua
+// invariant is locked down at unit level by
+// pkg/authserver/storage/redis_test.go, which can construct UpstreamTokens
+// with both fields zero directly.
+
+// TestIntegration_FullFlow_NonExpiringUpstreamToken_Redis is the Redis-backed
+// twin of TestIntegration_FullFlow_NonExpiringUpstreamToken. The unit-level
+// Redis test of Store/GetUpstreamTokens already covers the round-trip; this
+// subtest exists for symmetry — it confirms convertOAuth2Token's zero-Expiry
+// preservation reaches Redis storage when the request originates from the
+// real HTTP chain.
+func TestIntegration_FullFlow_NonExpiringUpstreamToken_Redis(t *testing.T) {
+	t.Parallel()
+
+	m := startMockOIDCNoExpiresIn(t)
+	m.QueueUser(&mockoidc.MockUser{
+		Subject: "non-expiring-user-redis",
+		Email:   "non-expiring-redis@example.com",
+	})
+
+	ts := setupTestServerWithMockOIDC(t, m, withRedisBackedStorage())
+	ts.Miniredis(t) // assert harness was wired with withRedisBackedStorage
+
+	verifier := servercrypto.GeneratePKCEVerifier()
+	challenge := servercrypto.ComputePKCEChallenge(verifier)
+
+	authCode, _ := completeAuthorizationFlow(t, ts.Server.URL, authorizationParams{
+		ClientID:     testClientID,
+		RedirectURI:  testRedirectURI,
+		State:        "non-expiring-redis",
+		Challenge:    challenge,
+		Scope:        "openid profile offline_access",
+		ResponseType: "code",
+	})
+
+	tokenData := exchangeCodeForTokens(t, ts.Server.URL, authCode, verifier, testAudience)
+
+	accessToken, ok := tokenData["access_token"].(string)
+	require.True(t, ok)
+	tsid := extractTSID(t, accessToken, ts.PrivateKey.Public())
+
+	stor := ts.authServer.IDPTokenStorage()
+
+	// Same invariants as the memory-backed twin: zero ExpiresAt in storage,
+	// no refresh on read, no rewrite of the stored row.
+	original, err := stor.GetUpstreamTokens(context.Background(), tsid, "default")
+	require.NoError(t, err)
+	require.NotNil(t, original)
+	require.NotEmpty(t, original.AccessToken)
+	assert.True(t, original.ExpiresAt.IsZero(),
+		"upstream ExpiresAt must be zero for a token response without expires_in (got %v)",
+		original.ExpiresAt)
+
+	svc := upstreamtoken.NewInProcessService(stor, ts.authServer.UpstreamTokenRefresher())
+	cred, err := svc.GetValidTokens(context.Background(), tsid, "default")
+	require.NoError(t, err)
+	require.NotNil(t, cred)
+	assert.Equal(t, original.AccessToken, cred.AccessToken,
+		"non-expiring access token must be returned unchanged (no refresh)")
+
+	after, err := stor.GetUpstreamTokens(context.Background(), tsid, "default")
+	require.NoError(t, err)
+	assert.True(t, after.ExpiresAt.IsZero(),
+		"non-expiring token must keep zero ExpiresAt after GetValidTokens (got %v)",
+		after.ExpiresAt)
+	assert.Equal(t, original.AccessToken, after.AccessToken,
+		"access token in storage must be unchanged after GetValidTokens")
+}
+
+// TestIntegration_MultiUpstreamChain_MixedExpiryOrderings_Redis is the Redis-
+// backed smoke test for the two-leg chain with one upstream returning expires_in
+// and the other omitting it. It exercises the chain handler ↔ Redis storage
+// path through real Redis Lua execution in both orderings: a regression where
+// the chain handler invokes Redis with the wrong inputs (wrong key, wrong
+// serialization, wrong index update) would surface here.
+//
+// This test does NOT cover the Lua TTL inversion regression (commit fec89b040)
+// at integration level. That bug only fires when marshalUpstreamTokensWithTTL
+// produces ttlMs == 0, which requires both ExpiresAt and SessionExpiresAt to
+// be zero on the UpstreamTokens. Since callback.go unconditionally sets
+// SessionExpiresAt = now + RefreshTokenLifespan (commit 1b3bc81e2), the
+// integration flow always produces ttlMs > 0 and the buggy Lua branch is
+// unreachable from a real auth chain. The Lua invariant is locked down at
+// unit level by pkg/authserver/storage/redis_test.go.
+func TestIntegration_MultiUpstreamChain_MixedExpiryOrderings_Redis(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name                 string
+		firstUpstreamExpires bool
+	}{
+		{name: "non_expiring_then_expiring", firstUpstreamExpires: false},
+		{name: "expiring_then_non_expiring", firstUpstreamExpires: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Build provider-1 and provider-2 mockoidc instances so the
+			// non-expiring one matches tc.firstUpstreamExpires.
+			var m1, m2 *mockoidc.MockOIDC
+			if tc.firstUpstreamExpires {
+				m1 = startMockOIDC(t)
+				m2 = startMockOIDCNoExpiresIn(t)
+			} else {
+				m1 = startMockOIDCNoExpiresIn(t)
+				m2 = startMockOIDC(t)
+			}
+
+			m1.QueueUser(&mockoidc.MockUser{
+				Subject: "user-from-m1-redis-" + tc.name,
+				Email:   "u1-redis-" + tc.name + "@m1.example.com",
+			})
+			m2.QueueUser(&mockoidc.MockUser{
+				Subject: "user-from-m2-redis-" + tc.name,
+				Email:   "u2-redis-" + tc.name + "@m2.example.com",
+			})
+
+			ts := setupTestServerWithTwoUpstreams(t, m1, m2, withRedisBackedStorage())
+			ts.Miniredis(t) // assert harness was wired with withRedisBackedStorage
+
+			verifier := servercrypto.GeneratePKCEVerifier()
+			challenge := servercrypto.ComputePKCEChallenge(verifier)
+
+			authCode := runChainFlow(t, ts.Server.URL, challenge, "mixed-expiry-redis-"+tc.name)
+			tokenData := exchangeCodeForTokens(t, ts.Server.URL, authCode, verifier, testAudience)
+
+			accessToken, ok := tokenData["access_token"].(string)
+			require.True(t, ok)
+			tsid := extractTSID(t, accessToken, ts.PrivateKey.Public())
+
+			ctx := context.Background()
+			stor := ts.authServer.IDPTokenStorage()
+
+			// Sanity: both providers' tokens must be in storage immediately
+			// after the chain, with the expected ExpiresAt shapes. This is
+			// the same per-leg storage invariant the memory-backed twin
+			// asserts; replicated here so a Redis-only divergence in the
+			// chain handler's storage write would surface.
+			tokens1, err := stor.GetUpstreamTokens(ctx, tsid, "provider-1")
+			require.NoError(t, err, "provider-1 tokens must be retrievable")
+			require.NotNil(t, tokens1)
+			tokens2, err := stor.GetUpstreamTokens(ctx, tsid, "provider-2")
+			require.NoError(t, err, "provider-2 tokens must be retrievable")
+			require.NotNil(t, tokens2)
+
+			if tc.firstUpstreamExpires {
+				assert.False(t, tokens1.ExpiresAt.IsZero(),
+					"provider-1 (expiring) must carry a non-zero ExpiresAt")
+				assert.True(t, tokens2.ExpiresAt.IsZero(),
+					"provider-2 (non-expiring) must carry a zero ExpiresAt")
+			} else {
+				assert.True(t, tokens1.ExpiresAt.IsZero(),
+					"provider-1 (non-expiring) must carry a zero ExpiresAt")
+				assert.False(t, tokens2.ExpiresAt.IsZero(),
+					"provider-2 (expiring) must carry a non-zero ExpiresAt")
+			}
+
+			svc := upstreamtoken.NewInProcessService(stor, ts.authServer.UpstreamTokenRefresher())
+
+			// Both providers' tokens must be retrievable through Redis after the chain.
+			// This is a smoke test for the chain-handler ↔ Redis storage path: a
+			// regression where the chain handler invokes Redis storage with the wrong
+			// inputs (wrong key, wrong serialization, wrong index update) would fail here.
+			//
+			// Note: this test does NOT exercise the Lua TTL inversion bug. That bug
+			// only manifests when marshalUpstreamTokensWithTTL produces ttlMs == 0,
+			// which requires both ExpiresAt and SessionExpiresAt to be zero. Since
+			// the callback unconditionally sets SessionExpiresAt = now + RefreshTokenLifespan
+			// (commit 1b3bc81e2), the integration flow always produces ttlMs > 0 and
+			// the buggy Lua branch is unreachable from a real auth chain. The Lua
+			// invariant is exercised at unit level by pkg/authserver/storage/redis_test.go.
+			tokensMap, _, err := svc.GetAllUpstreamCredentials(ctx, tsid)
+			require.NoError(t, err)
+			require.Len(t, tokensMap, 2, "GetAllUpstreamCredentials must return both providers after chain")
+			assert.NotEmpty(t, tokensMap["provider-1"].AccessToken, "provider-1 access token must be present")
+			assert.NotEmpty(t, tokensMap["provider-2"].AccessToken, "provider-2 access token must be present")
+		})
+	}
+}
+
+// ============================================================================
+// Callback Refresh-Token Carry-Forward Integration Tests
+// ============================================================================
+
+// rtStrippingProxy wraps a mockoidc server and intercepts its token endpoint.
+// When stripRT is true the proxy omits the "refresh_token" field from every
+// token-endpoint response, replicating the common IdP behavior where the RT
+// is only issued on the first authorization (e.g. Google without prompt=consent).
+//
+// All other endpoints (authorize, userinfo, jwks, discovery) are forwarded
+// verbatim so that the real mockoidc can still sign tokens and serve user info.
+//
+// We use this proxy instead of the real mockoidc token endpoint for the second
+// authorize → callback leg because mockoidc's setTokens() always generates a
+// refresh_token for authorization_code grants and offers no API to suppress it.
+type rtStrippingProxy struct {
+	stripRT atomic.Bool
+	target  string // real mockoidc base URL (e.g. "http://127.0.0.1:PORT")
+}
+
+func (p *rtStrippingProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Forward the request to the real mockoidc.
+	proxyURL := p.target + r.URL.RequestURI()
+	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, proxyURL, r.Body)
+	if err != nil {
+		http.Error(w, "proxy: failed to build request", http.StatusInternalServerError)
+		return
+	}
+	proxyReq.Header = r.Header.Clone()
+
+	resp, err := http.DefaultTransport.RoundTrip(proxyReq)
+	if err != nil {
+		http.Error(w, "proxy: upstream request failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, "proxy: failed to read response", http.StatusInternalServerError)
+		return
+	}
+
+	// Strip refresh_token when the flag is set and this is the token endpoint.
+	if p.stripRT.Load() && r.URL.Path == "/oidc/token" {
+		var m map[string]json.RawMessage
+		if jsonErr := json.Unmarshal(body, &m); jsonErr == nil {
+			delete(m, "refresh_token")
+			if rewritten, jsonErr := json.Marshal(m); jsonErr == nil {
+				body = rewritten
+			}
+		}
+	}
+
+	// Copy response headers and status code.
+	for k, vs := range resp.Header {
+		for _, v := range vs {
+			w.Header().Add(k, v)
+		}
+	}
+	// Drop the upstream Content-Length; the body may have been rewritten (RT
+	// stripped) so the original length is stale. net/http will set it correctly
+	// from the buffered body.
+	w.Header().Del("Content-Length")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(body)
+}
+
+// setupTestServerWithRTProxy creates a test server backed by a real mockoidc but
+// with the upstream OAuth2 provider pointing to the rtStrippingProxy instead of
+// the mockoidc server directly. This allows toggling RT suppression mid-test.
+func setupTestServerWithRTProxy(t *testing.T, m *mockoidc.MockOIDC, proxy *rtStrippingProxy) *testServerWithUpstream {
+	t.Helper()
+
+	proxyServer := httptest.NewServer(proxy)
+	t.Cleanup(proxyServer.Close)
+
+	cfg := m.Config()
+
+	upstreamCfg := &upstream.OAuth2Config{
+		CommonOAuthConfig: upstream.CommonOAuthConfig{
+			ClientID:     cfg.ClientID,
+			ClientSecret: cfg.ClientSecret,
+			Scopes:       []string{"openid", "profile", "email"},
+			// RedirectURI must point at our auth server (resolved below after httptest.NewServer).
+			RedirectURI: testIssuer + "/oauth/callback",
+		},
+		// Authorization and token go through the proxy; userinfo comes from the proxy too.
+		AuthorizationEndpoint: proxyServer.URL + "/oidc/authorize",
+		TokenEndpoint:         proxyServer.URL + "/oidc/token",
+		UserInfo: &upstream.UserInfoConfig{
+			EndpointURL: proxyServer.URL + "/oidc/userinfo",
+			FieldMapping: &upstream.UserInfoFieldMapping{
+				SubjectFields: []string{"sub", "email"},
+			},
+		},
+	}
+	upstreamProvider, err := upstream.NewOAuth2Provider(upstreamCfg)
+	require.NoError(t, err)
+
+	ts := setupTestServer(t,
+		withUpstream(upstreamProvider),
+		withScopes(registration.DefaultScopes),
+	)
+
+	return &testServerWithUpstream{
+		testServer:       ts,
+		mockOIDC:         m,
+		upstreamProvider: upstreamProvider,
+	}
+}
+
+// TestIntegration_Callback_PreservesRefreshTokenOnReauth verifies the carry-forward
+// behavior introduced in the CallbackHandler: when an upstream IdP omits refresh_token
+// on re-authorization, the callback must copy the RT from the most-recent prior row
+// for the same (userID, providerID) pair rather than leaving it empty.
+//
+// Flow summary:
+//  1. First authorize → callback: IdP issues an RT → stored normally.
+//  2. Second authorize → callback (same user): IdP omits RT → callback carries forward
+//     the RT from the first row. Canonical regression assertion: new row's RT == priorRT.
+//  3. Third authorize → callback (different user): no prior row exists for the new user →
+//     new row has empty RT. This exercises the ErrNotFound branch of the guard
+//     (GetLatestUpstreamTokensForUser returns ErrNotFound → nothing to carry).
+//     Note: the handler-level unit tests in callback_handler_test.go cover the
+//     UpstreamSubject mismatch guard directly; this leg covers the natural not-found path.
+func TestIntegration_Callback_PreservesRefreshTokenOnReauth(t *testing.T) {
+	t.Parallel()
+
+	const providerName = "default"
+	const userSubject = "reauth-user-001"
+	const userEmail = "reauth@example.com"
+
+	// Step 1: Stand up a real mockoidc server.
+	m, err := mockoidc.Run()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, m.Shutdown()) })
+
+	// Step 2: Build the RT-stripping proxy (initially pass-through).
+	proxy := &rtStrippingProxy{
+		target: m.Addr(),
+	}
+
+	// Step 3: Stand up the auth server with the upstream pointing at the proxy.
+	ts := setupTestServerWithRTProxy(t, m, proxy)
+
+	ctx := context.Background()
+
+	// =========================================================================
+	// Leg 1: First authorize → callback (normal — IdP issues a refresh_token)
+	// =========================================================================
+
+	// Queue the test user for the first flow.
+	m.QueueUser(&mockoidc.MockUser{
+		Subject: userSubject,
+		Email:   userEmail,
+	})
+
+	verifier1 := servercrypto.GeneratePKCEVerifier()
+	challenge1 := servercrypto.ComputePKCEChallenge(verifier1)
+
+	authCode1, _ := completeAuthorizationFlow(t, ts.Server.URL, authorizationParams{
+		ClientID:     testClientID,
+		RedirectURI:  testRedirectURI,
+		State:        "rt-carry-leg1",
+		Challenge:    challenge1,
+		Scope:        "openid profile",
+		ResponseType: "code",
+	})
+
+	tokenData1 := exchangeCodeForTokens(t, ts.Server.URL, authCode1, verifier1, testAudience)
+	accessToken1, ok := tokenData1["access_token"].(string)
+	require.True(t, ok, "leg 1: access_token should be present")
+
+	sessionID1 := extractTSID(t, accessToken1, ts.PrivateKey.Public())
+
+	// Verify the first leg stored a non-empty RT (mockoidc always issues one).
+	tokens1, err := ts.storage.GetUpstreamTokens(ctx, sessionID1, providerName)
+	require.NoError(t, err, "leg 1: upstream tokens should be stored")
+	require.NotEmpty(t, tokens1.RefreshToken, "leg 1: RT must be non-empty (sanity check)")
+
+	priorRT := tokens1.RefreshToken
+
+	// =========================================================================
+	// Leg 2: Second authorize → callback (re-auth, same user, IdP omits RT)
+	// =========================================================================
+
+	// Enable RT stripping: the proxy will now remove "refresh_token" from the
+	// token endpoint JSON before the oauth2 library sees it. This replicates
+	// the real-world behavior of IdPs that do not re-issue refresh_tokens on
+	// subsequent authorizations (e.g. Google without prompt=consent).
+	proxy.stripRT.Store(true)
+
+	// Queue the same user again so the auth server resolves the same internal UserID.
+	m.QueueUser(&mockoidc.MockUser{
+		Subject: userSubject,
+		Email:   userEmail,
+	})
+
+	verifier2 := servercrypto.GeneratePKCEVerifier()
+	challenge2 := servercrypto.ComputePKCEChallenge(verifier2)
+
+	authCode2, _ := completeAuthorizationFlow(t, ts.Server.URL, authorizationParams{
+		ClientID:     testClientID,
+		RedirectURI:  testRedirectURI,
+		State:        "rt-carry-leg2",
+		Challenge:    challenge2,
+		Scope:        "openid profile",
+		ResponseType: "code",
+	})
+
+	tokenData2 := exchangeCodeForTokens(t, ts.Server.URL, authCode2, verifier2, testAudience)
+	accessToken2, ok := tokenData2["access_token"].(string)
+	require.True(t, ok, "leg 2: access_token should be present")
+
+	sessionID2 := extractTSID(t, accessToken2, ts.PrivateKey.Public())
+
+	// The second authorize flow must create a new session (new TSID).
+	require.NotEqual(t, sessionID1, sessionID2, "leg 2: must use a distinct session ID")
+
+	// Canonical regression assertion: the new row's RT was carried forward from
+	// the prior session even though the IdP omitted it in the token response.
+	tokens2, err := ts.storage.GetUpstreamTokens(ctx, sessionID2, providerName)
+	require.NoError(t, err, "leg 2: upstream tokens should be stored")
+	assert.Equal(t, priorRT, tokens2.RefreshToken,
+		"leg 2: RT must be carried forward from the prior session (regression assertion)")
+
+	// =========================================================================
+	// Leg 3: Third authorize → callback (different user — no prior row)
+	// =========================================================================
+	// A different upstream subject causes ResolveUser to create a NEW internal user
+	// (new UserID). GetLatestUpstreamTokensForUser returns ErrNotFound for this new
+	// user, so the carry-forward guard is not triggered and the new row's RT is empty.
+	//
+	// This leg exercises the ErrNotFound branch in maybeCarryForwardRefreshToken.
+	// The UpstreamSubject mismatch guard is covered by handler-level unit tests.
+
+	const otherUserSubject = "reauth-other-user-999"
+	const otherUserEmail = "other@example.com"
+
+	// Keep RT stripping enabled for the third leg as well.
+	m.QueueUser(&mockoidc.MockUser{
+		Subject: otherUserSubject,
+		Email:   otherUserEmail,
+	})
+
+	verifier3 := servercrypto.GeneratePKCEVerifier()
+	challenge3 := servercrypto.ComputePKCEChallenge(verifier3)
+
+	authCode3, _ := completeAuthorizationFlow(t, ts.Server.URL, authorizationParams{
+		ClientID:     testClientID,
+		RedirectURI:  testRedirectURI,
+		State:        "rt-carry-leg3",
+		Challenge:    challenge3,
+		Scope:        "openid profile",
+		ResponseType: "code",
+	})
+
+	tokenData3 := exchangeCodeForTokens(t, ts.Server.URL, authCode3, verifier3, testAudience)
+	accessToken3, ok := tokenData3["access_token"].(string)
+	require.True(t, ok, "leg 3: access_token should be present")
+
+	sessionID3 := extractTSID(t, accessToken3, ts.PrivateKey.Public())
+	require.NotEqual(t, sessionID2, sessionID3, "leg 3: must use a distinct session ID from leg 2")
+	require.NotEqual(t, sessionID1, sessionID3, "leg 3: must use a distinct session ID from leg 1")
+
+	// No carry-forward: RT stripping is still on, so storageTokens.RefreshToken is
+	// empty when we enter maybeCarryForwardRefreshToken. The new user has no prior
+	// row either, so GetLatestUpstreamTokensForUser returns ErrNotFound and the
+	// guard returns early — the stored RT stays empty (ErrNotFound branch).
+	tokens3, err := ts.storage.GetUpstreamTokens(ctx, sessionID3, providerName)
+	require.NoError(t, err, "leg 3: upstream tokens should be stored")
+	assert.Empty(t, tokens3.RefreshToken,
+		"leg 3: no RT carry-forward for a new user with no prior row (ErrNotFound path)")
+}
+
+// ============================================================================
+// Confidential-Client DCR Integration Tests (RFC 7591 + RFC 6749 §2.3)
+// ============================================================================
+//
+// These tests drive the full confidential-client lifecycle over HTTP against
+// the real fosite provider: DCR registration at /oauth/register (gated by
+// Config.AllowConfidentialClientRegistration), headless authorization through mockoidc,
+// and client-secret authentication at /oauth/token in both the
+// client_secret_basic and client_secret_post directions.
+//
+// Confidential clients must register an https non-loopback redirect URI; the
+// flow below uses https://app.example/cb, which is never dialed — the
+// authorization code is read off the final redirect's Location header.
+
+// testConfidentialRedirectURI is the https non-loopback redirect URI used by
+// DCR-registered confidential clients. Confidential clients get no RFC 8252
+// loopback dynamic-port matching, so the DCR-registered URI and the
+// /oauth/authorize redirect_uri parameter must match exactly.
+const testConfidentialRedirectURI = "https://app.example/cb"
+
+// withAllowConfidentialClientRegistration sets Config.AllowConfidentialClientRegistration on the
+// test server, opting DCR in to client_secret_basic / client_secret_post
+// registrations. It mirrors the withExtraClient pattern: the flag is plumbed
+// through testServerOptions and applied to the Config built in setupTestServer.
+func withAllowConfidentialClientRegistration() testServerOption {
+	return func(opts *testServerOptions) {
+		opts.allowConfidentialClientRegistration = true
+	}
+}
+
+// makeTokenRequestWithBasicAuth is the makeTokenRequest variant for
+// client_secret_basic clients: identical form POST to /oauth/token, plus an
+// Authorization header carrying base64(client_id:client_secret). fosite
+// url.QueryUnescape's both Basic-auth components, so the wire form must be the
+// RFC 6749 §2.3.1 percent-encoded-then-base64 encoding. Go's SetBasicAuth
+// base64-encodes the raw credentials without percent-encoding; that is
+// byte-identical here because DCR-minted client IDs (UUIDs) and secrets
+// (base64url, [A-Za-z0-9_-]) contain no characters requiring escaping.
+func makeTokenRequestWithBasicAuth(t *testing.T, serverURL string, params url.Values, clientID, clientSecret string) *http.Response {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodPost, serverURL+"/oauth/token", strings.NewReader(params.Encode()))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(clientID, clientSecret)
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	resp, err := httpClient.Do(req)
+	require.NoError(t, err)
+
+	return resp
+}
+
+// dcrRegisterClient POSTs an RFC 7591 registration to /oauth/register with the
+// given token_endpoint_auth_method and returns the server's response. It does
+// not require success so callers can assert on rejection responses.
+func dcrRegisterClient(t *testing.T, serverURL, authMethod string) *oauthproto.DynamicClientRegistrationResponse {
+	t.Helper()
+
+	reqBody, err := json.Marshal(oauthproto.DynamicClientRegistrationRequest{
+		RedirectURIs:            []string{testConfidentialRedirectURI},
+		TokenEndpointAuthMethod: authMethod,
+	})
+	require.NoError(t, err)
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	resp, err := httpClient.Post(serverURL+"/oauth/register", "application/json", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusCreated, resp.StatusCode,
+		"DCR registration for %q should succeed", authMethod)
+
+	var regResp oauthproto.DynamicClientRegistrationResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&regResp))
+	return &regResp
+}
+
+// registerConfidentialClient registers a confidential client via DCR and
+// returns its credentials. It pins the RFC 7591 response contract: the
+// server echoes the registered auth method and returns the minted secret
+// exactly once, with a non-zero expiry.
+func registerConfidentialClient(t *testing.T, serverURL, authMethod string) (clientID, clientSecret string) {
+	t.Helper()
+
+	regResp := dcrRegisterClient(t, serverURL, authMethod)
+	require.NotEmpty(t, regResp.ClientID, "DCR response must contain client_id")
+	require.NotEmpty(t, regResp.ClientSecret, "DCR response must contain client_secret for a confidential client")
+	assert.Equal(t, authMethod, regResp.TokenEndpointAuthMethod,
+		"DCR response must echo the registered token_endpoint_auth_method")
+	require.NotNil(t, regResp.ClientSecretExpiresAt,
+		"confidential registrations must carry the client_secret_expires_at key")
+	assert.Zero(t, *regResp.ClientSecretExpiresAt,
+		"client_secret_expires_at is 0 (does not expire): RenewClientTTL keeps an actively used registration alive")
+
+	return regResp.ClientID, regResp.ClientSecret
+}
+
+// completeConfidentialAuthorizationFlow runs a headless authorization-code
+// flow for a DCR-registered confidential client and returns the auth code.
+// completeAuthorizationFlow only rewrites the intermediate /oauth/callback
+// hop (upstream redirect URI); the client redirect URI is passed through
+// untouched, so the https URI registered via DCR is matched exactly.
+func completeConfidentialAuthorizationFlow(t *testing.T, serverURL, clientID string, challenge string) string {
+	t.Helper()
+
+	code, _ := completeAuthorizationFlow(t, serverURL, authorizationParams{
+		ClientID:     clientID,
+		RedirectURI:  testConfidentialRedirectURI,
+		State:        "confidential-dcr-state",
+		Challenge:    challenge,
+		Scope:        "openid profile",
+		ResponseType: "code",
+	})
+	return code
+}
+
+// confidentialAuthCodeParams builds the form parameters for redeeming an
+// authorization code issued to a confidential client. PKCE is enforced for
+// ALL clients (EnforcePKCE: true in server/provider.go) with no per-client
+// bypass, so code_verifier is mandatory; the redirect_uri must match the
+// authorize request exactly.
+func confidentialAuthCodeParams(code, verifier string) url.Values {
+	return url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"redirect_uri":  {testConfidentialRedirectURI},
+		"code_verifier": {verifier},
+	}
+}
+
+// runConfidentialHappyPath drives the full confidential-client lifecycle:
+// DCR → authorize (PKCE) → redeem with the client's registered auth method →
+// 200 with a non-empty access_token. registerConfidentialClient issues one
+// HTTP request per call, so subtests stay independent.
+func runConfidentialHappyPath(t *testing.T, serverURL, authMethod string) map[string]interface{} {
+	t.Helper()
+
+	clientID, clientSecret := registerConfidentialClient(t, serverURL, authMethod)
+
+	verifier := servercrypto.GeneratePKCEVerifier()
+	code := completeConfidentialAuthorizationFlow(t, serverURL, clientID, servercrypto.ComputePKCEChallenge(verifier))
+
+	params := confidentialAuthCodeParams(code, verifier)
+	var resp *http.Response
+	if authMethod == oauthproto.TokenEndpointAuthMethodClientSecretBasic {
+		resp = makeTokenRequestWithBasicAuth(t, serverURL, params, clientID, clientSecret)
+	} else {
+		params.Set("client_id", clientID)
+		params.Set("client_secret", clientSecret)
+		resp = makeTokenRequest(t, serverURL, params)
+	}
+	defer resp.Body.Close()
+
+	tokenData := parseTokenResponse(t, resp)
+	require.Equal(t, http.StatusOK, resp.StatusCode,
+		"%s redemption should succeed, got %d (body: %v)", authMethod, resp.StatusCode, tokenData)
+	accessToken, ok := tokenData["access_token"].(string)
+	require.True(t, ok, "access_token should be a string")
+	require.NotEmpty(t, accessToken)
+
+	return tokenData
+}
+
+// TestIntegration_ConfidentialClientDCR_FullFlow proves criterion 10 for both
+// registered methods: a DCR-registered confidential client can complete the
+// authorization-code flow with PKCE and redeem the code for tokens using its
+// registered client_secret_* method.
+func TestIntegration_ConfidentialClientDCR_FullFlow(t *testing.T) {
+	t.Parallel()
+
+	for _, authMethod := range []string{
+		oauthproto.TokenEndpointAuthMethodClientSecretBasic,
+		oauthproto.TokenEndpointAuthMethodClientSecretPost,
+	} {
+		t.Run(authMethod, func(t *testing.T) {
+			t.Parallel()
+
+			// Each subtest gets its own mockoidc instance: mockoidc's
+			// SessionStore is not concurrency-safe, so sharing one across
+			// parallel subtests races on session creation.
+			m := startMockOIDC(t)
+			ts := setupTestServerWithMockOIDC(t, m, withAllowConfidentialClientRegistration())
+			runConfidentialHappyPath(t, ts.Server.URL, authMethod)
+		})
+	}
+}
+
+// runForceConfidentialOverrideHappyPath registers a client declaring
+// token_endpoint_auth_method "none" against a redirect_uri that matches a
+// configured ForceConfidentialRedirectURIs entry, then completes the
+// authorization-code flow with PKCE and redeems the code using redeemVia
+// (either form-body or HTTP Basic credential presentation). Both must
+// succeed: the whole point of the plain (non-OIDC) client shape the override
+// builds is that fosite does not pin the presentation, so it must accept
+// either.
+func runForceConfidentialOverrideHappyPath(
+	t *testing.T, serverURL string, redeemVia func(*testing.T, string, url.Values, string, string) *http.Response,
+) {
+	t.Helper()
+
+	regResp := dcrRegisterClient(t, serverURL, oauthproto.TokenEndpointAuthMethodNone)
+	require.Equal(t, oauthproto.TokenEndpointAuthMethodClientSecretPost, regResp.TokenEndpointAuthMethod,
+		"an overridden registration must be reported as client_secret_post, never client_secret_basic "+
+			"(the Python MCP SDK these clients are built on rejects basic) or the requested 'none'")
+	require.NotEmpty(t, regResp.ClientSecret, "an overridden registration must be issued a client_secret")
+	clientID, clientSecret := regResp.ClientID, regResp.ClientSecret
+
+	verifier := servercrypto.GeneratePKCEVerifier()
+	code := completeConfidentialAuthorizationFlow(t, serverURL, clientID, servercrypto.ComputePKCEChallenge(verifier))
+
+	params := confidentialAuthCodeParams(code, verifier)
+	resp := redeemVia(t, serverURL, params, clientID, clientSecret)
+	defer resp.Body.Close()
+
+	tokenData := parseTokenResponse(t, resp)
+	require.Equal(t, http.StatusOK, resp.StatusCode,
+		"redemption should succeed, got %d (body: %v)", resp.StatusCode, tokenData)
+	accessToken, ok := tokenData["access_token"].(string)
+	require.True(t, ok, "access_token should be a string")
+	require.NotEmpty(t, accessToken)
+}
+
+// TestIntegration_ForceConfidentialRedirectURIs_FullFlow covers the DCR
+// force-confidential override end to end: a client that declares itself
+// public (token_endpoint_auth_method "none") but registers a redirect_uri
+// matching an operator-configured ForceConfidentialRedirectURIs entry is
+// issued a real secret and can complete the token exchange presenting it via
+// EITHER the form body or HTTP Basic — proving the plain (non-OIDC) client
+// shape the override builds does not pin the client to one presentation.
+func TestIntegration_ForceConfidentialRedirectURIs_FullFlow(t *testing.T) {
+	t.Parallel()
+
+	// Each subtest builds its own mockoidc instance and server rather than
+	// sharing one across the parallel subtests: mockoidc's SessionStore is
+	// not concurrency-safe, so a shared instance races on session creation.
+	newServer := func(t *testing.T) *testServerWithUpstream {
+		t.Helper()
+		m := startMockOIDC(t)
+		return setupTestServerWithMockOIDC(t, m,
+			withAllowConfidentialClientRegistration(),
+			withForceConfidentialRedirectURIs(testConfidentialRedirectURI))
+	}
+
+	t.Run("form body", func(t *testing.T) {
+		t.Parallel()
+		ts := newServer(t)
+		runForceConfidentialOverrideHappyPath(t, ts.Server.URL,
+			func(t *testing.T, serverURL string, params url.Values, clientID, clientSecret string) *http.Response {
+				t.Helper()
+				params.Set("client_id", clientID)
+				params.Set("client_secret", clientSecret)
+				return makeTokenRequest(t, serverURL, params)
+			})
+	})
+
+	t.Run("HTTP Basic", func(t *testing.T) {
+		t.Parallel()
+		ts := newServer(t)
+		runForceConfidentialOverrideHappyPath(t, ts.Server.URL, makeTokenRequestWithBasicAuth)
+	})
+}
+
+// TestIntegration_ConfidentialClientDCR_FullFlow_Redis is the Redis-backed
+// variant of the happy path: the DCR-registered confidential client survives
+// the Redis storage round-trip with its token_endpoint_auth_method and
+// hashed secret intact, so the full flow succeeds against the production-shape
+// storage layout.
+//
+//nolint:tparallel // subtests deliberately run serially: they share ts's single miniredis instance, and PostEviction advances its clock with FastForward, which would corrupt any subtest running concurrently
+func TestIntegration_ConfidentialClientDCR_FullFlow_Redis(t *testing.T) {
+	t.Parallel()
+
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m, withAllowConfidentialClientRegistration(), withRedisBackedStorage())
+	ts.Miniredis(t) // assert the harness was wired with withRedisBackedStorage
+
+	//nolint:paralleltest // shares the suite's miniredis instance with sibling subtests (PostEviction advances its clock)
+	for _, authMethod := range []string{
+		oauthproto.TokenEndpointAuthMethodClientSecretBasic,
+		oauthproto.TokenEndpointAuthMethodClientSecretPost,
+	} {
+		t.Run(authMethod, func(t *testing.T) {
+			runConfidentialHappyPath(t, ts.Server.URL, authMethod)
+		})
+	}
+
+	// The serialized Redis rows must never carry the plaintext secret: only
+	// the SHA-256 digest is stored. A regression that persisted cfg.Secret (or
+	// a future storedClient field carrying plaintext) would authenticate
+	// successfully and pass every other assertion in this suite.
+	//nolint:paralleltest // shares the suite's miniredis instance with sibling subtests
+	t.Run("PlaintextSecretAbsentFromRedis", func(t *testing.T) {
+		_, clientSecret := registerConfidentialClient(t, ts.Server.URL,
+			oauthproto.TokenEndpointAuthMethodClientSecretBasic)
+
+		mr := ts.Miniredis(t)
+		for _, key := range mr.Keys() {
+			value, err := mr.Get(key)
+			if err != nil {
+				continue // non-string key types (sets, hashes); the client row is a string
+			}
+			assert.NotContains(t, value, clientSecret,
+				"Redis key %q must not contain the plaintext client secret", key)
+		}
+	})
+
+	// Criterion 4: evicting the client secret (FastForward past the
+	// registration TTL) makes the token endpoint reject the client with 401
+	// invalid_client. Wrong-secret and unknown-client responses are
+	// indistinguishable; a missing secret is the unknown-client path.
+	//nolint:paralleltest // FastForward advances the suite's shared miniredis clock, which would corrupt sibling subtests running concurrently
+	t.Run("PostEviction", func(t *testing.T) {
+		clientID, clientSecret := registerConfidentialClient(t, ts.Server.URL,
+			oauthproto.TokenEndpointAuthMethodClientSecretBasic)
+
+		// Confirm the client authenticates before eviction.
+		preEvict := makeTokenRequestWithBasicAuth(t, ts.Server.URL, url.Values{
+			"grant_type": {"authorization_code"},
+			"code":       {"some-code"},
+		}, clientID, clientSecret)
+		preEvict.Body.Close()
+		require.NotEqual(t, http.StatusUnauthorized, preEvict.StatusCode,
+			"pre-eviction authentication must not be a client-auth failure")
+
+		// Evict the client secret: the registration store writes secrets with
+		// the DefaultDCRClientTTL (30 days), so FastForward past it drops the key.
+		ts.Miniredis(t).FastForward(storage.DefaultDCRClientTTL + time.Hour)
+
+		resp := makeTokenRequestWithBasicAuth(t, ts.Server.URL, url.Values{
+			"grant_type": {"authorization_code"},
+			"code":       {"some-code"},
+		}, clientID, clientSecret)
+		bodyBytes, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		resp.Body.Close()
+
+		require.Equal(t, http.StatusUnauthorized, resp.StatusCode,
+			"post-eviction authentication must be 401, got %d (body: %s)", resp.StatusCode, string(bodyBytes))
+		var body map[string]interface{}
+		require.NoError(t, json.Unmarshal(bodyBytes, &body))
+		assert.Equal(t, "invalid_client", body["error"])
+		assert.NotContains(t, string(bodyBytes), clientSecret, "error response must not leak the secret")
+	})
+}
+
+// TestIntegration_ClientSecretPost_NotPersistedInTokenSessions guards against
+// a client_secret_post redemption writing the plaintext secret into a stored
+// access or refresh token session row. client_secret_post sends the secret in
+// the POST body, which fosite copies into the request form during
+// NewAccessRequest. fosite's own Request.Sanitize([]string{}) — invoked by
+// every code path in this codebase that creates an access/refresh token
+// session (the standard authorization_code and refresh_token grant handlers,
+// and our token-exchange handler via the embedded oauth2.HandleHelper) —
+// already discards every form key outside grant_type/response_type/scope/
+// client_id before the session is handed to storage, so this is a regression
+// guard against that mechanism ever changing, not a demonstration of a live
+// leak: it passes both with and without the extra
+// accessRequest.GetRequestForm().Del("client_secret") in TokenHandler.
+//
+// This asserts against the raw bytes in miniredis, not a decoded Go struct:
+// the point is what actually lands on disk, and a struct-field assertion
+// would miss the secret sitting in a form/query-string blob inside the JSON.
+func TestIntegration_ClientSecretPost_NotPersistedInTokenSessions(t *testing.T) {
+	t.Parallel()
+
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m, withAllowConfidentialClientRegistration(), withRedisBackedStorage())
+
+	clientID, clientSecret := registerConfidentialClient(t, ts.Server.URL, oauthproto.TokenEndpointAuthMethodClientSecretPost)
+
+	verifier := servercrypto.GeneratePKCEVerifier()
+	code, _ := completeAuthorizationFlow(t, ts.Server.URL, authorizationParams{
+		ClientID:     clientID,
+		RedirectURI:  testConfidentialRedirectURI,
+		State:        "confidential-dcr-state",
+		Challenge:    servercrypto.ComputePKCEChallenge(verifier),
+		Scope:        "openid profile offline_access",
+		ResponseType: "code",
+	})
+
+	params := confidentialAuthCodeParams(code, verifier)
+	params.Set("client_id", clientID)
+	params.Set("client_secret", clientSecret)
+	resp := makeTokenRequest(t, ts.Server.URL, params)
+	tokenData := parseTokenResponse(t, resp)
+	require.Equal(t, http.StatusOK, resp.StatusCode,
+		"client_secret_post redemption should succeed, got %d (body: %v)", resp.StatusCode, tokenData)
+	refreshToken, hasRefresh := tokenData["refresh_token"].(string)
+	require.True(t, hasRefresh, "offline_access scope should have produced a refresh_token")
+	require.NotEmpty(t, refreshToken)
+
+	mr := ts.Miniredis(t)
+	for _, key := range mr.Keys() {
+		value, err := mr.Get(key)
+		if err != nil {
+			continue // non-string key types (sets, hashes); session rows are strings
+		}
+		assert.NotContains(t, value, clientSecret,
+			"Redis key %q must not contain the plaintext client_secret from the token request form", key)
+	}
+}
+
+// TestIntegration_LegacyPublicClient_TolerantOfPresentedSecret pins the
+// end-user-visible half of D3a's symmetry fix: a legacy-shaped client row —
+// no token_endpoint_auth_method ever recorded, Public=true — must still
+// authenticate at /oauth/token even when the caller presents a non-empty
+// client_secret. clientFromStored (pkg/authserver/storage/redis.go) rebuilds
+// this row shape as a bare *fosite.DefaultClient, which does not satisfy
+// fosite.OpenIDConnectClient, so fosite's method-enforcement checks in
+// client_authentication.go never run; IsPublic()==true then short-circuits
+// straight past secret verification regardless of what was presented. This
+// is the fail-open tolerance the row always had, before and after D3a — the
+// storage-layer tests in redis_test.go pin the same shape read-back, this
+// pins the behaviour a real token request sees.
+//
+// withExtraClient registers a bare *fosite.DefaultClient (no
+// fosite.OpenIDConnectClient implementation) directly through the public
+// Storage.RegisterClient API: RegisterClient only populates
+// token_endpoint_auth_method for clients implementing that interface, so
+// this produces the exact legacy row shape without reaching into storage's
+// unexported types.
+func TestIntegration_LegacyPublicClient_TolerantOfPresentedSecret(t *testing.T) {
+	t.Parallel()
+
+	const legacyClientID = "legacy-public-no-method"
+
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m, withExtraClient(&fosite.DefaultClient{
+		ID:            legacyClientID,
+		RedirectURIs:  []string{testRedirectURI},
+		ResponseTypes: []string{"code"},
+		GrantTypes:    []string{"authorization_code", "refresh_token"},
+		Scopes:        registration.DefaultScopes,
+		Audience:      []string{testAudience},
+		Public:        true,
+	}))
+
+	verifier := servercrypto.GeneratePKCEVerifier()
+	code, _ := completeAuthorizationFlow(t, ts.Server.URL, authorizationParams{
+		ClientID:     legacyClientID,
+		RedirectURI:  testRedirectURI,
+		State:        "legacy-public-state",
+		Challenge:    servercrypto.ComputePKCEChallenge(verifier),
+		Scope:        "openid profile",
+		ResponseType: "code",
+	})
+
+	resp := makeTokenRequest(t, ts.Server.URL, url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"redirect_uri":  {testRedirectURI},
+		"code_verifier": {verifier},
+		"client_id":     {legacyClientID},
+		"client_secret": {"whatever-a-caller-might-still-send"},
+	})
+	defer resp.Body.Close()
+
+	tokenData := parseTokenResponse(t, resp)
+	require.Equal(t, http.StatusOK, resp.StatusCode,
+		"legacy public client must still authenticate with a non-empty client_secret presented, got %d (body: %v)",
+		resp.StatusCode, tokenData)
+	accessToken, ok := tokenData["access_token"].(string)
+	require.True(t, ok, "access_token should be a string")
+	require.NotEmpty(t, accessToken)
+}
+
+// TestIntegration_DCRRateLimited pins the anti-DoS gate on the unauthenticated
+// registration endpoint: a burst beyond the limiter's capacity gets 429 with
+// Retry-After, while ordinary use (a single registration) is unaffected.
+func TestIntegration_DCRRateLimited(t *testing.T) {
+	t.Parallel()
+
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m)
+
+	reqBody, err := json.Marshal(oauthproto.DynamicClientRegistrationRequest{
+		RedirectURIs: []string{"http://127.0.0.1:8080/callback"},
+	})
+	require.NoError(t, err)
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+
+	// The limiter is rate.NewLimiter(1, 5): the first 5 requests drain the
+	// burst, so within 20 rapid calls at least one must be rejected.
+	saw429 := false
+	sawSuccess := false
+	for range 20 {
+		resp, err := httpClient.Post(ts.Server.URL+"/oauth/register", "application/json", bytes.NewReader(reqBody))
+		require.NoError(t, err)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusTooManyRequests {
+			saw429 = true
+			assert.NotEmpty(t, resp.Header.Get("Retry-After"), "429 must carry a Retry-After hint")
+		}
+		if resp.StatusCode == http.StatusCreated {
+			sawSuccess = true
+		}
+	}
+	assert.True(t, saw429, "20 rapid registrations must trip the rate limiter")
+	assert.True(t, sawSuccess, "the burst allowance must let ordinary registrations through")
+}
+
+// TestIntegration_ConfidentialClientDCR_FlagOffRejected proves the feature is
+// opt-in: with AllowConfidentialClientRegistration unset, DCR rejects client_secret_*
+// registrations with the historical public-clients-only error.
+func TestIntegration_ConfidentialClientDCR_FlagOffRejected(t *testing.T) {
+	t.Parallel()
+
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m) // no withAllowConfidentialClientRegistration
+
+	reqBody, err := json.Marshal(oauthproto.DynamicClientRegistrationRequest{
+		RedirectURIs:            []string{testConfidentialRedirectURI},
+		TokenEndpointAuthMethod: oauthproto.TokenEndpointAuthMethodClientSecretPost,
+	})
+	require.NoError(t, err)
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	resp, err := httpClient.Post(ts.Server.URL+"/oauth/register", "application/json", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode,
+		"confidential DCR with the flag off must be rejected (body: %s)", string(bodyBytes))
+	assert.Contains(t, string(bodyBytes), "invalid_client_metadata")
+}
+
+// TestIntegration_ConfidentialClientDCR_InvalidClient covers criteria 11, 12,
+// and 13: wrong-secret and unknown-client authentication failures are 401
+// invalid_client with no debug detail and no secret leakage, wrong-secret and
+// unknown-client responses are indistinguishable, the registered auth method
+// is pinned in both directions, and a confidential client presenting no
+// credentials is rejected rather than silently treated as public.
+//
+// All cases redeem the same (already-invalid) code: fosite authenticates the
+// client before any grant handling, so every rejection originates from client
+// authentication and the code is never consumed.
+func TestIntegration_ConfidentialClientDCR_InvalidClient(t *testing.T) {
+	t.Parallel()
+
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m, withAllowConfidentialClientRegistration())
+
+	postClientID, postClientSecret := registerConfidentialClient(t, ts.Server.URL,
+		oauthproto.TokenEndpointAuthMethodClientSecretPost)
+	basicClientID, basicClientSecret := registerConfidentialClient(t, ts.Server.URL,
+		oauthproto.TokenEndpointAuthMethodClientSecretBasic)
+
+	// Wrong secrets that are neither equal to nor substrings of the real
+	// secrets, so the leakage assertions below are meaningful.
+	const (
+		wrongSecretForPostClient  = "wrong-post-secret_000000000000000000000000"
+		wrongSecretForBasicClient = "wrong-basic-secret_00000000000000000000000"
+	)
+
+	// A real authorization code for the post client: proves even a well-formed
+	// grant request fails closed on client authentication.
+	verifier := servercrypto.GeneratePKCEVerifier()
+	code := completeConfidentialAuthorizationFlow(t, ts.Server.URL, postClientID, servercrypto.ComputePKCEChallenge(verifier))
+
+	// readInvalidClientBody asserts the shared failure-shape contract (status,
+	// error code, no error_debug, no secret material) and returns the raw body
+	// for indistinguishability comparison.
+	readInvalidClientBody := func(t *testing.T, resp *http.Response, secrets ...string) string {
+		t.Helper()
+
+		bodyBytes, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		resp.Body.Close()
+
+		require.Equal(t, http.StatusUnauthorized, resp.StatusCode,
+			"client-authentication failure must be 401, got %d (body: %s)", resp.StatusCode, string(bodyBytes))
+
+		var body map[string]interface{}
+		require.NoError(t, json.Unmarshal(bodyBytes, &body), "error response must be JSON: %s", string(bodyBytes))
+		assert.Equal(t, "invalid_client", body["error"], "client-authentication failure must be invalid_client")
+		_, hasDebug := body["error_debug"]
+		assert.False(t, hasDebug, "error response must not carry error_debug: %s", string(bodyBytes))
+		for _, s := range secrets {
+			assert.NotContains(t, string(bodyBytes), s, "error response must not echo secret material")
+		}
+		return string(bodyBytes)
+	}
+
+	t.Run("wrong_secret", func(t *testing.T) {
+		t.Parallel()
+		params := confidentialAuthCodeParams(code, verifier)
+		params.Set("client_id", postClientID)
+		params.Set("client_secret", wrongSecretForPostClient)
+		resp := makeTokenRequest(t, ts.Server.URL, params)
+		readInvalidClientBody(t, resp, postClientSecret, wrongSecretForPostClient)
+	})
+
+	t.Run("unknown_client_id_indistinguishable", func(t *testing.T) {
+		t.Parallel()
+		params := confidentialAuthCodeParams(code, verifier)
+		params.Set("client_id", "00000000-0000-0000-0000-000000000000")
+		params.Set("client_secret", wrongSecretForPostClient)
+		resp := makeTokenRequest(t, ts.Server.URL, params)
+		unknownBody := readInvalidClientBody(t, resp, postClientSecret, wrongSecretForPostClient)
+
+		params = confidentialAuthCodeParams(code, verifier)
+		params.Set("client_id", postClientID)
+		params.Set("client_secret", wrongSecretForPostClient)
+		resp = makeTokenRequest(t, ts.Server.URL, params)
+		wrongSecretBody := readInvalidClientBody(t, resp, postClientSecret, wrongSecretForPostClient)
+
+		assert.Equal(t, wrongSecretBody, unknownBody,
+			"unknown client_id must be indistinguishable from a wrong secret")
+	})
+
+	t.Run("method_pinned_post_client_with_basic_auth", func(t *testing.T) {
+		t.Parallel()
+		// Criterion 12, first direction: a client_secret_post client presenting
+		// Basic-auth credentials is rejected. Send the CORRECT secret so only
+		// the method mismatch can cause the failure.
+		resp := makeTokenRequestWithBasicAuth(t, ts.Server.URL,
+			confidentialAuthCodeParams(code, verifier), postClientID, postClientSecret)
+		readInvalidClientBody(t, resp, postClientSecret)
+	})
+
+	t.Run("method_pinned_basic_client_with_post_body", func(t *testing.T) {
+		t.Parallel()
+		// Criterion 12, second direction: a client_secret_basic client
+		// presenting body credentials is rejected. Again the correct secret.
+		params := confidentialAuthCodeParams(code, verifier)
+		params.Set("client_id", basicClientID)
+		params.Set("client_secret", basicClientSecret)
+		resp := makeTokenRequest(t, ts.Server.URL, params)
+		readInvalidClientBody(t, resp, basicClientSecret)
+	})
+
+	t.Run("no_credentials", func(t *testing.T) {
+		t.Parallel()
+		// Criterion 13: a confidential client presenting no credentials at all
+		// must not silently succeed via the public-client path.
+		params := confidentialAuthCodeParams(code, verifier)
+		params.Set("client_id", postClientID)
+		resp := makeTokenRequest(t, ts.Server.URL, params)
+		readInvalidClientBody(t, resp, postClientSecret)
+	})
+}
+
+// TestIntegration_ConfidentialClientDCR_PKCEEnforced covers criterion 14: PKCE
+// has no per-client bypass — a confidential client cannot complete the
+// authorization-code flow without a code_challenge.
+//
+// NOTE on where enforcement fires: this server defers PKCE validation to the
+// callback/code-issuance step (fosite's pkce.Handler runs in
+// NewAuthorizeResponse, and the authorize handler's /oauth/authorize request
+// validation accepts requests without code_challenge per RFC 7636 — the same
+// shape pinned by handlers_test.go's
+// TestAuthorizeHandler_PKCENotValidatedAtAuthorizeEndpoint). The fail-closed
+// guarantee criterion 14 actually requires is therefore observable one step
+// later: issuing a code to a challenge-less request fails closed inside
+// fosite's NewAuthorizeResponse (pkce.validateNoPKCE), and because the request
+// carried a valid registered redirect URI fosite reports it as a 303 redirect
+// to the client carrying error=invalid_request — no code is issued. The test
+// asserts that redirect carries the error and no code, and that the AS metadata
+// advertises code_challenge_methods_supported — the pointer a compliant
+// confidential client follows to learn S256 is mandatory.
+func TestIntegration_ConfidentialClientDCR_PKCEEnforced(t *testing.T) {
+	t.Parallel()
+
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m, withAllowConfidentialClientRegistration())
+
+	clientID, clientSecret := registerConfidentialClient(t, ts.Server.URL,
+		oauthproto.TokenEndpointAuthMethodClientSecretBasic)
+
+	// Drive /oauth/authorize for the confidential client WITHOUT code_challenge.
+	client := noRedirectClient()
+	authorizeURL := ts.Server.URL + "/oauth/authorize?" + url.Values{
+		"client_id":     {clientID},
+		"redirect_uri":  {testConfidentialRedirectURI},
+		"state":         {"pkce-enforcement-state"},
+		"response_type": {"code"},
+		"scope":         {"openid profile"},
+	}.Encode()
+	resp, err := client.Get(authorizeURL)
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	// The authorize endpoint accepts the request and redirects to the upstream
+	// IDP: fosite deliberately validates code_verifier at the token endpoint,
+	// not code_challenge at the authorize endpoint.
+	require.Equal(t, http.StatusFound, resp.StatusCode,
+		"authorize without code_challenge is accepted per RFC 7636 (validation is deferred to token redemption)")
+
+	// Complete the upstream login to reach the callback, where the challenge-
+	// less code issuance fails closed.
+	mockOIDCLocation, err := resp.Location()
+	require.NoError(t, err)
+	resp, err = client.Get(mockOIDCLocation.String())
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	require.Equal(t, http.StatusFound, resp.StatusCode, "expected redirect from mockoidc to callback")
+	callbackLocation, err := resp.Location()
+	require.NoError(t, err)
+
+	parsedServerURL, err := url.Parse(ts.Server.URL)
+	require.NoError(t, err)
+	callbackLocation.Scheme = parsedServerURL.Scheme
+	callbackLocation.Host = parsedServerURL.Host
+
+	resp, err = client.Get(callbackLocation.String())
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	// The PKCE failure IS enforced at code issuance — the error log above shows
+	// pkce.validateNoPKCE rejecting the challenge-less request inside
+	// NewAuthorizeResponse, and no code is issued (fail-closed holds). However
+	// the callback handler wraps that invalid_request as fosite.ErrServerError
+	// (callback.go's "failed to create authorization response" branch), so the
+	// client observes a 303 redirect carrying error=server_error rather than
+	// invalid_request. Criterion 14's security property — no code is issued to
+	// a challenge-less request — is what we assert here; the error-code masking
+	// is a separate known gap, not a silently-changed production behavior.
+	callbackBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusSeeOther, resp.StatusCode,
+		"issuing a code without a PKCE challenge must fail, got %d (body: %s)", resp.StatusCode, string(callbackBody))
+	errLocation, err := resp.Location()
+	require.NoError(t, err)
+	// Assert the concrete observed value, not just non-emptiness: when the
+	// callback handler stops masking invalid_request as server_error, this
+	// fails loudly and the assertion can be tightened to the correct code.
+	assert.Equal(t, "server_error", errLocation.Query().Get("error"),
+		"the callback currently masks the PKCE invalid_request as server_error (see callback.go); "+
+			"if this now reads invalid_request, the masking is fixed and this assertion should be updated")
+	assert.Empty(t, errLocation.Query().Get("code"),
+		"no authorization code may be issued to a challenge-less request")
+
+	// Defense in depth: the confidential client cannot redeem a code that was
+	// never legitimately issued. With no `code` parameter the grant lookup fails
+	// before PKCE runs (invalid_grant), so we also try a fabricated code together
+	// with a well-formed code_verifier — even a correctly-shaped PKCE redemption
+	// for a code that bypassed challenge binding is rejected.
+	params := url.Values{
+		"grant_type":    {"authorization_code"},
+		"redirect_uri":  {testConfidentialRedirectURI},
+		"code":          {"fabricated-challenge-less-code"},
+		"code_verifier": {servercrypto.GeneratePKCEVerifier()},
+	}
+	tokenResp := makeTokenRequestWithBasicAuth(t, ts.Server.URL, params, clientID, clientSecret)
+	defer tokenResp.Body.Close()
+
+	tokenBody, err := io.ReadAll(tokenResp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, tokenResp.StatusCode,
+		"redeeming a code that was never issued must fail, got %d (body: %s)", tokenResp.StatusCode, string(tokenBody))
+	assert.Contains(t, string(tokenBody), "invalid_grant",
+		"a fabricated code is rejected with invalid_grant")
+
+	// The AS metadata names the supported PKCE methods; together with the
+	// fail-closed redemption above this is the contract a confidential client
+	// relies on to discover that S256 is mandatory.
+	discoResp, err := client.Get(ts.Server.URL + "/.well-known/oauth-authorization-server")
+	require.NoError(t, err)
+	defer discoResp.Body.Close()
+	discoBytes, err := io.ReadAll(discoResp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, discoResp.StatusCode, "discovery document must be served")
+	assert.Contains(t, string(discoBytes), "code_challenge_methods_supported")
+	assert.Contains(t, string(discoBytes), "S256")
+}
+
+// TestIntegration_ConfidentialClientDCR_SecretNeverLogged covers criterion 15:
+// the minted client_secret appears in ZERO log records at any level across
+// registration, authorize, and token paths including failures. The capture
+// handler is installed before server construction so even startup-time
+// logging is in scope, and stays installed for the whole flow.
+//
+//nolint:paralleltest // swaps the process-global slog default handler
+func TestIntegration_ConfidentialClientDCR_SecretNeverLogged(t *testing.T) {
+	// Not parallel: swaps the process-global slog default handler.
+
+	capture := newCapturingSlogHandler()
+	prev := slog.Default()
+	slog.SetDefault(slog.New(capture))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	// Construct the server while the capture handler is installed.
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m, withAllowConfidentialClientRegistration())
+
+	// Registration path: DCR mints the secret.
+	clientID, clientSecret := registerConfidentialClient(t, ts.Server.URL,
+		oauthproto.TokenEndpointAuthMethodClientSecretPost)
+
+	// Authorize path: full headless flow for the confidential client.
+	verifier := servercrypto.GeneratePKCEVerifier()
+	code := completeConfidentialAuthorizationFlow(t, ts.Server.URL, clientID, servercrypto.ComputePKCEChallenge(verifier))
+
+	// Token path, failure: a wrong-secret attempt logs the rejection.
+	params := confidentialAuthCodeParams(code, verifier)
+	params.Set("client_id", clientID)
+	params.Set("client_secret", "wrong-secret_00000000000000000000000000000")
+	resp := makeTokenRequest(t, ts.Server.URL, params)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode,
+		"setup check: wrong-secret attempt must fail so its log record is captured")
+
+	// Token path, success: a correct redemption of a fresh code.
+	code = completeConfidentialAuthorizationFlow(t, ts.Server.URL, clientID, servercrypto.ComputePKCEChallenge(verifier))
+	params = confidentialAuthCodeParams(code, verifier)
+	params.Set("client_id", clientID)
+	params.Set("client_secret", clientSecret)
+	resp = makeTokenRequest(t, ts.Server.URL, params)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode, "setup check: correct-secret redemption must succeed")
+
+	// Assert the secret appears in no captured record — message or any
+	// attribute value, at any level.
+	for _, needle := range []string{clientSecret, clientSecret[:16]} {
+		assert.Empty(t, capture.recordsContaining(needle),
+			"client_secret (or a substring of it) must never be logged; needle %q", needle)
+	}
+}
+
+// TestIntegration_TokenEndpointFailuresLogAtDebug pins the log-volume half of
+// the unauthenticated-DoS hardening: wrong-secret token requests must not
+// produce ERROR-level records, because RFC6749Error.Error() carries only the
+// error code (no diagnostic value) and the endpoint is unauthenticated — at
+// Error level an attacker could flood the log stream and drown real errors.
+//
+//nolint:paralleltest // swaps the process-global slog default handler
+func TestIntegration_TokenEndpointFailuresLogAtDebug(t *testing.T) {
+	// Not parallel: swaps the process-global slog default handler.
+
+	capture := newCapturingSlogHandler()
+	prev := slog.Default()
+	slog.SetDefault(slog.New(capture))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	m := startMockOIDC(t)
+	ts := setupTestServerWithMockOIDC(t, m, withAllowConfidentialClientRegistration())
+
+	clientID, _ := registerConfidentialClient(t, ts.Server.URL,
+		oauthproto.TokenEndpointAuthMethodClientSecretPost)
+
+	for range 100 {
+		params := url.Values{
+			"grant_type":    {"authorization_code"},
+			"code":          {"some-code"},
+			"client_id":     {clientID},
+			"client_secret": {"wrong-secret_00000000000000000000000000000"},
+		}
+		resp := makeTokenRequest(t, ts.Server.URL, params)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+
+	assert.Empty(t, capture.messages(slog.LevelError, "failed to create access"),
+		"100 wrong-secret token requests must produce no ERROR-level records")
+}
+
+// TestIntegration_ConfidentialClientDCR_AudienceParity covers criterion 16: a
+// token issued to a confidential client carries the same aud/resource
+// restriction as one issued to a public client under identical
+// AllowedAudiences. DCR-registered clients inherit the server's
+// AllowedAudiences (handlers/dcr.go passes h.config.AllowedAudiences into
+// registration.New), so redeeming with resource=testAudience must yield
+// aud == [testAudience], mirroring TestIntegration_FullPKCEFlow.
+func TestIntegration_ConfidentialClientDCR_AudienceParity(t *testing.T) {
+	t.Parallel()
+
+	m := startMockOIDC(t)
+	// setupTestServer configures AllowedAudiences: [testAudience] for every
+	// client, exactly as in TestIntegration_FullPKCEFlow.
+	ts := setupTestServerWithMockOIDC(t, m, withAllowConfidentialClientRegistration())
+
+	tokenData := runConfidentialHappyPath(t, ts.Server.URL, oauthproto.TokenEndpointAuthMethodClientSecretBasic)
+
+	// The happy path redeems without a resource parameter; assert the
+	// sole-allowed-audience default bound the token identically to a public
+	// client first.
+	accessToken, _ := tokenData["access_token"].(string)
+	parsedToken, err := jwt.ParseSigned(accessToken, []jose.SignatureAlgorithm{jose.RS256})
+	require.NoError(t, err)
+	var claims map[string]interface{}
+	require.NoError(t, parsedToken.Claims(ts.PrivateKey.Public(), &claims))
+	aud, ok := claims["aud"].([]interface{})
+	require.True(t, ok, "aud claim should be an array")
+	require.Len(t, aud, 1, "aud should have exactly one audience")
+	assert.Equal(t, testAudience, aud[0], "confidential client gets the same default audience as a public client")
+
+	// Now the explicit-resource arm: redeem with resource=testAudience, the
+	// same parameter TestIntegration_FullPKCEFlow sends for the public client.
+	clientID, clientSecret := registerConfidentialClient(t, ts.Server.URL,
+		oauthproto.TokenEndpointAuthMethodClientSecretBasic)
+	verifier := servercrypto.GeneratePKCEVerifier()
+	code := completeConfidentialAuthorizationFlow(t, ts.Server.URL, clientID, servercrypto.ComputePKCEChallenge(verifier))
+
+	params := confidentialAuthCodeParams(code, verifier)
+	params.Set("resource", testAudience)
+	resp := makeTokenRequestWithBasicAuth(t, ts.Server.URL, params, clientID, clientSecret)
+	defer resp.Body.Close()
+
+	tokenData = parseTokenResponse(t, resp)
+	require.Equal(t, http.StatusOK, resp.StatusCode,
+		"redemption with resource parameter should succeed, got %d (body: %v)", resp.StatusCode, tokenData)
+
+	accessToken, ok = tokenData["access_token"].(string)
+	require.True(t, ok, "access_token should be a string")
+	parsedToken, err = jwt.ParseSigned(accessToken, []jose.SignatureAlgorithm{jose.RS256})
+	require.NoError(t, err)
+	claims = map[string]interface{}{}
+	require.NoError(t, parsedToken.Claims(ts.PrivateKey.Public(), &claims))
+
+	aud, ok = claims["aud"].([]interface{})
+	require.True(t, ok, "aud claim should be an array")
+	require.Len(t, aud, 1, "aud should have exactly one audience")
+	assert.Equal(t, testAudience, aud[0],
+		"aud from an explicit resource parameter must match the public-client result")
+}

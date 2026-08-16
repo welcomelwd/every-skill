@@ -13,7 +13,9 @@ conversion), **PHP** (Xdebug trace conversion), **Lua** (a pure-Lua
 `debug.sethook` agent), **Dart** (a VM Service sample collector),
 **Go** (pprof CPU-profile conversion), **C/C++** (a
 `-finstrument-functions` shim), and **Rust** (pprof-rs CPU-profile
-conversion). Remaining runtimes are tracked in
+conversion). For production fleets, an **eBPF continuous profiler** (Parca,
+Pyroscope, OpenTelemetry, `perf`) can be ingested through the same pprof door
+(`--format ebpf`). All per-runtime tracers landed under
 [issue #1244](https://github.com/vitali87/code-graph-rag/issues/1244).
 
 ## Recording a trace
@@ -117,6 +119,14 @@ distinguish this from the instrumented Python and JVM tracers:
   or for a generated position that has no mapping (runtime glue, an occasional
   module wrapper), the frame keeps its generated `dist/*.js` location; keep the
   `.js.map` beside the `.js` so the converter can find it.
+- **Resolution reporting.** Conversion logs a source-map resolution rate over
+  the project frames it kept (for example `source-map resolution: 42/50 project
+  frames resolved to source (84%)`) and categorises the misses so coverage gaps
+  are visible rather than silent: `no_map` (no map referenced or found beside the
+  file), `uncovered` (a map loaded but no segment covers the position), and
+  `malformed` (a map file was found but could not be parsed). A low rate with
+  many `no_map` misses usually means source maps are off in the build; `malformed`
+  points at a broken emit.
 
 ## Recording a .NET trace (C#)
 
@@ -131,13 +141,27 @@ cgr trace convert run.speedscope.json --include MyApp --workload smoke
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
 
+To trace a **test run**, point the collector at a test assembly that executes
+its tests in-process (an xUnit v3 assembly runs as a plain executable:
+`dotnet-trace collect -- dotnet bin/Release/net8.0/MyTests.dll`). Do not wrap
+`dotnet test`: it forks a `testhost` child process that the single-process
+sampler does not follow, so the test code's frames never appear. A DI- or
+reflection-resolved implementation (`IServiceCollection`, `Activator.CreateInstance`)
+is the runtime-only edge that static analysis cannot resolve; because the sample
+records the concrete method on the stack, an interface call lands on the concrete
+implementation (`Worker.Dispatch -> Dog.Speak`), so the implementation that
+actually ran is observed. The exact receiver type or object is not recoverable
+from samples (see the caveat below); the concrete implementation frame is what
+the dispatch resolves to.
+
 .NET frames carry no file paths, so scoping uses `--include` namespace
 prefixes instead of the repository root, and resolution joins on the
 namespace-bearing qualified names the static tier stores. CLR name mangling
 is handled: async state machines (`Worker+<RunAsync>d__3.MoveNext`) resolve
-to the source method, display-class lambdas to their enclosing method,
-`.ctor` to the constructor node, `get_`/`set_` accessors to the property
-node, and nested-class `+` to dotted nesting. Two caveats:
+to the source method, display-class lambdas to their enclosing method, local
+functions (`<Run>g__Local|0_0`) to the `Run.Local` node nested under the
+hosting method, `.ctor` to the constructor node, `get_`/`set_` accessors to the
+property node, and nested-class `+` to dotted nesting. Two caveats:
 
 - **Sampling.** Edge counts reflect observed activations in the flame
   chart, not exact call counts; very short calls between samples can be
@@ -148,6 +172,11 @@ node, and nested-class `+` to dotted nesting. Two caveats:
 - **Overloads.** Runtime argument types (CLR names) cannot be matched to
   the graph's source-text signatures, so all overloads of a name collapse
   onto one deterministic node.
+- **Overhead.** EventPipe sampling is cheap: measured at roughly 1.7x
+  wall-clock on a short CPU-bound run (most of which is `dotnet-trace`'s
+  fixed session startup), and the per-work cost is a stack sample about every
+  millisecond, so it stays roughly constant regardless of call volume rather
+  than scaling with it like the exact per-call tracers.
 
 ## Recording a PHP trace
 
@@ -180,8 +209,12 @@ observed under that class (`UsingClass->method`); it resolves by span when its
 defining position is recovered, but a leaf trait method that makes no calls
 falls back to the name tail and may be counted `unresolved`. Calls through
 `__call` attribute to the magic method itself, since the graph has no notion of
-the proxied target. Expect significant tracing overhead (Xdebug instruments
-everything); it is meant for test runs, not production.
+the proxied target. Tracing overhead is significant (Xdebug records every call):
+measured at roughly 15-20x wall-clock on a CPU-bound loop (about 17x on 1.2M
+calls, PHP 8.3 with Xdebug 3), and the machine-readable trace grows by roughly
+150 bytes per call, so a busy suite can produce a multi-hundred-megabyte file.
+It is meant for test runs, not production; scope tracing to the suite you need
+and convert one process at a time.
 
 ## Recording a Lua trace
 
@@ -229,6 +262,15 @@ resolve to their enclosing declaration by line span (the static tier
 creates no closure nodes). Extension methods (`Ext|method`) and setter
 names (`value=`) are normalized to their source spellings.
 
+To trace a test suite, point the collector at a `package:test` file directly
+(`dart bin/cgr_trace_collect.dart --repo ... -- test/foo_test.dart`): running the
+file executes its tests in-process, which the collector samples. Do not wrap
+`dart test` itself, which forks an isolate per file that the single VM Service
+attach cannot follow. Running a file this way does not load the full `package:test`
+runner, so runner-dependent features (tags, sharding, custom reporters,
+platform selectors) are unavailable; it suits straightforward unit tests whose
+bodies run on invocation.
+
 ## Recording a Go trace
 
 Go's own profiler does the capture; `go test` exposes it directly, and the
@@ -267,15 +309,21 @@ demangler (`cgr trace convert` reads the profile whether or not it is gzipped):
 
 ```toml
 # Cargo.toml
-[dev-dependencies]
+[dependencies]
 pprof = { version = "0.13", features = ["protobuf-codec"] }
+
+# Trace a release build with symbols kept: pprof-rs's sampler can trip a
+# debug-assertion (a slice-alignment check) in a dev build on recent
+# toolchains, so profile the release profile with debug info on.
+[profile.release]
+debug = true
 ```
 
 ```rust
-// In a test or a small harness that exercises the workload:
+// In a small harness (or a `--release` integration test) that runs the workload:
 use pprof::protos::Message; // brings write_to_writer into scope
 
-let guard = pprof::ProfilerGuard::new(100).unwrap();
+let guard = pprof::ProfilerGuard::new(250).unwrap();
 run_the_workload();
 if let Ok(report) = guard.report().build() {
     let profile = report.pprof().unwrap();
@@ -285,18 +333,18 @@ if let Ok(report) = guard.report().build() {
 ```
 
 ```bash
-cargo test                # dev profile: runs the harness above, writing cpu.pb
+cargo run --release       # runs the harness above, writing cpu.pb
 cgr trace convert cpu.pb --language rust \
-    --repo-path /path/to/your-repo --workload cargo-test
+    --repo-path /path/to/your-repo --workload cargo
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
 
 Sampled stacks make `dyn Trait` dispatch and calls through function pointers
-visible; counts are sample counts, so give the workload enough CPU time. Trace a
-non-optimized build (the default `cargo test` / `cargo run` dev profile,
-`opt-level = 0`) so callees are not inlined away; `debug = true` only preserves
-symbols and line tables and does not reduce inlining in an optimized `--release`
-build, so add it to whichever profile you trace but do not rely on it alone. The
+visible; counts are sample counts, so give the workload enough CPU time. An
+optimized build inlines small functions and turns a pass-through wrapper
+(`fn f(a) { a.method() }`) into a tail call whose frame the sampler never sees;
+mark functions you want as distinct frames `#[inline(never)]`, and keep work
+after the call so the callee is not in tail position. The
 demangler strips the legacy `::h` symbol hash, collapses
 generic instantiations and trait-qualified receivers
 (`<Dog as Animal>::speak`) to their bare member, and marks closures
@@ -333,9 +381,17 @@ c++ -pthread your_objects... cgr_shim.o -o app
 ```
 
 In CMake, add `cgr_trace_shim.c` to the target's sources (CMake compiles a
-`.c` file with the C compiler on its own) and set
-`-finstrument-functions -g -O0` on the traced build type; the shim links in
-without a separate step.
+`.c` file with the C compiler on its own), set `-finstrument-functions -g -O0`
+on the traced build type, and link pthreads (the shim uses
+`pthread_mutex_*`/`pthread_once`):
+
+```cmake
+find_package(Threads REQUIRED)
+target_compile_options(app PRIVATE -finstrument-functions -g -O0)
+target_link_libraries(app PRIVATE Threads::Threads)
+```
+
+The shim links in without a separate step.
 
 The shim records function-address pairs and the main image's load bias;
 conversion symbolises them with `atos` (macOS) or `addr2line` (ELF). PIE
@@ -343,7 +399,11 @@ binaries need no special build flag — the shim records the ASLR slide and
 the converter subtracts it before symbolising, so the default hardened
 (PIE) build works. Calls through function pointers (C) and virtual dispatch
 (C++) land with true invocation counts; C++ names demangle and normalise to
-their bare member form, with source positions carrying identity. Frames that
+their bare member form, with source positions carrying identity. Template
+instantiations collapse to their one source definition (`apply<Dog>` and
+`apply<Cat>` both become `apply`), while each distinct callee keeps its own
+declaration-line position, so a virtual or templated call still resolves to
+every concrete receiver that ran. Frames that
 symbolise outside the repository (libc, the C++ runtime) drop their edges
 rather than being guessed. An edge whose caller or callee does not resolve to
 a project frame is excluded from the converted trace; addresses that do not
@@ -352,6 +412,53 @@ counted and reported, so that symbolisation gap is visible rather than silent. O
 for test workloads, not for production; the edge table holds 65k distinct
 pairs, and conversion **rejects** a trace the shim marked `dropped` (table
 overflowed) rather than pass off an incomplete call graph as exact.
+
+## Recording a production trace (eBPF continuous profilers)
+
+Every recipe above traces a test or dev workload from inside the runtime. An
+eBPF continuous profiler (Parca, Pyroscope, the OpenTelemetry eBPF profiler,
+`perf` exported to pprof) instead samples stacks from the kernel: no
+instrumentation of the target, roughly 1% overhead, fleet-wide and continuous.
+Its output is the same pprof wire format the Go and Rust recipes decode, so a
+production overlay ingests through the same door:
+
+```bash
+# obtain a merged pprof from your profiler (e.g. Parca's query API), then:
+cgr trace convert prod.pb.gz --format ebpf --repo-path /path/to/your-repo \
+    --language go \
+    --build-id 8f3a...   `# keep only the target binary's mapping` \
+    --path-map /build/src/=/path/to/your-repo/src/ \
+    --label endpoint     `# a sample label becomes each edge's workload` \
+    --service service_name=checkout \
+    --commit 1a2b3c4       `# warns if it differs from the repo HEAD`
+cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
+```
+
+`--format ebpf` is required because eBPF profiles share Go pprof's gzipped
+protobuf magic. Three things differ from a `go test -cpuprofile`:
+
+- **Mappings.** A fleet profile mixes the target service, libc, and the kernel.
+  `--build-id` keeps only the mapping whose build id (or binary filename) matches;
+  other binaries are seen through, like any glue frame. Unsymbolised locations in
+  the target binary are counted per mapping and logged, not dropped silently.
+- **Path re-anchoring.** Production binaries are built elsewhere
+  (`/build/src/...`, container prefixes), so `--path-map BUILD=REPO` rewrites the
+  prefix before the in-repo check (repeatable). Frames no map re-anchors keep
+  their path and are counted so the gap is visible; this is the source-map idea
+  from the Node.js recipe applied to native builds.
+- **Labels.** Profilers attach `pid`/`service`/`endpoint` tags per sample.
+  `--service KEY=VALUE` filters to one service; `--label KEY` maps that label's
+  value to each edge's `workloads` — production's analogue of "which test ran it".
+
+`--language` selects how symbol names are normalised to their bare member
+(`go`, `rust`, or `cpp`). This normalises names; it does not symbolise addresses
+or demangle mangled symbols, so C/C++ frames must arrive already
+server-side-symbolised and demangled (which Parca provides) for `--language cpp`
+to reduce them correctly. Caveats:
+optimized production builds inline aggressively, so coverage is structurally
+lower than test-suite traces (absence of an edge still never means dead code);
+symbolisation needs frame pointers or DWARF in the deployed binary; and the
+profiled binary may lag the indexed graph, which `--commit` surfaces.
 
 ## Ingesting a trace
 

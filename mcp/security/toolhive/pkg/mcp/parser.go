@@ -1,0 +1,681 @@
+// SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+// Package mcp provides MCP (Model Context Protocol) parsing utilities and middleware.
+package mcp
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"mime"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"golang.org/x/exp/jsonrpc2"
+
+	"github.com/stacklok/toolhive/pkg/transport/ssecommon"
+)
+
+// contextKey is a type for context keys to avoid collisions.
+type contextKey string
+
+const (
+	// MCPRequestContextKey is the context key for storing parsed MCP request data.
+	MCPRequestContextKey contextKey = "mcp_request"
+)
+
+// ParsedMCPRequest contains the parsed MCP request information.
+type ParsedMCPRequest struct {
+	// Method is the MCP method name (e.g., "tools/call", "resources/read")
+	Method string
+	// ID is the JSON-RPC request ID
+	ID interface{}
+	// Params contains the raw JSON parameters
+	Params json.RawMessage
+	// ResourceID is the extracted resource identifier (tool name, resource URI, etc.)
+	ResourceID string
+	// Arguments contains the extracted arguments for the operation
+	Arguments map[string]interface{}
+	// Meta contains the _meta field from the request params for protocol-level metadata
+	// such as progress tokens, trace IDs, or custom namespaced metadata
+	Meta map[string]interface{}
+	// MCPMethodHeader is the value of the Modern (stateless MCP) "Mcp-Method"
+	// request header, if present. Mandatory on every Modern POST per the draft spec.
+	MCPMethodHeader string
+	// MCPNameHeader is the raw, as-received value of the Modern (stateless MCP)
+	// "Mcp-Name" request header, if present. Required for tools/call,
+	// resources/read, prompts/get. Stored undecoded: the spec allows the header
+	// value to be sentinel-encoded (=?base64?...?=), and a caller comparing it to
+	// the plain body name/uri during validation must decode the header first.
+	MCPNameHeader string
+	// ClientInfo is the client implementation info surfaced via _meta for Modern
+	// (stateless) requests, sourced from _meta["io.modelcontextprotocol/clientInfo"].
+	ClientInfo map[string]interface{}
+	// ProtocolVersion is the per-request protocol version surfaced via _meta for
+	// Modern (stateless) requests, sourced from _meta["io.modelcontextprotocol/protocolVersion"].
+	ProtocolVersion string
+	// IsRequest indicates if this is a JSON-RPC request (vs response or notification)
+	IsRequest bool
+	// IsBatch indicates if this is a batch request. It is always false: JSON-RPC
+	// batches are rejected by ParsingMiddleware before a ParsedMCPRequest is ever
+	// constructed (batching was removed in MCP 2025-06-18; see batch.go). The
+	// field is retained for wire/telemetry compatibility.
+	IsBatch bool
+}
+
+// ParsingMiddleware creates an HTTP middleware that parses MCP JSON-RPC requests
+// and stores the parsed information in the request context for use by downstream
+// middleware (authorization, audit, etc.).
+//
+// The middleware:
+// 1. Checks if the request should be parsed (POST with JSON content to MCP endpoints)
+// 2. Reads and parses the JSON-RPC message
+// 3. Extracts method, parameters, and resource information
+// 4. Stores the parsed data in request context
+// 5. Restores the request body for downstream handlers
+//
+// Example usage:
+//
+//	middlewares := []types.Middleware{
+//	    auditMiddleware,       // Audit wraps the chain; parsed data flows back via ParsedRequestHolder
+//	    authMiddleware,        // Authentication
+//	    mcp.ParsingMiddleware, // MCP parsing after auth
+//	    authzMiddleware,       // Authorization uses parsed data
+//	}
+func ParsingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Skip if already parsed by an outer middleware (e.g. auth composes
+		// ParsingMiddleware and server.go applies it again for the no-auth case).
+		if GetParsedMCPRequest(r.Context()) != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Check if we should parse this request
+		if !shouldParseMCPRequest(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Read the request body
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			// If we can't read the body, let the next handler deal with it
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Restore the request body for downstream handlers
+		r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+		// Reject JSON-RPC batches before any downstream middleware or the
+		// transport proxy's batch executor can act on them. Batching was
+		// removed in MCP revision 2025-06-18; ToolHive serves only 2025-11-25
+		// and 2026-07-28. Authz, audit, and tool filtering each inspect a
+		// single parsed request per call, so a batch reaching the backend would
+		// smuggle every nested call past those controls (see #5745).
+		if IsBatchRequest(bodyBytes) {
+			WriteBatchUnsupportedError(w)
+			return
+		}
+
+		// Parse the MCP request and store in context
+		parsedRequest := parseMCPRequest(bodyBytes)
+		if parsedRequest != nil {
+			parsedRequest.MCPMethodHeader = r.Header.Get("Mcp-Method")
+			parsedRequest.MCPNameHeader = r.Header.Get("Mcp-Name")
+			// Publish to a ParsedRequestHolder if one is present, so middleware
+			// wrapping the parser (e.g. audit) can observe the parsed request
+			// even though the derived context only flows downstream.
+			if holder, ok := ParsedRequestHolderFromContext(r.Context()); ok {
+				holder.Parsed = parsedRequest
+			}
+			ctx := context.WithValue(r.Context(), MCPRequestContextKey, parsedRequest)
+			r = r.WithContext(ctx)
+		}
+
+		// Call the next handler
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RepublishParsedMCPRequest refreshes the cached parse after middleware has
+// rewritten the request body, returning the request to pass downstream.
+// ParsingMiddleware deliberately parses only once, so any middleware that
+// replaces r.Body MUST call this or downstream consumers (authorization,
+// audit, telemetry) will decide on the bytes that arrived rather than the
+// bytes the backend executes.
+//
+// On error, the returned request is nil and must not be passed downstream:
+// the caller is responsible for terminating the request (e.g. writing an
+// error response) instead of proceeding with a stale or absent parse.
+//
+// This refreshes downstream context consumers and outer wrappers that inspect
+// ParsedRequestHolder after the inner chain returns. It cannot change decisions
+// already made before the rewrite: tool-call filtering and rate limiting still
+// evaluate the request as received.
+//
+// The caller must also refresh r.ContentLength when it replaces r.Body, or the
+// reverse proxy will reject the forwarded request.
+func RepublishParsedMCPRequest(r *http.Request, body []byte) (*http.Request, error) {
+	// Batch-reject before parsing, using the same guard ParsingMiddleware uses,
+	// so a mutation can never smuggle a batch past authz/audit by rewriting a
+	// single request into an array (see IsBatchRequest's doc comment).
+	if IsBatchRequest(body) {
+		return nil, &BatchUnsupportedError{}
+	}
+
+	parsed := parseMCPRequest(body)
+	if parsed == nil {
+		return nil, errors.New("republished body is not a valid JSON-RPC request")
+	}
+	parsed.MCPMethodHeader = r.Header.Get("Mcp-Method")
+	parsed.MCPNameHeader = r.Header.Get("Mcp-Name")
+
+	if holder, ok := ParsedRequestHolderFromContext(r.Context()); ok {
+		holder.Parsed = parsed
+	}
+
+	return r.WithContext(context.WithValue(r.Context(), MCPRequestContextKey, parsed)), nil
+}
+
+// parsedRequestHolderContextKey is the context key for ParsedRequestHolder.
+type parsedRequestHolderContextKey struct{}
+
+// ParsedRequestHolder is a mutable carrier that lets middleware running
+// OUTSIDE the parsing middleware observe the parsed MCP request. Context
+// values only flow downstream, so a wrapper such as the audit middleware
+// cannot read the parsed request that the parser attaches for inner handlers.
+// The wrapper injects an empty holder via WithParsedRequestHolder before
+// calling the inner chain; ParsingMiddleware fills it; the wrapper reads it
+// after the inner chain returns.
+//
+// The holder is written and read by the single request goroutine (writes
+// happen-before the wrapper's post-ServeHTTP read), so no synchronization is
+// needed.
+type ParsedRequestHolder struct {
+	Parsed *ParsedMCPRequest
+}
+
+// WithParsedRequestHolder returns a new context carrying the given holder.
+func WithParsedRequestHolder(ctx context.Context, holder *ParsedRequestHolder) context.Context {
+	return context.WithValue(ctx, parsedRequestHolderContextKey{}, holder)
+}
+
+// ParsedRequestHolderFromContext retrieves the ParsedRequestHolder from the
+// context. Returns (nil, false) if no holder is present.
+func ParsedRequestHolderFromContext(ctx context.Context) (*ParsedRequestHolder, bool) {
+	holder, ok := ctx.Value(parsedRequestHolderContextKey{}).(*ParsedRequestHolder)
+	return holder, ok && holder != nil
+}
+
+// authzDenialMarkerContextKey is the context key for AuthzDenialMarker.
+type authzDenialMarkerContextKey struct{}
+
+// AuthzDenialMarker is a mutable carrier that lets the authorization
+// middleware (pkg/authz), which runs INSIDE the audit middleware, flag a
+// request it refused before message-level authorization could run, such as a
+// non-JSON POST carrying a smuggled JSON-RPC body. It follows the same
+// propagation pattern as ParsedRequestHolder: the audit wrapper injects an
+// empty marker via WithAuthzDenialMarker, the inner middleware fills it, and
+// the wrapper reads it back after the inner chain returns so the refusal is
+// audited as a denial rather than a generic 400 failure. The type lives in
+// this package because pkg/authz already depends on pkg/audit transitively,
+// so the carrier cannot live in either of those two packages.
+//
+// Like ParsedRequestHolder, the marker is written and read by the single
+// request goroutine, so no synchronization is needed.
+type AuthzDenialMarker struct {
+	Denied bool
+}
+
+// WithAuthzDenialMarker returns a new context carrying the given marker.
+func WithAuthzDenialMarker(ctx context.Context, marker *AuthzDenialMarker) context.Context {
+	return context.WithValue(ctx, authzDenialMarkerContextKey{}, marker)
+}
+
+// AuthzDenialMarkerFromContext retrieves the AuthzDenialMarker from the
+// context. Returns (nil, false) if no marker is present.
+func AuthzDenialMarkerFromContext(ctx context.Context) (*AuthzDenialMarker, bool) {
+	marker, ok := ctx.Value(authzDenialMarkerContextKey{}).(*AuthzDenialMarker)
+	return marker, ok && marker != nil
+}
+
+// RequestHasJSONContentType reports whether r declares an application/json
+// Content-Type. Media types are case-insensitive per RFC 9110 8.3.1, so the
+// header is parsed with mime.ParseMediaType and compared with EqualFold; the
+// case-sensitive prefix match this replaces also wrongly accepted longer
+// types such as "application/jsonx".
+func RequestHasJSONContentType(r *http.Request) bool {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(mediaType, "application/json")
+}
+
+// GetParsedMCPRequest retrieves the parsed MCP request from the request context.
+// Returns nil if no parsed request is available.
+func GetParsedMCPRequest(ctx context.Context) *ParsedMCPRequest {
+	if parsed, ok := ctx.Value(MCPRequestContextKey).(*ParsedMCPRequest); ok {
+		return parsed
+	}
+	return nil
+}
+
+// shouldParseMCPRequest determines if the request should be parsed as an MCP request.
+func shouldParseMCPRequest(r *http.Request) bool {
+	// Only parse POST requests with JSON content type
+	if r.Method != http.MethodPost {
+		return false
+	}
+
+	if !RequestHasJSONContentType(r) {
+		return false
+	}
+
+	// Skip SSE endpoint establishment requests
+	if strings.HasSuffix(r.URL.Path, ssecommon.HTTPSSEEndpoint) {
+		return false
+	}
+
+	// Parse all other JSON POST requests
+	// The MCP spec allows for various endpoints:
+	// - Streamable HTTP transport: single endpoint
+	// - SSE transport: two distinct endpoints (one for SSE stream, one for messages)
+	return true
+}
+
+// parseMCPRequest parses the JSON-RPC message and extracts MCP-specific information.
+func parseMCPRequest(bodyBytes []byte) *ParsedMCPRequest {
+	if len(bodyBytes) == 0 {
+		return nil
+	}
+
+	// Try to parse as JSON-RPC message
+	msg, err := jsonrpc2.DecodeMessage(bodyBytes)
+	if err != nil {
+		return nil
+	}
+
+	// Handle only request messages (both calls with ID and notifications without ID)
+	req, ok := msg.(*jsonrpc2.Request)
+	if !ok {
+		// Response or error messages are not parsed here
+		return nil
+	}
+
+	// Extract resource ID, arguments, and meta based on the method
+	resourceID, arguments, meta := extractResourceAndArguments(req.Method, req.Params)
+	clientInfo, protocolVersion := extractModernMeta(meta)
+
+	// Determine the ID - will be nil for notifications
+	var id interface{}
+	if req.ID.IsValid() {
+		id = req.ID.Raw()
+	}
+
+	return &ParsedMCPRequest{
+		Method:          req.Method,
+		ID:              id,
+		Params:          req.Params,
+		ResourceID:      resourceID,
+		Arguments:       arguments,
+		Meta:            meta,
+		ClientInfo:      clientInfo,
+		ProtocolVersion: protocolVersion,
+		IsRequest:       true,
+		// Batches are rejected in ParsingMiddleware before reaching here, so a
+		// parsed request is always a single, non-batch message.
+		IsBatch: false,
+	}
+}
+
+// extractResourceAndArguments extracts the resource ID, arguments, and _meta field from the JSON-RPC params
+// based on the MCP method type.
+// methodHandler defines a function type for handling specific MCP methods
+type methodHandler func(map[string]interface{}) (string, map[string]interface{})
+
+// methodHandlers maps MCP methods to their respective handlers
+var methodHandlers = map[string]methodHandler{
+	"initialize":                         handleInitializeMethod,
+	"tools/call":                         handleNamedResourceMethod,
+	"prompts/get":                        handleNamedResourceMethod,
+	"resources/read":                     handleResourceReadMethod,
+	"resources/list":                     handleListMethod,
+	"tools/list":                         handleListMethod,
+	"prompts/list":                       handleListMethod,
+	"notifications/message":              handleNotificationMethod,
+	"logging/setLevel":                   handleLoggingMethod,
+	"completion/complete":                handleCompletionMethod,
+	"elicitation/create":                 handleElicitationMethod,
+	"sampling/createMessage":             handleSamplingMethod,
+	"resources/subscribe":                handleResourceSubscribeMethod,
+	"resources/unsubscribe":              handleResourceUnsubscribeMethod,
+	"resources/templates/list":           handleListMethod,
+	"roots/list":                         handleListMethod,
+	"notifications/progress":             handleProgressNotificationMethod,
+	"notifications/cancelled":            handleCancelledNotificationMethod,
+	"tasks/list":                         handleListMethod,
+	"tasks/get":                          handleTaskIDMethod,
+	"tasks/cancel":                       handleTaskIDMethod,
+	"tasks/result":                       handleTaskIDMethod,
+	"notifications/tasks/status":         handleTaskStatusNotificationMethod,
+	"notifications/elicitation/complete": handleElicitationCompleteNotificationMethod,
+}
+
+// staticResourceIDs maps methods to their static resource IDs
+var staticResourceIDs = map[string]string{
+	"ping":                                 "ping",
+	"notifications/roots/list_changed":     "roots",
+	"notifications/initialized":            "initialized",
+	"notifications/prompts/list_changed":   "prompts",
+	"notifications/resources/list_changed": "resources",
+	"notifications/resources/updated":      "resources",
+	"notifications/tools/list_changed":     "tools",
+	"server/discover":                      "discover",
+}
+
+func extractResourceAndArguments(method string, params json.RawMessage) (string, map[string]interface{}, map[string]interface{}) {
+	if params == nil {
+		return getStaticResourceID(method), nil, nil
+	}
+
+	var paramsMap map[string]interface{}
+	if err := json.Unmarshal(params, &paramsMap); err != nil {
+		return getStaticResourceID(method), nil, nil
+	}
+
+	meta := metaFromParamsMap(paramsMap)
+
+	resourceID, arguments := processMethodWithHandler(method, paramsMap)
+	return resourceID, arguments, meta
+}
+
+// extractModernMeta surfaces the Modern (stateless MCP) clientInfo and
+// protocolVersion fields from a parsed _meta map, if present. It delegates to
+// the reserved-key helpers in revision.go so the guarded type assertions live
+// in one place; a wrong-shaped value is treated as absent rather than causing
+// an error.
+func extractModernMeta(meta map[string]interface{}) (clientInfo map[string]interface{}, protocolVersion string) {
+	clientInfo, _ = objectMetaValue(meta, metaKeyClientInfo)
+	protocolVersion, _ = stringMetaValue(meta, metaKeyProtocolVersion)
+	return clientInfo, protocolVersion
+}
+
+// getStaticResourceID returns the static resource ID for methods that don't need parameter parsing
+func getStaticResourceID(method string) string {
+	if resourceID, exists := staticResourceIDs[method]; exists {
+		return resourceID
+	}
+	return ""
+}
+
+// processMethodWithHandler processes the method using the appropriate handler
+func processMethodWithHandler(method string, paramsMap map[string]interface{}) (string, map[string]interface{}) {
+	if handler, exists := methodHandlers[method]; exists {
+		return handler(paramsMap)
+	}
+	return getStaticResourceID(method), nil
+}
+
+// handleInitializeMethod extracts resource ID and arguments for initialize method
+func handleInitializeMethod(paramsMap map[string]interface{}) (string, map[string]interface{}) {
+	var resourceID string
+	if clientInfo, ok := paramsMap["clientInfo"].(map[string]interface{}); ok {
+		if name, ok := clientInfo["name"].(string); ok {
+			resourceID = name
+		}
+	}
+	return resourceID, paramsMap
+}
+
+// handleNamedResourceMethod extracts resource ID and arguments for methods with name parameter
+func handleNamedResourceMethod(paramsMap map[string]interface{}) (string, map[string]interface{}) {
+	var resourceID string
+	var arguments map[string]interface{}
+
+	if name, ok := paramsMap["name"].(string); ok {
+		resourceID = name
+	}
+	if args, ok := paramsMap["arguments"].(map[string]interface{}); ok {
+		arguments = args
+	}
+
+	return resourceID, arguments
+}
+
+// handleResourceReadMethod extracts resource ID for resource read operations
+func handleResourceReadMethod(paramsMap map[string]interface{}) (string, map[string]interface{}) {
+	if uri, ok := paramsMap["uri"].(string); ok {
+		return uri, nil
+	}
+	return "", nil
+}
+
+// handleListMethod extracts resource ID for list operations
+func handleListMethod(paramsMap map[string]interface{}) (string, map[string]interface{}) {
+	if cursor, ok := paramsMap["cursor"].(string); ok && cursor != "" {
+		return cursor, nil
+	}
+	return "", nil
+}
+
+// handleNotificationMethod extracts resource ID for notification messages
+func handleNotificationMethod(paramsMap map[string]interface{}) (string, map[string]interface{}) {
+	if notifMethod, ok := paramsMap["method"].(string); ok {
+		return notifMethod, nil
+	}
+	return "", nil
+}
+
+// handleLoggingMethod extracts resource ID for logging operations
+func handleLoggingMethod(paramsMap map[string]interface{}) (string, map[string]interface{}) {
+	if level, ok := paramsMap["level"].(string); ok {
+		return level, nil
+	}
+	return "", nil
+}
+
+// handleCompletionMethod extracts resource ID for completion requests.
+// For PromptReference: extracts the prompt name
+// For ResourceTemplateReference: extracts the template URI
+// For legacy string ref: returns the string value
+// Always returns paramsMap as arguments since completion requests need the full context
+// including the argument being completed and any context from previous completions.
+func handleCompletionMethod(paramsMap map[string]interface{}) (string, map[string]interface{}) {
+	// Check if ref is a map (PromptReference or ResourceTemplateReference)
+	if ref, ok := paramsMap["ref"].(map[string]interface{}); ok {
+		// Try to extract name for PromptReference
+		if name, ok := ref["name"].(string); ok {
+			return name, paramsMap
+		}
+		// Try to extract uri for ResourceTemplateReference
+		if uri, ok := ref["uri"].(string); ok {
+			return uri, paramsMap
+		}
+	}
+	// Fallback to string ref (legacy support)
+	if ref, ok := paramsMap["ref"].(string); ok {
+		return ref, paramsMap
+	}
+	return "", paramsMap
+}
+
+// handleElicitationMethod extracts resource ID for elicitation requests
+func handleElicitationMethod(paramsMap map[string]interface{}) (string, map[string]interface{}) {
+	// The message field could be used as a resource identifier
+	if message, ok := paramsMap["message"].(string); ok {
+		return message, paramsMap
+	}
+	return "", paramsMap
+}
+
+// handleElicitationCompleteNotificationMethod extracts resource ID for elicitation complete notifications.
+// This notification is sent by the server when an out-of-band URL-mode elicitation is completed.
+// Returns the elicitationId as the resource identifier.
+func handleElicitationCompleteNotificationMethod(paramsMap map[string]interface{}) (string, map[string]interface{}) {
+	if elicitationId, ok := paramsMap["elicitationId"].(string); ok {
+		return elicitationId, paramsMap
+	}
+	return "", paramsMap
+}
+
+// handleSamplingMethod extracts resource ID for sampling/createMessage requests.
+// Returns the model name from modelPreferences if available, otherwise returns a
+// truncated version of the systemPrompt. The 50-character truncation provides a
+// reasonable balance between uniqueness and readability for authorization and audit logs.
+func handleSamplingMethod(paramsMap map[string]interface{}) (string, map[string]interface{}) {
+	// Use model preferences or system prompt as identifier if available
+	if modelPrefs, ok := paramsMap["modelPreferences"].(map[string]interface{}); ok && modelPrefs != nil {
+		// Try direct name field first (simplified structure)
+		if name, ok := modelPrefs["name"].(string); ok && name != "" {
+			return name, paramsMap
+		}
+		// Try to get model name from hints array (full spec structure)
+		if hints, ok := modelPrefs["hints"].([]interface{}); ok && len(hints) > 0 {
+			if hint, ok := hints[0].(map[string]interface{}); ok {
+				if name, ok := hint["name"].(string); ok && name != "" {
+					return name, paramsMap
+				}
+			}
+		}
+	}
+	if systemPrompt, ok := paramsMap["systemPrompt"].(string); ok && systemPrompt != "" {
+		// Use first 50 chars of system prompt as identifier
+		// This provides a reasonable balance between uniqueness and readability
+		if len(systemPrompt) > 50 {
+			return systemPrompt[:50], paramsMap
+		}
+		return systemPrompt, paramsMap
+	}
+	return "", paramsMap
+}
+
+// handleResourceSubscribeMethod extracts resource ID for resource subscribe operations
+func handleResourceSubscribeMethod(paramsMap map[string]interface{}) (string, map[string]interface{}) {
+	if uri, ok := paramsMap["uri"].(string); ok {
+		return uri, nil
+	}
+	return "", nil
+}
+
+// handleResourceUnsubscribeMethod extracts resource ID for resource unsubscribe operations
+func handleResourceUnsubscribeMethod(paramsMap map[string]interface{}) (string, map[string]interface{}) {
+	if uri, ok := paramsMap["uri"].(string); ok {
+		return uri, nil
+	}
+	return "", nil
+}
+
+// handleProgressNotificationMethod extracts resource ID for progress notifications.
+// Extracts the progressToken which can be either a string or numeric value.
+func handleProgressNotificationMethod(paramsMap map[string]interface{}) (string, map[string]interface{}) {
+	if token, ok := paramsMap["progressToken"].(string); ok {
+		return token, paramsMap
+	}
+	// Also handle numeric progress tokens
+	if token, ok := paramsMap["progressToken"].(float64); ok {
+		return strconv.FormatFloat(token, 'f', 0, 64), paramsMap
+	}
+	return "", paramsMap
+}
+
+// handleCancelledNotificationMethod extracts resource ID for cancelled notifications.
+// Extracts the requestId which can be either a string or numeric value.
+func handleCancelledNotificationMethod(paramsMap map[string]interface{}) (string, map[string]interface{}) {
+	// Extract request ID as the resource identifier
+	if requestId, ok := paramsMap["requestId"].(string); ok {
+		return requestId, paramsMap
+	}
+	// Handle numeric request IDs
+	if requestId, ok := paramsMap["requestId"].(float64); ok {
+		return strconv.FormatFloat(requestId, 'f', 0, 64), paramsMap
+	}
+	return "", paramsMap
+}
+
+// handleTaskIDMethod extracts resource ID for task operations (tasks/get, tasks/cancel, tasks/result).
+// Returns the taskId parameter as the resource identifier, or empty string if not present.
+// Handles both string and numeric taskId values.
+func handleTaskIDMethod(paramsMap map[string]interface{}) (string, map[string]interface{}) {
+	if taskId, ok := paramsMap["taskId"].(string); ok {
+		return taskId, nil
+	}
+	// Handle numeric task IDs
+	if taskId, ok := paramsMap["taskId"].(float64); ok {
+		return strconv.FormatFloat(taskId, 'f', 0, 64), nil
+	}
+	return "", nil
+}
+
+// handleTaskStatusNotificationMethod extracts resource ID for task status notifications.
+// Returns the taskId parameter as the resource identifier while preserving all notification parameters.
+// Handles both string and numeric taskId values.
+func handleTaskStatusNotificationMethod(paramsMap map[string]interface{}) (string, map[string]interface{}) {
+	if taskId, ok := paramsMap["taskId"].(string); ok {
+		return taskId, paramsMap
+	}
+	// Handle numeric task IDs
+	if taskId, ok := paramsMap["taskId"].(float64); ok {
+		return strconv.FormatFloat(taskId, 'f', 0, 64), paramsMap
+	}
+	return "", paramsMap
+}
+
+// GetMCPMethod is a convenience function to get the MCP method from the context.
+func GetMCPMethod(ctx context.Context) string {
+	if parsed := GetParsedMCPRequest(ctx); parsed != nil {
+		return parsed.Method
+	}
+	return ""
+}
+
+// GetMCPResourceID is a convenience function to get the MCP resource ID from the context.
+func GetMCPResourceID(ctx context.Context) string {
+	if parsed := GetParsedMCPRequest(ctx); parsed != nil {
+		return parsed.ResourceID
+	}
+	return ""
+}
+
+// GetMCPArguments is a convenience function to get the MCP arguments from the context.
+func GetMCPArguments(ctx context.Context) map[string]interface{} {
+	if parsed := GetParsedMCPRequest(ctx); parsed != nil {
+		return parsed.Arguments
+	}
+	return nil
+}
+
+// GetMCPMeta is a convenience function to get the MCP _meta field from the context.
+// Returns nil if no parsed request is available or if _meta field is not present.
+func GetMCPMeta(ctx context.Context) map[string]interface{} {
+	if parsed := GetParsedMCPRequest(ctx); parsed != nil {
+		return parsed.Meta
+	}
+	return nil
+}
+
+// GetMCPClientInfo is a convenience function to get the Modern (stateless MCP)
+// per-request clientInfo from the context.
+// Returns nil if no parsed request is available or clientInfo is not present.
+func GetMCPClientInfo(ctx context.Context) map[string]interface{} {
+	if parsed := GetParsedMCPRequest(ctx); parsed != nil {
+		return parsed.ClientInfo
+	}
+	return nil
+}
+
+// GetMCPProtocolVersion is a convenience function to get the Modern (stateless
+// MCP) per-request protocol version from the context.
+// Returns "" if no parsed request is available or protocolVersion is not present.
+func GetMCPProtocolVersion(ctx context.Context) string {
+	if parsed := GetParsedMCPRequest(ctx); parsed != nil {
+		return parsed.ProtocolVersion
+	}
+	return ""
+}

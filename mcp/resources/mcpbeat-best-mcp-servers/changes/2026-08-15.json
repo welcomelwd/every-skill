@@ -1,0 +1,165 @@
+{
+  "date": "2026-08-15",
+  "findings": {
+    "fixed": 524,
+    "high": 18,
+    "new": 1368
+  },
+  "licence": "CC BY 4.0",
+  "notable": [
+    {
+      "detail": "combo.exec_exfil",
+      "kind": "new_high",
+      "server": "Artexis10/exomem",
+      "url": "https://mcpbeat.com/mcp-servers/artexis10/exomem/"
+    },
+    {
+      "detail": "exfil.cloud_meta",
+      "kind": "new_high",
+      "server": "GoPlasmatic/Orion",
+      "url": "https://mcpbeat.com/mcp-servers/goplasmatic/orion/"
+    },
+    {
+      "detail": "destroy.fs",
+      "kind": "new_high",
+      "server": "astandrik/local-ydb-toolkit",
+      "url": "https://mcpbeat.com/mcp-servers/astandrik/local-ydb-mcp/"
+    },
+    {
+      "detail": "exfil.cloud_meta",
+      "kind": "new_high",
+      "server": "cesteral/mcp-open-advertising",
+      "url": "https://mcpbeat.com/mcp-servers/cesteral/ttd-mcp/"
+    },
+    {
+      "detail": "combo.exec_exfil",
+      "kind": "new_high",
+      "server": "codeofaxel/Kiln",
+      "url": "https://mcpbeat.com/mcp-servers/codeofaxel/kiln/"
+    },
+    {
+      "detail": "rug.new_behaviour",
+      "kind": "new_high",
+      "server": "moxno/privacyscrubber-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/moxno/privacyscrubber-mcp/"
+    },
+    {
+      "detail": "exfil.cloud_meta",
+      "kind": "new_high",
+      "server": "nirholas/three.ws",
+      "url": "https://mcpbeat.com/mcp-servers/nirholas/3d-ai-agent-avatar/"
+    },
+    {
+      "detail": "combo.obf_exfil",
+      "kind": "new_high",
+      "server": "ogasurfproject-jpg/horizon-shield",
+      "url": "https://mcpbeat.com/mcp-servers/ogasurfproject-jpg/hs-hearing/"
+    },
+    {
+      "detail": "claim.read_only",
+      "kind": "new_high",
+      "server": "typesensekit/typesensekit",
+      "url": "https://mcpbeat.com/mcp-servers/typesensekit/typesensekit/"
+    },
+    {
+      "detail": "claim.read_only",
+      "kind": "new_high",
+      "server": "yonatangross/orchestkit",
+      "url": "https://mcpbeat.com/mcp-servers/yonatangross/orchestkit/"
+    },
+    {
+      "detail": "destroy.fs",
+      "kind": "new_high",
+      "server": "tenzro/tenzro-network",
+      "url": "https://mcpbeat.com/mcp-servers/tenzro/tenzro-ethereum/"
+    },
+    {
+      "detail": "claim.read_only",
+      "kind": "new_high",
+      "server": "Krzysztof318/MailFathom",
+      "url": "https://mcpbeat.com/mcp-servers/krzysztof318/mailfathom/"
+    },
+    {
+      "detail": "find_opportunities",
+      "kind": "schema",
+      "server": "analyticslegends/analytics-legends-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/analyticslegends/sap-analytics/"
+    },
+    {
+      "detail": "find_similar",
+      "kind": "schema",
+      "server": "BuyWhere/buywhere",
+      "url": "https://mcpbeat.com/mcp-servers/buywhere/catalog-api/"
+    },
+    {
+      "detail": "web_search_exa",
+      "kind": "schema",
+      "server": "exa-labs/exa-mcp-server",
+      "url": "https://mcpbeat.com/mcp-servers/exa/exa/"
+    },
+    {
+      "detail": "create_public_preview",
+      "kind": "schema",
+      "server": "2ools/mcp-server",
+      "url": "https://mcpbeat.com/mcp-servers/2ools/mcp/"
+    },
+    {
+      "detail": "realty_policy_rules",
+      "kind": "schema",
+      "server": "sallim-app/korea-realty",
+      "url": "https://mcpbeat.com/mcp-servers/sallim/korea-realty/"
+    },
+    {
+      "detail": "clean_table",
+      "kind": "schema",
+      "server": "mario03690/ai-netcafe",
+      "url": "https://mcpbeat.com/mcp-servers/ainetcafe/ai-netcafe/"
+    },
+    {
+      "detail": "submit_feedback",
+      "kind": "schema",
+      "server": "zse4321/decision-anchor-sdk",
+      "url": "https://mcpbeat.com/mcp-servers/decision-anchor/da/"
+    },
+    {
+      "detail": "gribstream_build_runs_request",
+      "kind": "schema",
+      "server": "GribStream/gribstream-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/gribstream/mcp/"
+    },
+    {
+      "detail": "hemmabo_booking_cancel",
+      "kind": "schema",
+      "server": "HemmaBo-se/hemmabo-mcp-server",
+      "url": "https://mcpbeat.com/mcp-servers/hemmabo/hemmabo-mcp-server/"
+    },
+    {
+      "detail": "jobs_skill_trends",
+      "kind": "schema",
+      "server": "ReadyAPIs-com/readyapis",
+      "url": "https://mcpbeat.com/mcp-servers/readyapis/api/"
+    },
+    {
+      "detail": "run_analysis",
+      "kind": "schema",
+      "server": "FrankAIUser/showmeonmap",
+      "url": "https://mcpbeat.com/mcp-servers/showmeonmap/maps/"
+    },
+    {
+      "detail": "search_hotels",
+      "kind": "schema",
+      "server": "STAYKER-COM/1Stay-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/stayker/1stay/"
+    }
+  ],
+  "servers": {
+    "gone": 29,
+    "new": 197
+  },
+  "source": "https://mcpbeat.com/data/2026-08-15/",
+  "tools": {
+    "added": 1034,
+    "removed": 367,
+    "schema_changed": 2590
+  }
+}

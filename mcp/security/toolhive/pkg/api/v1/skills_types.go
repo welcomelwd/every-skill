@@ -1,0 +1,135 @@
+// SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+package v1
+
+import "github.com/stacklok/toolhive/pkg/skills"
+
+// skillListResponse represents the response for listing skills.
+//
+//	@Description	Response containing a list of installed skills
+type skillListResponse struct {
+	// List of installed skills
+	Skills []skills.InstalledSkill `json:"skills"`
+}
+
+// installSkillRequest represents the request to install a skill.
+//
+//	@Description	Request to install a skill
+type installSkillRequest struct {
+	// Name or OCI reference of the skill to install
+	Name string `json:"name"`
+	// Version to install (empty means latest)
+	Version string `json:"version,omitempty"`
+	// Scope for the installation
+	Scope skills.Scope `json:"scope,omitempty"`
+	// ProjectRoot is the project root path for project-scoped installs
+	ProjectRoot string `json:"project_root,omitempty"`
+	// Clients lists target client identifiers (e.g., "claude-code"),
+	// or ["all"] to target every skill-supporting client.
+	// Omitting this field installs to all available clients.
+	Clients []string `json:"clients,omitempty"`
+	// Force allows overwriting unmanaged skill directories
+	Force bool `json:"force,omitempty"`
+	// AllowUnsigned permits installing a project-scoped skill without a
+	// verified signature; the exception is recorded in the project's lock
+	// file.
+	AllowUnsigned bool `json:"allow_unsigned,omitempty"`
+	// Group is the group name to add the skill to after installation
+	Group string `json:"group,omitempty"`
+}
+
+// installSkillResponse represents the response after installing a skill.
+//
+//	@Description	Response after successfully installing a skill
+type installSkillResponse struct {
+	// The installed skill
+	Skill skills.InstalledSkill `json:"skill"`
+	// The signer identity trust-on-first-use pinned for this install, when
+	// the artifact was verified. Omitted for unsigned or non-lock-managed
+	// installs.
+	Provenance *skills.ProvenanceInfo `json:"provenance,omitempty"`
+	// Whether the install was recorded as an explicit unsigned exception.
+	Unsigned bool `json:"unsigned,omitempty"`
+}
+
+// validateSkillRequest represents the request to validate a skill.
+//
+//	@Description	Request to validate a skill definition
+type validateSkillRequest struct {
+	// Path to the skill definition directory
+	Path string `json:"path"`
+}
+
+// buildSkillRequest represents the request to build a skill.
+//
+//	@Description	Request to build a skill from a local directory
+type buildSkillRequest struct {
+	// Path to the skill definition directory
+	Path string `json:"path"`
+	// OCI tag for the built artifact
+	Tag string `json:"tag,omitempty"`
+}
+
+// pushSkillRequest represents the request to push a skill.
+//
+//	@Description	Request to push a built skill artifact
+type pushSkillRequest struct {
+	// OCI reference to push
+	Reference string `json:"reference"`
+	// Key is the path to a cosign private key used to sign the pushed
+	// artifact
+	Key string `json:"key,omitempty"`
+	// NoSign pushes without signing
+	NoSign bool `json:"no_sign,omitempty"`
+}
+
+// syncSkillsRequest represents the request to sync a project's skills.
+//
+//	@Description	Request to restore a project's installed skills to match its lock file
+type syncSkillsRequest struct {
+	// ProjectRoot is the project root path whose lock file should be synced
+	ProjectRoot string `json:"project_root"`
+	// Clients lists target client identifiers. Empty means every
+	// skill-supporting client detected on this host.
+	Clients []string `json:"clients,omitempty"`
+	// Prune removes project-scoped skills installed but not present in the lock file
+	Prune bool `json:"prune,omitempty"`
+	// Check verifies on-disk content against the lock file without installing or writing anything
+	Check bool `json:"check,omitempty"`
+	// Adopt writes lock entries for existing unmanaged project-scope installs
+	Adopt bool `json:"adopt,omitempty"`
+	// AllowUnsigned permits adopting skills whose signature state cannot be
+	// established, recording them as unsigned
+	AllowUnsigned bool `json:"allow_unsigned,omitempty"`
+}
+
+// upgradeSkillsRequest represents the request to upgrade a project's skills.
+//
+//	@Description	Request to re-resolve a project's lock entries and install newer content
+type upgradeSkillsRequest struct {
+	// ProjectRoot is the project root path whose lock file should be upgraded
+	ProjectRoot string `json:"project_root"`
+	// Names restricts the upgrade to specific skill names. Empty means every entry.
+	Names []string `json:"names,omitempty"`
+	// Preview reports what would change without installing (still fetches to compare digests)
+	Preview bool `json:"preview,omitempty"`
+	// FailOnChanges exits with an error when any mutable source would upgrade
+	FailOnChanges bool `json:"fail_on_changes,omitempty"`
+	// AllowRefChange permits resolvedReference changes during upgrade
+	AllowRefChange bool `json:"allow_ref_change,omitempty"`
+	// AllowSignerChange permits upgrading to an artifact signed by a
+	// different identity than the recorded one
+	AllowSignerChange bool `json:"allow_signer_change,omitempty"`
+	// Clients lists target client identifiers. Empty means every
+	// skill-supporting client detected on this host.
+	Clients []string `json:"clients,omitempty"`
+}
+
+// buildListResponse represents the response for listing locally-built OCI skill artifacts.
+//
+//	@Description	Response containing a list of locally-built OCI skill artifacts
+type buildListResponse struct {
+	// List of locally-built OCI skill artifacts
+	Builds []skills.LocalBuild `json:"builds"`
+}

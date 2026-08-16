@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-12T14:15:39.000Z",
-  "total": 2009,
+  "total": 2013,
   "skills": [
     {
       "id": "00-andruia-consultant",
@@ -1093,6 +1093,111 @@
         "os"
       ],
       "path": "skills/agent-orchestrator/SKILL.md"
+    },
+    {
+      "id": "agent-qa-authoring",
+      "canonical_id": "agent-qa-authoring",
+      "name": "agent-qa-authoring",
+      "description": "Create, edit, validate, and run Agent QA tests, suites, and hooks through MCP or CLI while preserving canonical IDs and schema contracts.",
+      "category": "testing",
+      "risk": "critical",
+      "source": "https://github.com/vostride/agent-qa/tree/main/skills/agent-qa-authoring",
+      "source_type": "official",
+      "source_repo": "vostride/agent-qa",
+      "license": "FSL-1.1-ALv2",
+      "license_source": "https://github.com/vostride/agent-qa/blob/main/LICENSE.md",
+      "tags": [
+        "testing",
+        "qa",
+        "mcp",
+        "web-testing",
+        "mobile-testing"
+      ],
+      "triggers": [
+        "testing",
+        "qa",
+        "mcp",
+        "web-testing",
+        "mobile-testing",
+        "agent",
+        "authoring",
+        "edit",
+        "validate",
+        "run",
+        "tests",
+        "suites"
+      ],
+      "path": "skills/agent-qa-authoring/SKILL.md"
+    },
+    {
+      "id": "agent-qa-debug-fix",
+      "canonical_id": "agent-qa-debug-fix",
+      "name": "agent-qa-debug-fix",
+      "description": "Debug, patch, and verify failed Agent QA runs from MCP evidence, artifacts, logs, and local code without hiding product or infrastructure defects.",
+      "category": "testing",
+      "risk": "critical",
+      "source": "https://github.com/vostride/agent-qa/tree/main/skills/agent-qa-debug-fix",
+      "source_type": "official",
+      "source_repo": "vostride/agent-qa",
+      "license": "FSL-1.1-ALv2",
+      "license_source": "https://github.com/vostride/agent-qa/blob/main/LICENSE.md",
+      "tags": [
+        "testing",
+        "qa",
+        "debugging",
+        "mcp",
+        "self-healing"
+      ],
+      "triggers": [
+        "testing",
+        "qa",
+        "debugging",
+        "mcp",
+        "self-healing",
+        "agent",
+        "debug",
+        "fix",
+        "patch",
+        "verify",
+        "failed",
+        "runs"
+      ],
+      "path": "skills/agent-qa-debug-fix/SKILL.md"
+    },
+    {
+      "id": "agent-qa-result-triage",
+      "canonical_id": "agent-qa-result-triage",
+      "name": "agent-qa-result-triage",
+      "description": "Triage failed Agent QA runs with MCP evidence, artifacts, logs, fixed failure categories, confidence, and actionable next steps.",
+      "category": "testing",
+      "risk": "safe",
+      "source": "https://github.com/vostride/agent-qa/tree/main/skills/agent-qa-result-triage",
+      "source_type": "official",
+      "source_repo": "vostride/agent-qa",
+      "license": "FSL-1.1-ALv2",
+      "license_source": "https://github.com/vostride/agent-qa/blob/main/LICENSE.md",
+      "tags": [
+        "testing",
+        "qa",
+        "triage",
+        "mcp",
+        "debugging"
+      ],
+      "triggers": [
+        "testing",
+        "qa",
+        "triage",
+        "mcp",
+        "debugging",
+        "agent",
+        "result",
+        "failed",
+        "runs",
+        "evidence",
+        "artifacts",
+        "logs"
+      ],
+      "path": "skills/agent-qa-result-triage/SKILL.md"
     },
     {
       "id": "agent-self-scheduling",
@@ -13554,7 +13659,7 @@
       "id": "cohesivity",
       "canonical_id": "cohesivity",
       "name": "cohesivity",
-      "description": "Provision backend infra through Cohesivity (cohesivity.ai): Postgres, hosting, auth, storage, and AI model APIs over one HTTP API. Use when a .cohesivity file exists or a project needs a backend.",
+      "description": "Provision headless backend services for AI agents through Cohesivity: hosting, databases, storage, LLMs, and third-party APIs over one HTTP API. Use when a trusted .cohesivity file exists or the user approves a new backend.",
       "category": "backend",
       "risk": "critical",
       "source": "https://github.com/cohesivity-org/cohesivity-skill",
@@ -13577,11 +13682,11 @@
         "auth",
         "cohesivity",
         "provision",
-        "infra",
-        "through",
+        "headless",
         "ai",
-        "postgres",
-        "storage"
+        "agents",
+        "through",
+        "databases"
       ],
       "path": "skills/cohesivity/SKILL.md"
     },
@@ -13890,6 +13995,41 @@
         "sentiment"
       ],
       "path": "skills/competitor-tracking/SKILL.md"
+    },
+    {
+      "id": "compile-knowledge",
+      "canonical_id": "compile-knowledge",
+      "name": "compile-knowledge",
+      "description": "Compile durable, non-obvious findings into an interlinked markdown knowledge store — atomic files, [[wiki-links]], a maintained index — so an agent gets smarter across sessions instead of relearning the same facts.",
+      "category": "productivity",
+      "risk": "safe",
+      "source": "https://github.com/5dive-ai/skills/tree/main/compile-knowledge",
+      "source_type": "community",
+      "source_repo": "5dive-ai/skills",
+      "license": "MIT",
+      "license_source": "https://github.com/5dive-ai/skills/blob/main/LICENSE",
+      "tags": [
+        "knowledge-management",
+        "memory",
+        "documentation",
+        "wiki",
+        "notes"
+      ],
+      "triggers": [
+        "knowledge-management",
+        "memory",
+        "documentation",
+        "wiki",
+        "notes",
+        "compile",
+        "knowledge",
+        "durable",
+        "non",
+        "obvious",
+        "findings",
+        "interlinked"
+      ],
+      "path": "skills/compile-knowledge/SKILL.md"
     },
     {
       "id": "complexity-cuts",
@@ -44255,7 +44395,7 @@
       "id": "riffkit",
       "canonical_id": "riffkit",
       "name": "riffkit",
-      "description": "Riff a winning TikTok into your own short video — study a proven video's emotion formula and regenerate it with your product, character, and language (EN/ES). Also makes UGC ad creative.",
+      "description": "Riff a winning TikTok into your own short video — study a proven video's emotion formula and regenerate it with your product, character, and language (9 supported). Also makes UGC ad creative.",
       "category": "api-integration",
       "risk": "critical",
       "source": "community",
