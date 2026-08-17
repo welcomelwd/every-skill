@@ -308,12 +308,13 @@ class McpHttpRequestHandler(BaseHTTPRequestHandler):
         and Origin headers closes that gap while keeping direct clients working.
         """
         host_values = self.headers.get_all("Host", [])
-        if len(host_values) != 1:
+        host_required = self.request_version not in ("HTTP/0.9", "HTTP/1.0")
+        if len(host_values) > 1 or (host_required and not host_values):
             self.send_error(400, "Invalid Host")
             return False
 
         bound_host = self.server.server_address[0]
-        if not _host_header_allowed_for_bind(bound_host, host_values[0]):
+        if host_values and not _host_header_allowed_for_bind(bound_host, host_values[0]):
             self.send_error(403, "Invalid Host")
             return False
 
@@ -326,13 +327,62 @@ class McpHttpRequestHandler(BaseHTTPRequestHandler):
 
         return True
 
+    def _request_body_framing(self) -> tuple[bool, int] | None:
+        transfer_values = self.headers.get_all("Transfer-Encoding", [])
+        length_values = self.headers.get_all("Content-Length", [])
+
+        if transfer_values and length_values:
+            self.close_connection = True
+            self.send_error(400, "Conflicting request framing")
+            return None
+
+        if transfer_values:
+            encodings = [
+                item.strip().lower()
+                for value in transfer_values
+                for item in value.split(",")
+                if item.strip()
+            ]
+            if encodings != ["chunked"]:
+                self.close_connection = True
+                self.send_error(400, "Unsupported Transfer-Encoding")
+                return None
+            return True, 0
+
+        if len(length_values) > 1:
+            self.close_connection = True
+            self.send_error(400, "Ambiguous Content-Length")
+            return None
+        if not length_values:
+            return False, 0
+
+        length_text = length_values[0].strip(" \t")
+        if not length_text or any(char not in "0123456789" for char in length_text):
+            self.close_connection = True
+            self.send_error(400, "Invalid Content-Length")
+            return None
+
+        normalized_length = length_text.lstrip("0") or "0"
+        limit_text = str(self.mcp_server.post_body_limit)
+        if len(normalized_length) > len(limit_text) or (
+            len(normalized_length) == len(limit_text)
+            and normalized_length > limit_text
+        ):
+            self._send_payload_too_large()
+            return None
+        return False, int(normalized_length)
+
     def handle_expect_100(self) -> bool:
-        # The stdlib default sends "100 Continue" (i.e. "go ahead and upload
-        # the body") before do_POST ever runs, which would happen ahead of
-        # our own Host/Origin checks. Run those checks first so a rejected
-        # client isn't invited to send a body at all; only send the interim
-        # response ourselves once they pass.
+        # Reject requests before inviting a body upload. Framing checks are
+        # header-only, so malformed or known-oversized bodies need no transfer.
         if not self._check_api_request():
+            return False
+        framing = self._request_body_framing()
+        if framing is None:
+            return False
+        chunked, content_length = framing
+        if self.command != "POST" and (chunked or content_length):
+            self.send_error(400, "Request body is not allowed")
             return False
         self.send_response_only(100)
         self.end_headers()
@@ -346,10 +396,10 @@ class McpHttpRequestHandler(BaseHTTPRequestHandler):
             return False
         if len(length_values) != 1:
             return True
-        try:
-            return int(length_values[0]) != 0
-        except ValueError:
+        length_text = length_values[0].strip(" \t")
+        if not length_text or any(char not in "0123456789" for char in length_text):
             return True
+        return any(char != "0" for char in length_text)
 
     def do_GET(self):
         if not self._check_api_request():
@@ -397,51 +447,19 @@ class McpHttpRequestHandler(BaseHTTPRequestHandler):
         self.send_error(413, f"Payload Too Large: exceeds {self.mcp_server.post_body_limit} bytes")
 
     def _read_body(self) -> bytes | None:
-        # Under keep-alive, a request whose framing is ambiguous (both headers
-        # present, a malformed Content-Length, or a body we read the wrong
-        # number of bytes for) would desync the next request parsed off the
-        # same connection - reject those instead of guessing.
-        transfer_values = self.headers.get_all("Transfer-Encoding", [])
-        length_values = self.headers.get_all("Content-Length", [])
-
-        if transfer_values and length_values:
-            self.close_connection = True
-            self.send_error(400, "Conflicting request framing")
+        # Revalidate framing even after Expect: 100-continue: callers can invoke
+        # this method directly, and request headers remain the framing authority.
+        framing = self._request_body_framing()
+        if framing is None:
             return None
+        chunked, content_length = framing
 
-        if transfer_values:
-            encodings = [
-                item.strip().lower()
-                for value in transfer_values
-                for item in value.split(",")
-                if item.strip()
-            ]
-            if encodings != ["chunked"]:
-                self.close_connection = True
-                self.send_error(400, "Unsupported Transfer-Encoding")
-                return None
+        if chunked:
             raw = self._read_chunked()
             if raw is None:
                 return None
         else:
-            if len(length_values) > 1:
-                self.close_connection = True
-                self.send_error(400, "Ambiguous Content-Length")
-                return None
-            try:
-                content_length = int(length_values[0]) if length_values else 0
-            except ValueError:
-                self.close_connection = True
-                self.send_error(400, "Invalid Content-Length")
-                return None
-            if content_length < 0:
-                self.close_connection = True
-                self.send_error(400, "Invalid Content-Length")
-                return None
-            if content_length > self.mcp_server.post_body_limit:
-                self._send_payload_too_large()
-                return None
-            raw = self.rfile.read(content_length) if content_length > 0 else b""
+            raw = self.rfile.read(content_length) if content_length else b""
             if len(raw) != content_length:
                 self.close_connection = True
                 self.send_error(400, "Truncated request body")

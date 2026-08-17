@@ -1,3 +1,15 @@
+## 0.26.3
+
+### Fixes
+
+- **Use fallback character-set detection for file-like objects**: `FileTypeDetectionContext.text_head()` now applies the same `detect_file_encoding()` fallback to file-like objects as it does to file paths when the declared encoding cannot decode the content. Previously it decoded with `errors="ignore"`, silently stripping characters and corrupting the text head for non-UTF-8 streams such as S3/GCS objects and API uploads.
+
+## 0.26.2
+
+### Fixes
+
+- **Linear-time inline element merging in HTML partitioning (ML-1713)**: `combine_inline_elements` re-parsed the growing merged run on every step and appended text via attribute `+=`, making a long run of mergeable inline elements O(n²) — seconds for a few hundred elements. Each element's mergeability is now computed once from its own HTML and the run's text is joined once when it closes, so merging is linear with identical output.
+
 ## 0.26.1
 
 ### Fixes

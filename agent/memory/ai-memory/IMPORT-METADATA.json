@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "repository": "akitaonrails/ai-memory",
+  "source_url": "https://github.com/akitaonrails/ai-memory",
+  "ref": "main",
+  "resolved_commit": "7f052990991aa541022a4bd015b58d1f5a9e8bf5",
+  "category": "agent",
+  "subcategory": "memory",
+  "slug": "ai-memory",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-17T23:08:05+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 553,
+  "copied_bytes": 8608697,
+  "excluded_files": [
+    "docker/.env.production.example: sensitive filename",
+    "docs/logo-dark.png: binary content",
+    "docs/logo-light.png: binary content",
+    "docs/logo.png: binary content",
+    "docs/web-project-view.png: binary content",
+    "docs/web-projects-home.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

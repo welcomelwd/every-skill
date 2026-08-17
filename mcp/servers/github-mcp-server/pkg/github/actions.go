@@ -146,11 +146,11 @@ func getJobLogData(ctx context.Context, client *github.Client, owner, repo strin
 		// Download and return the actual log content
 		content, originalLength, httpResp, err := downloadLogContent(ctx, url.String(), tailLines, contentWindowSize) //nolint:bodyclose // Response body is closed in downloadLogContent, but we need to return httpResp
 		if err != nil {
-			// To keep the return value consistent wrap the response as a GitHub Response
-			ghRes := &github.Response{
-				Response: httpResp,
+			var ghResp *github.Response
+			if httpResp != nil {
+				ghResp = &github.Response{Response: httpResp}
 			}
-			return nil, ghRes, fmt.Errorf("failed to download log content for job %d: %w", jobID, err)
+			return nil, ghResp, fmt.Errorf("failed to download log content for job %d: %w", jobID, err)
 		}
 		result["logs_content"] = content
 		result["message"] = "Job logs content retrieved successfully"
@@ -802,7 +802,7 @@ func getWorkflowRun(ctx context.Context, client *github.Client, owner, repo stri
 		return ghErrors.NewGitHubAPIErrorResponse(ctx, "failed to get workflow run", resp, err), nil, nil
 	}
 	defer func() { _ = resp.Body.Close() }()
-	r, err := json.Marshal(workflowRun)
+	r, err := json.Marshal(convertToMinimalWorkflowRun(workflowRun))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to marshal workflow run: %w", err)
 	}

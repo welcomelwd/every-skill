@@ -291,6 +291,43 @@ class Http11TransportTests(unittest.TestCase):
                 400,
             )
 
+            self.assertEqual(
+                _raw_status(
+                    harness.host,
+                    harness.port,
+                    b"POST /mcp HTTP/1.0\r\n" + suffix,
+                ),
+                200,
+            )
+
+    def test_rejects_non_decimal_content_length(self):
+        with McpHttpTestServer(_make_server()) as harness:
+            body = b"abcde"
+            for value in ("+5", "-0"):
+                request = (
+                    f"POST /mcp HTTP/1.1\r\nHost: {harness.host}:{harness.port}\r\n"
+                    f"Content-Length: {value}\r\n\r\n"
+                ).encode() + body
+                self.assertEqual(_raw_status(harness.host, harness.port, request), 400)
+
+    def test_expect_rejects_invalid_framing_without_continue(self):
+        server = _make_server()
+        server.post_body_limit = 100
+        with McpHttpTestServer(server) as harness:
+            requests = (
+                (
+                    f"POST /mcp HTTP/1.1\r\nHost: {harness.host}:{harness.port}\r\n"
+                    "Content-Length: 101\r\nExpect: 100-continue\r\n\r\n"
+                ).encode(),
+                (
+                    f"POST /mcp HTTP/1.1\r\nHost: {harness.host}:{harness.port}\r\n"
+                    "Content-Length: 2\r\nTransfer-Encoding: chunked\r\n"
+                    "Expect: 100-continue\r\n\r\n"
+                ).encode(),
+            )
+            self.assertEqual(_raw_status(harness.host, harness.port, requests[0]), 413)
+            self.assertEqual(_raw_status(harness.host, harness.port, requests[1]), 400)
+
     def test_rejects_malformed_chunk_trailer(self):
         with McpHttpTestServer(_make_server()) as harness:
             body = json.dumps({"jsonrpc": "2.0", "method": "ping", "id": 1}).encode()

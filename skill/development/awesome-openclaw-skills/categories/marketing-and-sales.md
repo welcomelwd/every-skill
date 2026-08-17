@@ -2,7 +2,7 @@
 
 [← Back to main list](../README.md#table-of-contents)
 
-**107 skills**
+**108 skills**
 
 - [4chan-reader](https://clawskills.sh/skills/aiasisbot61-4chan-reader) - Browse 4chan boards and extract thread discussions.
 - [ad-ready](https://clawskills.sh/skills/pauldelavallaz-ad-ready) - Generate professional advertising images from product URLs.
@@ -68,6 +68,7 @@
 - [lifi-orchestrator](https://clawskills.sh/skills/rhlsthrm-lifi-orchestrator) - Cross-chain bridging and swapping via LI.FI — the leading bridge aggregator that routes across 30+ bridges and DEXs.
 - [linkfuse](https://clawskills.sh/skills/oliverw-linkfuse) - Create a Linkfuse affiliate short link from any URL.
 - [listing-swarm](https://clawhub.ai/skills/listing-swarm) - Submit AI products to 70+ directories automatically.
+- [lumail](https://clawhub.ai/melvynx/lumail) - Manage email marketing campaigns via CLI.
 - [marketing-strategy-pmm](https://clawskills.sh/skills/alirezarezvani-marketing-strategy-pmm) - Product marketing skill for positioning, GTM strategy, competitive intelligence, and product launches.
 - [meta-ads-report](https://clawskills.sh/skills/kein-s-meta-ads-report) - A powerful toolkit to monitor your Meta (Facebook/Instagram) advertising performance directly through chat.
 - [meta-tags-optimizer](https://clawskills.sh/skills/aaron-he-zhu-meta-tags-optimizer) - Use when the user asks to "optimize title tag", "write meta description", "improve CTR", "Open Graph tags", "social.

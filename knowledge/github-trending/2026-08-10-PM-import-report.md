@@ -4,7 +4,7 @@
 
 | 项目 | 状态 | 目录或原因 |
 | --- | --- | --- |
-| `pingdotgg/t3code` | updated | `agent/runtimes/t3code @ cd096b9ad5a4156ffeab85de617cbb219057007f (8117 files, 26214400 bytes); excluded 7912 files` |
+| `pingdotgg/t3code` | updated | `agent/runtimes/t3code @ a4cc1367b03ee0c1dc2b50fceac81ef5e63212e2 (8117 files, 26214400 bytes); excluded 7912 files` |
 | `Comfy-Org/ComfyUI` | up-to-date | `knowledge/tools/comfyui @ 7d11ec31cb700d881fdf2d73731ecde0093b9540` |
 | `google-deepmind/weathernext` | up-to-date | `knowledge/datasets/weathernext @ 71f8883cc0f8ef02903ba6724c9c3ac36fc504f6` |
 | `ZhuLinsen/daily_stock_analysis` | up-to-date | `agent/workflows/daily-stock-analysis @ 396d43a4c76ffa940e2b9aea7bbe8686343c694a` |

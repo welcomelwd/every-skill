@@ -122,6 +122,7 @@ repo to install.
 - **Security and identity**
   - [**GKE Platform Security**](./skills/cloud/gke-platform-security)
   - [**GKE Workload Security**](./skills/cloud/gke-workload-security)
+  - [**Privileged Access Manager (PAM)**](./skills/cloud/iam-helper-for-privileged-access-management)
   - [**SecOps Detection Coverage Skill**](./skills/cloud/detection-engineering-coverage-evaluation)
 - **Web and app hosting**
   - [**Cloud Run Basics**](./skills/cloud/cloud-run-basics)
