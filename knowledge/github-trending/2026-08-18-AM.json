@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "source_date": "2026-08-18",
+  "batch": "AM",
+  "source_markdown": "knowledge/github-trending/2026-08-18.md",
+  "projects": [
+    {
+      "repository": "mukul975/Anthropic-Cybersecurity-Skills",
+      "source_url": "https://github.com/mukul975/Anthropic-Cybersecurity-Skills",
+      "category": "skill",
+      "subcategory": "security",
+      "slug": "anthropic-cybersecurity-skills",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "4c0b700ac5d280ba46695062077f0fe922ce3602"
+    },
+    {
+      "repository": "github/github-mcp-server",
+      "source_url": "https://github.com/github/github-mcp-server",
+      "category": "mcp",
+      "subcategory": "servers",
+      "slug": "github-mcp-server",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "3085e59f66d2386aa76b1b3657d5ec252776ce66"
+    },
+    {
+      "repository": "akitaonrails/ai-memory",
+      "source_url": "https://github.com/akitaonrails/ai-memory",
+      "category": "agent",
+      "subcategory": "memory",
+      "slug": "ai-memory",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "7f052990991aa541022a4bd015b58d1f5a9e8bf5"
+    },
+    {
+      "repository": "AlexsJones/llmfit",
+      "source_url": "https://github.com/AlexsJones/llmfit",
+      "category": "knowledge",
+      "subcategory": "tools",
+      "slug": "llmfit",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "acc7e40c3a0afbd36510a92f2f8f3d5177cfc0fe"
+    }
+  ]
+}
