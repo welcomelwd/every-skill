@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "source_date": "2026-08-17",
+  "batch": "PM",
+  "source_markdown": "knowledge/github-trending/2026-08-17.md",
+  "projects": [
+    {
+      "repository": "obra/superpowers",
+      "source_url": "https://github.com/obra/superpowers",
+      "category": "skill",
+      "subcategory": "development",
+      "slug": "superpowers",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797"
+    },
+    {
+      "repository": "redis/mcp-redis",
+      "source_url": "https://github.com/redis/mcp-redis",
+      "category": "mcp",
+      "subcategory": "servers",
+      "slug": "redis-mcp-server",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "5945b0b5b098c9a1882075a161a6a58f23de81ed"
+    },
+    {
+      "repository": "openai/openai-agents-python",
+      "source_url": "https://github.com/openai/openai-agents-python",
+      "category": "agent",
+      "subcategory": "runtimes",
+      "slug": "openai-agents-python",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "d40f5d9832c657d64ef1bd858fd0a977eec6262e"
+    },
+    {
+      "repository": "cisco-ai-defense/skill-scanner",
+      "source_url": "https://github.com/cisco-ai-defense/skill-scanner",
+      "category": "knowledge",
+      "subcategory": "security",
+      "slug": "cisco-skill-scanner",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "48f59347a54b93606dd1e31c41989ebfd0fcc84d"
+    }
+  ]
+}
