@@ -1,6 +1,7 @@
 import pathlib
 import sys
 import unittest
+import http.client
 import http.server  # Preload stdlib http before adding local ida_mcp paths.
 
 
@@ -47,11 +48,11 @@ def _make_handler(
     handler = _DummyHandler.__new__(_DummyHandler)
     handler.server = server
     handler.mcp_server = mcp_server
-    headers = {}
+    headers = http.client.HTTPMessage()
     if host is not None:
-        headers["Host"] = host
+        headers.add_header("Host", host)
     if origin is not None:
-        headers["Origin"] = origin
+        headers.add_header("Origin", origin)
     handler.headers = headers
     errors = []
     handler.send_error = lambda code, message=None, explain=None: errors.append(
@@ -90,6 +91,20 @@ class BrowserTransportGuardTests(unittest.TestCase):
         )
         self.assertFalse(handler._check_api_request())
         self.assertEqual(errors, [(403, "Invalid Host")])
+
+    def test_check_api_request_rejects_missing_host(self):
+        handler, errors = _make_handler(host=None, origin=None)
+        self.assertFalse(handler._check_api_request())
+        self.assertEqual(errors, [(400, "Invalid Host")])
+
+    def test_check_api_request_rejects_duplicate_host(self):
+        handler, errors = _make_handler(
+            host="127.0.0.1:13337",
+            origin=None,
+        )
+        handler.headers.add_header("Host", "evil.example:13337")
+        self.assertFalse(handler._check_api_request())
+        self.assertEqual(errors, [(400, "Invalid Host")])
 
     def test_check_api_request_rejects_browser_origin_in_direct_mode(self):
         handler, errors = _make_handler(

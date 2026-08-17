@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "repository": "obra/superpowers",
+  "source_url": "https://github.com/obra/superpowers",
+  "ref": "main",
+  "resolved_commit": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+  "category": "skill",
+  "subcategory": "development",
+  "slug": "superpowers",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-17T10:08:42+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 193,
+  "copied_bytes": 1663619,
+  "excluded_files": [
+    "AGENTS.md: symlink",
+    "assets/app-icon.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

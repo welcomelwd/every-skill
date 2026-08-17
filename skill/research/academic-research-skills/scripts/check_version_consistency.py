@@ -35,6 +35,10 @@ Invariants enforced:
  11. The newest "## vX.Y… Key Additions" heading in .claude/CLAUDE.md matches
      the suite version (#487), compared at the heading's own precision —
      `## v3.14 Key Additions` matches suite 3.14.0.
+ 12. The citation surfaces track the release (#754): CITATION.cff `version`
+     equals the suite version and its `date-released` lies within ±7 days of
+     the latest CHANGELOG entry's date; every `(Version X.Y.Z)` token in
+     POSITIONING.md equals the suite version.
 
 Tag gate (#487): `--tag <ref>` additionally requires the given git tag
 (leading `v` optional) to equal the suite version — the one comparison
@@ -49,8 +53,10 @@ import json
 import re
 import sys
 from collections import Counter
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
+
+import yaml
 
 from _skill_lint import parse_frontmatter, FrontmatterError
 
@@ -123,6 +129,14 @@ NEXT_ENTRY_RE = re.compile(r"##\s+\[")
 # Strict YYYY-MM-DD guard: date.fromisoformat() accepts compact 20260422 and
 # ISO week dates, so a shape check gates before parsing (codex P2-2).
 ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# Invariant 12: the POSITIONING.md citation-prose token, e.g. `(Version 3.20.1)`.
+# Captures the WHOLE parenthesized payload, then strip + strict-validate (the
+# post-#169 idiom above): a non-canonical spelling (`v3.20.1`, `3.20.1-rc1`,
+# bare `3.20`) or a malformed clause (`3.14.0 ` with a stray space, `3.14.0
+# draft`) surfaces as an error instead of the clause dropping out of a
+# narrower character class and silently passing (codex round-3 P2).
+# CITATION.cff has no regex — it is YAML and is parsed as YAML.
+POSITIONING_VERSION_RE = re.compile(r"\(Version\s+([^)]*)\)")
 
 PIPELINE_SKILL_NAME = "academic-pipeline"
 
@@ -365,6 +379,9 @@ def check(root: Path, tag: str | None = None) -> list[str]:
         errors.extend(_check_docs_versions(root, suite_version))
         # Invariant 11: newest Key Additions heading matches the suite version.
         errors.extend(_check_key_additions(claude_md, claude_text, suite_version))
+        # Invariant 12: citation surfaces (CITATION.cff / POSITIONING.md)
+        # track the suite version + release date.
+        errors.extend(_check_citation_surfaces(root, suite_version, latest_date))
 
     # Tag gate: the pushed tag (when given) must equal the suite version. This
     # runs OUTSIDE the `suite_version is not None` block on purpose: `--tag`
@@ -661,6 +678,116 @@ def _check_agent_count_claim(root: Path) -> list[str]:
             f"excluded, symlinks deduplicated)"
         ]
     return []
+
+
+def _check_citation_surfaces(
+    root: Path, suite_version: str, latest_date: str | None
+) -> list[str]:
+    """Invariant 12: citation surfaces track the release (#754: both surfaces
+    had silently drifted six minor releases behind — the file was added
+    2026-06-15, after this lint existed, and never entered its coverage).
+
+    CITATION.cff is outward-facing release metadata like README.md, so its
+    ABSENCE is an error — a deleted/renamed file must not silently disable
+    the invariant (the invariant-4 marketplace-manifest lesson). It is YAML
+    and is parsed as YAML: a regex scrape would misread legitimate spellings
+    (`version: "3.20.1"`, trailing comments) as drift. `date-released` is
+    required — an absent/null field errors rather than silently disabling
+    the freshness half — and is compared against the latest CHANGELOG
+    entry's date with the invariant-10 ±LAST_UPDATED_MAX_DAYS window
+    (window skipped only when the CHANGELOG date is unavailable — that
+    already errored upstream).
+
+    POSITIONING.md is repo-specific prose: absence or a token-free file is a
+    skip (the token is the claim; no claim, no drift), but a present token
+    must be canonical and equal to the suite version.
+
+    Known limitation (accepted, 2026-08-17 threat-model adjudication):
+    duplicate YAML keys resolve last-wins, the same semantics every CFF
+    consumer applies (GitHub's cite widget, Zenodo, cffconvert), so a
+    duplicate-key file renders the identical citation everywhere —
+    untidiness, not drift. Guarding it would require a custom
+    duplicate-rejecting loader whose complexity the harm does not pay for."""
+    errors: list[str] = []
+    cff = root / "CITATION.cff"
+    if not cff.is_file():
+        errors.append(f"{cff}: not found")
+    else:
+        try:
+            data = yaml.safe_load(cff.read_text(encoding="utf-8"))
+        except (yaml.YAMLError, ValueError):
+            # ValueError: PyYAML's timestamp constructor raises it (not
+            # YAMLError) on impossible dates like 2026-02-30 (codex P2) —
+            # a lint reports drift, never crashes.
+            data = None
+        if not isinstance(data, dict):
+            errors.append(f"{cff}: not parseable as a YAML mapping")
+        else:
+            raw = data.get("version")
+            if raw is None:
+                errors.append(f"{cff}: no 'version' key found")
+            else:
+                token = str(raw)
+                if not _is_strict_semver(token):
+                    errors.append(
+                        f"{cff}: version token {token!r} is not a canonical "
+                        "N.N.N or N.N.N.N version"
+                    )
+                elif token != suite_version:
+                    errors.append(
+                        f"{cff}: version {token!r} does not match suite "
+                        f"version {suite_version!r}"
+                    )
+            released = data.get("date-released")
+            if released is None:
+                # Absent or null must error, not skip — deleting the field
+                # would otherwise disable the freshness half of the invariant
+                # (codex round-2 P2; same posture as file absence).
+                errors.append(f"{cff}: no 'date-released' key found")
+            elif latest_date is not None:
+                base = _parse_iso_date(latest_date)
+                if isinstance(released, datetime):
+                    # CFF requires a bare YYYY-MM-DD. An unquoted timestamp
+                    # parses as datetime — a date SUBCLASS that would
+                    # TypeError against the date baseline below (codex P2) —
+                    # so it routes to the not-strict error, never a crash.
+                    rel = None
+                elif isinstance(released, date):
+                    rel = released
+                else:
+                    rel = _parse_iso_date(str(released))
+                if rel is None:
+                    errors.append(
+                        f"{cff}: date-released {str(released)!r} is not a "
+                        "strict YYYY-MM-DD date"
+                    )
+                elif (
+                    base is not None
+                    and abs((rel - base).days) > LAST_UPDATED_MAX_DAYS
+                ):
+                    errors.append(
+                        f"{cff}: date-released {rel.isoformat()} is more than "
+                        f"{LAST_UPDATED_MAX_DAYS} days from the latest "
+                        f"CHANGELOG entry date {latest_date} (stale release "
+                        "metadata)"
+                    )
+    positioning = root / "POSITIONING.md"
+    if positioning.is_file():
+        for raw_token in POSITIONING_VERSION_RE.findall(
+            positioning.read_text(encoding="utf-8")
+        ):
+            token = raw_token.strip()
+            if not _is_strict_semver(token):
+                errors.append(
+                    f"{positioning}: citation prose token {token!r} is not a "
+                    "canonical N.N.N or N.N.N.N version"
+                )
+            elif token != suite_version:
+                errors.append(
+                    f"{positioning}: citation prose cites Version {token} but "
+                    f"suite version is {suite_version!r}"
+                )
+    return errors
 
 
 def main() -> int:

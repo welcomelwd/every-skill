@@ -346,7 +346,9 @@ describe('terminal-history', () => {
       // Why: an Orca terminal opened from inside another Orca terminal inherits
       // it, and the zsh wrapper would then re-export the PARENT worktree's
       // history path here. Credit: caught by @innocarpe in #11146.
-      const env: Record<string, string> = { ORCA_HISTFILE: ['', 'other', 'wt', 'zsh_history'].join(sep) }
+      const env: Record<string, string> = {
+        ORCA_HISTFILE: ['', 'other', 'wt', 'zsh_history'].join(sep)
+      }
 
       injectHistoryEnv(env, 'repo-1::/path/wt', '/bin/zsh', '/path/wt')
 
@@ -643,6 +645,36 @@ describe('terminal-history', () => {
       )
     })
 
+    // Why: an empty live set is what a store that fell back to default state
+    // looks like, and it is indistinguishable from a user with no worktrees —
+    // who has no history to collect either. Treating it as "everything is
+    // orphaned" turns a recoverable bad load into deleted shell history.
+    it('refuses to prune anything when the live set is empty', () => {
+      existsSyncMock.mockImplementation((p: string) => !p.includes('terminal-history-wsl'))
+      readdirSyncMock.mockImplementation((dir: string) => {
+        if (dir.endsWith('.pending-delete')) {
+          return []
+        }
+        if (dir.endsWith('terminal-history')) {
+          return ['dir1', 'dir2']
+        }
+        return ['meta.json']
+      })
+      statSyncMock.mockReturnValue({ isDirectory: () => true, size: 100 })
+      readFileSyncMock.mockReturnValue(
+        JSON.stringify({
+          worktreeId: 'some-wt',
+          createdAt: new Date(Date.now() - 10 * 60 * 1000).toISOString()
+        })
+      )
+
+      runHistoryGc(new Set())
+
+      expect(renameSyncMock).not.toHaveBeenCalled()
+      expect(rmSyncMock).not.toHaveBeenCalled()
+      expect(rmAsyncMock).not.toHaveBeenCalled()
+    })
+
     it('continues GC after one orphan tombstone fails', async () => {
       existsSyncMock.mockImplementation((path: string) => !path.includes('terminal-history-wsl'))
       readdirSyncMock.mockImplementation((dir: string) => {
@@ -665,7 +697,7 @@ describe('terminal-history', () => {
         throw new Error('busy')
       })
 
-      expect(() => runHistoryGc(new Set())).not.toThrow()
+      expect(() => runHistoryGc(new Set(['live-wt']))).not.toThrow()
       expect(renameSyncMock).toHaveBeenCalledTimes(2)
       expect(rmAsyncMock).toHaveBeenCalledTimes(1)
       await flushPendingWorktreeHistoryDeletions()
@@ -690,7 +722,7 @@ describe('terminal-history', () => {
         JSON.stringify({ worktreeId: 'unknown-wt', createdAt: new Date().toISOString() })
       )
 
-      runHistoryGc(new Set())
+      runHistoryGc(new Set(['live-wt']))
 
       // Should NOT prune because the directory is too young
       expect(rmSyncMock).not.toHaveBeenCalled()
@@ -699,7 +731,7 @@ describe('terminal-history', () => {
 
     it('does not throw when history root does not exist', () => {
       existsSyncMock.mockReturnValue(false)
-      expect(() => runHistoryGc(new Set())).not.toThrow()
+      expect(() => runHistoryGc(new Set(['live-wt']))).not.toThrow()
       expect(readdirSyncMock).not.toHaveBeenCalledWith('/fake/userData/terminal-history')
     })
 
@@ -720,7 +752,7 @@ describe('terminal-history', () => {
         tombstonePresent = false
       })
 
-      runHistoryGc(new Set())
+      runHistoryGc(new Set(['live-wt']))
 
       // The tombstone queue is drained off-thread; GC must never rmSync it or count it as a worktree.
       expect(rmSyncMock).not.toHaveBeenCalled()

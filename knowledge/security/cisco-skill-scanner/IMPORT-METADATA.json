@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "repository": "cisco-ai-defense/skill-scanner",
+  "source_url": "https://github.com/cisco-ai-defense/skill-scanner",
+  "ref": "main",
+  "resolved_commit": "48f59347a54b93606dd1e31c41989ebfd0fcc84d",
+  "category": "knowledge",
+  "subcategory": "security",
+  "slug": "cisco-skill-scanner",
+  "license": "Apache-2.0",
+  "source_date": null,
+  "imported_at": "2026-08-17T10:08:42+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 421,
+  "copied_bytes": 5805249,
+  "excluded_files": [
+    ".env.example: sensitive filename",
+    "evals/test_skills/malicious/eicar-test/assets/test-binary.bin: binary, archive, media, or generated artifact"
+  ],
+  "execution": "never run by this importer"
+}

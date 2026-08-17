@@ -64,7 +64,6 @@ describe('deleteWslFishHistoryFile', () => {
     await Promise.all([first, second])
   })
 
-
   it('keeps distinct distros independent of each other', async () => {
     const run = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
 

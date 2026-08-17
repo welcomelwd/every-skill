@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "repository": "redis/mcp-redis",
+  "source_url": "https://github.com/redis/mcp-redis",
+  "ref": "main",
+  "resolved_commit": "5945b0b5b098c9a1882075a161a6a58f23de81ed",
+  "category": "mcp",
+  "subcategory": "servers",
+  "slug": "redis-mcp-server",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-17T10:08:42+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 59,
+  "copied_bytes": 1014400,
+  "excluded_files": [
+    ".env.example: sensitive filename"
+  ],
+  "execution": "never run by this importer"
+}

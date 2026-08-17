@@ -1,0 +1,165 @@
+{
+  "date": "2026-08-16",
+  "findings": {
+    "fixed": 860,
+    "high": 17,
+    "new": 1503
+  },
+  "licence": "CC BY 4.0",
+  "notable": [
+    {
+      "detail": "combo.exec_exfil",
+      "kind": "new_high",
+      "server": "Artexis10/exomem",
+      "url": "https://mcpbeat.com/mcp-servers/artexis10/exomem/"
+    },
+    {
+      "detail": "destroy.fs",
+      "kind": "new_high",
+      "server": "GhostlyGawd/engineering-board",
+      "url": "https://mcpbeat.com/mcp-servers/ghostlygawd/engineering-board/"
+    },
+    {
+      "detail": "destroy.fs",
+      "kind": "new_high",
+      "server": "Patdolitse/piia-engram",
+      "url": "https://mcpbeat.com/mcp-servers/patdolitse/piia-engram/"
+    },
+    {
+      "detail": "claim.read_only",
+      "kind": "new_high",
+      "server": "SikamikanikoBG/homelab-monitor",
+      "url": "https://mcpbeat.com/mcp-servers/sikamikanikobg/homelab-monitor/"
+    },
+    {
+      "detail": "priv.escalate",
+      "kind": "new_high",
+      "server": "colophon-group/jobseek",
+      "url": "https://mcpbeat.com/mcp-servers/colophon-group/jobseek/"
+    },
+    {
+      "detail": "combo.secrets_out",
+      "kind": "new_high",
+      "server": "getnable/finopsmcp",
+      "url": "https://mcpbeat.com/mcp-servers/getnable/finops-mcp/"
+    },
+    {
+      "detail": "exfil.cloud_meta",
+      "kind": "new_high",
+      "server": "nirholas/three.ws",
+      "url": "https://mcpbeat.com/mcp-servers/nirholas/agora-mcp/"
+    },
+    {
+      "detail": "claim.read_only",
+      "kind": "new_high",
+      "server": "roian6/apple-health-ai-bridge",
+      "url": "https://mcpbeat.com/mcp-servers/roian6/health-bridge/"
+    },
+    {
+      "detail": "combo.secrets_out",
+      "kind": "new_high",
+      "server": "smith-horn/skillsmith",
+      "url": "https://mcpbeat.com/mcp-servers/smith-horn/skillsmith/"
+    },
+    {
+      "detail": "rug.new_install_hook",
+      "kind": "new_high",
+      "server": "dcostenco/prism-coder",
+      "url": "https://mcpbeat.com/mcp-servers/dcostenco/prism-coder/"
+    },
+    {
+      "detail": "secret.leaked",
+      "kind": "new_high",
+      "server": "Ovecc-labs/ovecc",
+      "url": "https://mcpbeat.com/mcp-servers/ovecc-labs/ovecc/"
+    },
+    {
+      "detail": "docker.curl_pipe",
+      "kind": "new_high",
+      "server": "The-OpenROAD-Project/OpenROAD-MCP",
+      "url": "https://mcpbeat.com/mcp-servers/the-openroad-project/openroad-mcp/"
+    },
+    {
+      "detail": "search_firms",
+      "kind": "schema",
+      "server": "analyticslegends/analytics-legends-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/analyticslegends/sap-analytics/"
+    },
+    {
+      "detail": "search_products",
+      "kind": "schema",
+      "server": "BuyWhere/buywhere",
+      "url": "https://mcpbeat.com/mcp-servers/buywhere/catalog-api/"
+    },
+    {
+      "detail": "web_search_exa",
+      "kind": "schema",
+      "server": "exa-labs/exa-mcp-server",
+      "url": "https://mcpbeat.com/mcp-servers/exa/exa/"
+    },
+    {
+      "detail": "search_web_pages",
+      "kind": "schema",
+      "server": "keenableai/keenable-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/keenable/web-search/"
+    },
+    {
+      "detail": "realty_area_price_bands",
+      "kind": "schema",
+      "server": "sallim-app/korea-realty",
+      "url": "https://mcpbeat.com/mcp-servers/sallim/korea-realty/"
+    },
+    {
+      "detail": "get_news_intelligence",
+      "kind": "schema",
+      "server": "koala73/worldmonitor",
+      "url": "https://mcpbeat.com/mcp-servers/worldmonitor/mcp/"
+    },
+    {
+      "detail": "get_fish_profile",
+      "kind": "schema",
+      "server": "techgardeners/atlarium-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/atlarium/habitat-database/"
+    },
+    {
+      "detail": "nfe_emitir",
+      "kind": "schema",
+      "server": "BrasilNFe/brasilnfe-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/com-brasilnfe/fiscal/"
+    },
+    {
+      "detail": "search_document",
+      "kind": "schema",
+      "server": "Catalunya-2022/mcp",
+      "url": "https://mcpbeat.com/mcp-servers/2022/catalunya-2022/"
+    },
+    {
+      "detail": "build_mentoring_business_case",
+      "kind": "schema",
+      "server": "marian-kamenistak/ai-engineering-leader-toolkit",
+      "url": "https://mcpbeat.com/mcp-servers/marian/eng-leadership-toolkit/"
+    },
+    {
+      "detail": "verify_proof",
+      "kind": "schema",
+      "server": "babyblueviper1/invinoveritas",
+      "url": "https://mcpbeat.com/mcp-servers/babyblueviper/invinoveritas/"
+    },
+    {
+      "detail": "settings_get",
+      "kind": "schema",
+      "server": "danioni/coordinalo-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/coordinalo/mcp-server/"
+    }
+  ],
+  "servers": {
+    "gone": 25,
+    "new": 256
+  },
+  "source": "https://mcpbeat.com/data/2026-08-16/",
+  "tools": {
+    "added": 960,
+    "removed": 705,
+    "schema_changed": 1310
+  }
+}
