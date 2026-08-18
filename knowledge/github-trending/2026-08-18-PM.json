@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "source_date": "2026-08-18",
+  "batch": "PM",
+  "source_markdown": "knowledge/github-trending/2026-08-18.md",
+  "projects": [
+    {
+      "repository": "mattpocock/skills",
+      "source_url": "https://github.com/mattpocock/skills",
+      "category": "skill",
+      "subcategory": "development",
+      "slug": "mattpocock-skills",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "9c9f36ccd3995266cd675468af71639c8dde1ec5"
+    },
+    {
+      "repository": "nutanix/ntnx-api-mcp-server",
+      "source_url": "https://github.com/nutanix/ntnx-api-mcp-server",
+      "category": "mcp",
+      "subcategory": "servers",
+      "slug": "ntnx-api-mcp-server",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "dc447b3f948662b94c1ed61812eb0d1bb221470d"
+    },
+    {
+      "repository": "usestrix/strix",
+      "source_url": "https://github.com/usestrix/strix",
+      "category": "agent",
+      "subcategory": "workflows",
+      "slug": "strix",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "8ede419dccf6742aa0e0c4fe3e7faf11c471ff9a"
+    },
+    {
+      "repository": "jundot/omlx",
+      "source_url": "https://github.com/jundot/omlx",
+      "category": "knowledge",
+      "subcategory": "tools",
+      "slug": "omlx",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "d7e43a4dfe5e882f7f48fee0c0032b74b54fca66"
+    }
+  ]
+}
