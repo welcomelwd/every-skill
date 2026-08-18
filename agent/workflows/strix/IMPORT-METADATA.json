@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "repository": "usestrix/strix",
+  "source_url": "https://github.com/usestrix/strix",
+  "ref": "main",
+  "resolved_commit": "8ede419dccf6742aa0e0c4fe3e7faf11c471ff9a",
+  "category": "agent",
+  "subcategory": "workflows",
+  "slug": "strix",
+  "license": "Apache-2.0",
+  "source_date": null,
+  "imported_at": "2026-08-18T10:10:34+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 408,
+  "copied_bytes": 4553186,
+  "excluded_files": [
+    ".github/logo.png: binary content",
+    ".github/screenshot.png: binary content",
+    "docs/images/favicon-48.ico: binary content",
+    "docs/images/logo.png: binary content",
+    "docs/images/screenshot.png: binary content",
+    "docs/logo/strix.png: binary content",
+    "strix/interface/viewer/frontend/public/logo.png: binary content",
+    "strix/interface/viewer/static/logo.png: binary content"
+  ],
+  "execution": "never run by this importer"
+}

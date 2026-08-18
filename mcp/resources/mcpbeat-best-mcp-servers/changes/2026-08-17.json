@@ -1,0 +1,165 @@
+{
+  "date": "2026-08-17",
+  "findings": {
+    "fixed": 302,
+    "high": 36,
+    "new": 1181
+  },
+  "licence": "CC BY 4.0",
+  "notable": [
+    {
+      "detail": "destroy.fs",
+      "kind": "new_high",
+      "server": "fox100039-design/bugezy",
+      "url": "https://mcpbeat.com/mcp-servers/bugezy/bugezy/"
+    },
+    {
+      "detail": "destroy.fs",
+      "kind": "new_high",
+      "server": "paperclipai/paperclip",
+      "url": "https://mcpbeat.com/mcp-servers/incorporatedpartners/labelhead-artist-momentum/"
+    },
+    {
+      "detail": "destroy.fs",
+      "kind": "new_high",
+      "server": "ariffazil/arifOS",
+      "url": "https://mcpbeat.com/mcp-servers/ariffazil/aaa-mcp/"
+    },
+    {
+      "detail": "claim.read_only",
+      "kind": "new_high",
+      "server": "arifulislamat/database-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/arifulislamat/database-mcp-mysql/"
+    },
+    {
+      "detail": "combo.secrets_out",
+      "kind": "new_high",
+      "server": "getnable/finopsmcp",
+      "url": "https://mcpbeat.com/mcp-servers/chaandannn/finops-mcp/"
+    },
+    {
+      "detail": "claim.read_only",
+      "kind": "new_high",
+      "server": "hodlxxi/Universal-Bitcoin-Identity-Layer",
+      "url": "https://mcpbeat.com/mcp-servers/hodlxxi/hodlxxi-readonly/"
+    },
+    {
+      "detail": "combo.secrets_out",
+      "kind": "new_high",
+      "server": "yaver-io/yaver.io",
+      "url": "https://mcpbeat.com/mcp-servers/kivanccakmak/yaver/"
+    },
+    {
+      "detail": "exfil.cloud_meta",
+      "kind": "new_high",
+      "server": "kubently/kubently",
+      "url": "https://mcpbeat.com/mcp-servers/kubently/kubently/"
+    },
+    {
+      "detail": "claim.read_only",
+      "kind": "new_high",
+      "server": "vantioai/vantio-open-core",
+      "url": "https://mcpbeat.com/mcp-servers/vantioai/vantio-optics/"
+    },
+    {
+      "detail": "destroy.fs",
+      "kind": "new_high",
+      "server": "tenzro/tenzro-network",
+      "url": "https://mcpbeat.com/mcp-servers/tenzro/tenzro-lifi/"
+    },
+    {
+      "detail": "combo.secrets_out",
+      "kind": "new_high",
+      "server": "Aitherium/aither-adk",
+      "url": "https://mcpbeat.com/mcp-servers/aitherium/aither-adk/"
+    },
+    {
+      "detail": "claim.read_only",
+      "kind": "new_high",
+      "server": "mentu-ai/mentu-navigator",
+      "url": "https://mcpbeat.com/mcp-servers/mentu/navigator/"
+    },
+    {
+      "detail": "search_products",
+      "kind": "schema",
+      "server": "BuyWhere/buywhere",
+      "url": "https://mcpbeat.com/mcp-servers/buywhere/catalog-api/"
+    },
+    {
+      "detail": "web_search_exa",
+      "kind": "schema",
+      "server": "exa-labs/exa-mcp-server",
+      "url": "https://mcpbeat.com/mcp-servers/exa/exa/"
+    },
+    {
+      "detail": "rigModel",
+      "kind": "schema",
+      "server": "Ludo-AI/ludo-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/ludo/game-assets/"
+    },
+    {
+      "detail": "run_stat_query",
+      "kind": "schema",
+      "server": "cfagan17/muffed-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/muffed/muffed/"
+    },
+    {
+      "detail": "resize_image",
+      "kind": "schema",
+      "server": "pictomancer.ai/pig-gateway",
+      "url": "https://mcpbeat.com/mcp-servers/pictomancer/image-processing/"
+    },
+    {
+      "detail": "run_edit_tool",
+      "kind": "schema",
+      "server": "Retro-Diffusion/retro-diffusion-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/retrodiffusion/pixel-art/"
+    },
+    {
+      "detail": "market_signals-create_subscription",
+      "kind": "schema",
+      "server": "saberapp/platform",
+      "url": "https://mcpbeat.com/mcp-servers/saber-mcp/saber/"
+    },
+    {
+      "detail": "get_sources",
+      "kind": "schema",
+      "server": "koala73/worldmonitor",
+      "url": "https://mcpbeat.com/mcp-servers/worldmonitor/mcp/"
+    },
+    {
+      "detail": "search",
+      "kind": "schema",
+      "server": "entscheidsuche/entscheidsuche-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/entscheidsuche/mcp/"
+    },
+    {
+      "detail": "get_market_intel",
+      "kind": "schema",
+      "server": "azmartone67/dchub-mcp-server",
+      "url": "https://mcpbeat.com/mcp-servers/dchub/mcp-server/"
+    },
+    {
+      "detail": "ads_insight_summarize_campaign_window",
+      "kind": "schema",
+      "server": "lovieco/lovie-company-formation-mcp-npx",
+      "url": "https://mcpbeat.com/mcp-servers/lovie/company-formation/"
+    },
+    {
+      "detail": "get_life_graph",
+      "kind": "schema",
+      "server": "gohluke/dayze-mcp",
+      "url": "https://mcpbeat.com/mcp-servers/dayze/life-context/"
+    }
+  ],
+  "servers": {
+    "gone": 22,
+    "new": 123
+  },
+  "source": "https://mcpbeat.com/data/2026-08-17/",
+  "tools": {
+    "added": 1207,
+    "removed": 1255,
+    "schema_changed": 1470
+  }
+}

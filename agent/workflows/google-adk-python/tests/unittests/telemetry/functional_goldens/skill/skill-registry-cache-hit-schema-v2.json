@@ -48,7 +48,6 @@
                   "adk.experimental.skill.name": "registry-skill",
                   "adk.experimental.skill.description": "A sample skill.",
                   "adk.experimental.skill.source.uri": "https://fake-registry.com/skill/registry-skill",
-                  "adk.experimental.skill.cache_hit": false,
                   "adk.experimental.skill.additional_tools": []
                 },
                 "status": "UNSET",
@@ -132,7 +131,6 @@
                   "adk.experimental.skill.name": "registry-skill",
                   "adk.experimental.skill.description": "A sample skill.",
                   "adk.experimental.skill.source.uri": "https://fake-registry.com/skill/registry-skill",
-                  "adk.experimental.skill.cache_hit": true,
                   "adk.experimental.skill.additional_tools": []
                 },
                 "status": "UNSET",

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "repository": "nutanix/ntnx-api-mcp-server",
+  "source_url": "https://github.com/nutanix/ntnx-api-mcp-server",
+  "ref": "main",
+  "resolved_commit": "dc447b3f948662b94c1ed61812eb0d1bb221470d",
+  "category": "mcp",
+  "subcategory": "servers",
+  "slug": "ntnx-api-mcp-server",
+  "license": "Apache-2.0",
+  "source_date": null,
+  "imported_at": "2026-08-18T10:10:34+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 62,
+  "copied_bytes": 384608,
+  "excluded_files": [
+    ".env.example: sensitive filename"
+  ],
+  "execution": "never run by this importer"
+}

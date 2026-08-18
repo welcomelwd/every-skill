@@ -5,6 +5,6 @@
 | 项目 | 状态 | 目录或原因 |
 | --- | --- | --- |
 | `mukul975/Anthropic-Cybersecurity-Skills` | up-to-date | `skill/security/anthropic-cybersecurity-skills @ 4c0b700ac5d280ba46695062077f0fe922ce3602` |
-| `github/github-mcp-server` | updated | `mcp/servers/github-mcp-server @ 3085e59f66d2386aa76b1b3657d5ec252776ce66 (479 files, 4451332 bytes); excluded 62 files` |
-| `akitaonrails/ai-memory` | downloaded | `agent/memory/ai-memory @ 7f052990991aa541022a4bd015b58d1f5a9e8bf5 (553 files, 8608697 bytes); excluded 6 files` |
-| `AlexsJones/llmfit` | downloaded | `knowledge/tools/llmfit @ acc7e40c3a0afbd36510a92f2f8f3d5177cfc0fe (202 files, 3066041 bytes); excluded 16 files` |
+| `github/github-mcp-server` | up-to-date | `mcp/servers/github-mcp-server @ 3085e59f66d2386aa76b1b3657d5ec252776ce66` |
+| `akitaonrails/ai-memory` | up-to-date | `agent/memory/ai-memory @ 7f052990991aa541022a4bd015b58d1f5a9e8bf5` |
+| `AlexsJones/llmfit` | up-to-date | `knowledge/tools/llmfit @ acc7e40c3a0afbd36510a92f2f8f3d5177cfc0fe` |

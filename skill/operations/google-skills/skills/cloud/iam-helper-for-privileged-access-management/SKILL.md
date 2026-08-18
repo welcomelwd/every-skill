@@ -7,8 +7,8 @@ description: >-
   Privileged Access Manager (PAM). Use when a user asks to create, read,
   update, or delete PAM entitlements, request temporary access, or
   approve/deny pending PAM grants. Do NOT use for permanent IAM policy
-  bindings, troubleshooting IAM permission errors (use
-  @skill:iam-helper-for-troubleshooting), or general Google Cloud resource provisioning.
+  bindings, troubleshooting IAM permission errors, or general Google Cloud
+  resource provisioning.
 ---
 
 # Privileged Access Manager (PAM)
