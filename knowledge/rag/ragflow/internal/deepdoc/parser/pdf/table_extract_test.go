@@ -22,10 +22,23 @@ func (d *orientationScoringDoc) TSR(_ context.Context, _ image.Image) ([]pdf.TSR
 	return nil, nil
 }
 
-func (d *orientationScoringDoc) OCRDetect(_ context.Context, _ image.Image) ([]pdf.OCRBox, error) {
-	// EvaluateTableOrientation now scores by OCRRecognize confidence, so
-	// detection output is unused by this test. Return empty.
-	return nil, nil
+func (d *orientationScoringDoc) OCRDetect(_ context.Context, img image.Image) ([]pdf.OCRBox, error) {
+	// EvaluateTableOrientation now scores each angle by per-line recognition,
+	// so it requires detection output (an empty result scores 0). Emit line
+	// boxes whose GEOMETRY tracks the image orientation so the warped crop
+	// handed to OCRRecognize preserves aspect ratio: a landscape image yields
+	// wide boxes, a portrait (rotated) image yields tall boxes. The mock's
+	// recognition signal (portrait crop reads as more legible) must survive
+	// the warp — fixed-size boxes would always yield a landscape strip and
+	// silently disable the orientation signal.
+	portrait := img.Bounds().Dy() > img.Bounds().Dx()
+	w, h := 100.0, 10.0
+	if portrait {
+		w, h = 10.0, 100.0
+	}
+	return []pdf.OCRBox{{
+		X0: 0, Y0: 0, X1: w, Y1: 0, X2: w, Y2: h, X3: 0, Y3: h,
+	}}, nil
 }
 
 func (d *orientationScoringDoc) OCRRecognize(_ context.Context, img image.Image) ([]pdf.OCRText, error) {
@@ -69,7 +82,6 @@ func TestProcessOneTable_AutoRotateNormalizesCellBounds(t *testing.T) {
 	autoRotate := true
 	cfg := pdf.DefaultParserConfig()
 	cfg.AutoRotateTables = &autoRotate
-	cfg.SkipOCR = true
 	p := NewParser(cfg)
 
 	pageImg := image.NewRGBA(image.Rect(0, 0, 320, 220))
@@ -129,7 +141,6 @@ func TestProcessOneTable_AutoRotateNormalizesCellBounds(t *testing.T) {
 // pre-fix code used w*0.03/h*0.03 here, diverging from Python.
 func TestProcessOneTable_CropOffUsesFixedMargin(t *testing.T) {
 	cfg := pdf.DefaultParserConfig()
-	cfg.SkipOCR = true
 	p := NewParser(cfg)
 
 	pageImg := image.NewRGBA(image.Rect(0, 0, 320, 220))
@@ -188,7 +199,6 @@ func TestProcessOneTable_NoPerCellOCR(t *testing.T) {
 		t.Run(fmt.Sprintf("autoRotate=%v", autoRotate), func(t *testing.T) {
 			cfg := pdf.DefaultParserConfig()
 			cfg.AutoRotateTables = &autoRotate
-			cfg.SkipOCR = false
 			p := NewParser(cfg)
 
 			pageImg := image.NewRGBA(image.Rect(0, 0, 320, 220))

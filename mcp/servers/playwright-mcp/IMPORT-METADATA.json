@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "repository": "microsoft/playwright-mcp",
+  "source_url": "https://github.com/microsoft/playwright-mcp",
+  "ref": "main",
+  "resolved_commit": "7e0457a7cbf88823bf0146d12c46ae12c6818247",
+  "category": "mcp",
+  "subcategory": "servers",
+  "slug": "playwright-mcp",
+  "license": "Apache-2.0",
+  "source_date": null,
+  "imported_at": "2026-08-18T23:11:10+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 34,
+  "copied_bytes": 200930,
+  "excluded_files": [],
+  "execution": "never run by this importer"
+}

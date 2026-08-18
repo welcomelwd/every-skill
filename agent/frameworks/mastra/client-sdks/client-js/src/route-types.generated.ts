@@ -8633,7 +8633,11 @@ export type GetObservabilityTracesTraceId_PathParams = {
   traceId: string;
 };
 
-export type GetObservabilityTracesTraceId_Response = GetObservabilityTracesTraceIdBranchesSpanId_Response;
+export type GetObservabilityTracesTraceId_Response = {
+  /** Unique trace identifier */
+  traceId: string;
+  spans: Shared_Type_74[];
+};
 
 export type GetObservabilityTracesTraceId_Request = Simplify<
   (GetObservabilityTracesTraceId_PathParams extends never ? {} : { params: GetObservabilityTracesTraceId_PathParams }) &
@@ -20165,7 +20169,15 @@ export type GetAgentControllerControllerIdSessionsResourceId_Response = {
     | undefined;
   tokenUsage?:
     | {
-        [key: string]: unknown;
+        promptTokens: number;
+        completionTokens: number;
+        totalTokens: number;
+        reasoningTokens?: number | undefined;
+        cachedInputTokens?: number | undefined;
+        cacheCreationInputTokens?: number | undefined;
+        cacheCreationInputTokens5m?: number | undefined;
+        cacheCreationInputTokens1h?: number | undefined;
+        raw?: unknown | undefined;
       }
     | undefined;
   settings?:

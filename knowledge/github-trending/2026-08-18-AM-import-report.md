@@ -5,6 +5,6 @@
 | 项目 | 状态 | 目录或原因 |
 | --- | --- | --- |
 | `mukul975/Anthropic-Cybersecurity-Skills` | up-to-date | `skill/security/anthropic-cybersecurity-skills @ 4c0b700ac5d280ba46695062077f0fe922ce3602` |
-| `github/github-mcp-server` | up-to-date | `mcp/servers/github-mcp-server @ 3085e59f66d2386aa76b1b3657d5ec252776ce66` |
+| `github/github-mcp-server` | up-to-date | `mcp/servers/github-mcp-server @ bf47e3eca9aeda1e3826916a57c0f9fb0f9d2bc7` |
 | `akitaonrails/ai-memory` | up-to-date | `agent/memory/ai-memory @ 7f052990991aa541022a4bd015b58d1f5a9e8bf5` |
 | `AlexsJones/llmfit` | up-to-date | `knowledge/tools/llmfit @ acc7e40c3a0afbd36510a92f2f8f3d5177cfc0fe` |

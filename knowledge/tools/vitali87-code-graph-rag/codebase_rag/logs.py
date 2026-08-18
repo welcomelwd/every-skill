@@ -15,11 +15,15 @@ PASS_3_CALLS = "--- Pass 3: Processing Function Calls from AST Cache ---"
 PASS_4_EMBEDDINGS = "--- Pass 4: Generating semantic embeddings ---"
 CPP_FRONTEND_RUNNING = "--- C/C++ libclang frontend: {path} ---"
 CPP_FRONTEND_UNAVAILABLE = (
-    "C/C++ libclang frontend enabled but libclang is unavailable; using tree-sitter"
+    "C/C++ libclang frontend enabled but libclang is unavailable; using "
+    "tree-sitter only (no macro Function nodes or #include IMPORTS). "
+    'Enable it with: pip install "code-graph-rag[cpp]"'
 )
 CPP_FRONTEND_NO_COMPDB = (
     "C/C++ libclang frontend enabled but no compile_commands.json found; "
-    "using tree-sitter"
+    "using tree-sitter only (no macro Function nodes or #include IMPORTS). "
+    "Generate one with: cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON (or: "
+    "bear -- make)"
 )
 CPP_FRONTEND_COVERED = "C/C++ libclang frontend covered {count} file(s)"
 CPP_FRONTEND_HYBRID_PENDING = (
@@ -818,6 +822,9 @@ HASH_CACHE_SAVE_FAILED = "Failed to save hash cache to {path}: {error}"
 PERIODIC_FLUSH = "Periodic flush after {count} files processed"
 INCREMENTAL_SKIPPED = "Skipped {count} unchanged files"
 INCREMENTAL_CHANGED = "Re-indexing {count} changed files"
+INCREMENTAL_AFFECTED_CALLERS = (
+    "Re-parsing {count} dependent caller file(s) of re-indexed targets"
+)
 INCREMENTAL_DELETED = "Removed state for {count} deleted files"
 INCREMENTAL_FORCE = "Force mode enabled, bypassing hash cache"
 HASH_CACHE_ORPHANED = (
@@ -839,6 +846,12 @@ REHYDRATE_QUERY_FAILED = (
 CSHARP_TYPE_LOCATIONS_REHYDRATED = (
     "Rehydrated {count} C# type location(s) from the graph for the partial join"
 )
+GO_TYPE_LOCATIONS_REHYDRATED = (
+    "Rehydrated {count} Go type location(s) from the persisted graph"
+)
+FUNCTION_LOCATIONS_REHYDRATED = (
+    "Rehydrated {count} function location(s) from the persisted graph"
+)
 INBOUND_CAPTURE_FAILED = (
     "Could not read inbound edges from the graph; this full rebuild "
     "re-parses every caller, so the edges are re-resolved from source."
@@ -849,6 +862,7 @@ PRUNE_START = "--- Pruning orphan nodes from graph ---"
 PRUNE_QUERY_FAILED = "Could not read {label} paths from the graph; skipping its prune."
 PRUNE_FOUND = "Found {count} orphan {label} nodes to remove"
 PRUNE_DELETING = "Pruning orphan {label}: {path}"
+PRUNE_LEGACY_IDENTITIES = "Swept {count} legacy target-resolved File record(s)"
 PRUNE_COMPLETE = "Pruning complete. Removed {count} orphan nodes."
 PRUNE_SKIP = "No orphan nodes found. Graph is clean."
 FILE_HASH_UNCHANGED = "File unchanged (hash match): {path}"

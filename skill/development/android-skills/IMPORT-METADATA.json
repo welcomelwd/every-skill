@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "repository": "android/skills",
+  "source_url": "https://github.com/android/skills",
+  "ref": "main",
+  "resolved_commit": "6685cac2923e3ccc7e5c385019464374699cda95",
+  "category": "skill",
+  "subcategory": "development",
+  "slug": "android-skills",
+  "license": "Apache-2.0",
+  "source_date": null,
+  "imported_at": "2026-08-18T23:11:10+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 281,
+  "copied_bytes": 3034993,
+  "excluded_files": [],
+  "execution": "never run by this importer"
+}

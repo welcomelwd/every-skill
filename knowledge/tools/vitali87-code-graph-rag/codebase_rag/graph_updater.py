@@ -68,6 +68,7 @@ from .types_defs import (
     CppDefinitionSpan,
     EmbeddingQueryResult,
     FunctionLocation,
+    FunctionLocations,
     LanguageQueries,
     NodeType,
     PendingExpansionCall,
@@ -78,12 +79,21 @@ from .types_defs import (
 from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
 from .utils.path_utils import (
+    cached_file_identity_posix,
     cached_relative_path,
     should_keep_dir,
     should_skip_path,
     should_skip_rel_file,
 )
 from .utils.source_extraction import extract_source_with_fallback
+
+
+def _persisted_int(value: object) -> int | None:
+    # bool is an int subclass; a stray True would key as 1 and shadow a real
+    # entry, so it is rejected explicitly (same discipline as the C# path).
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
 
 
 def _owning_module_qn(qn: str, module_qns: set[str]) -> str | None:
@@ -768,6 +778,11 @@ class GraphUpdater:
         # project-wide query would be wasted work -- skip it.
         if not force and not self._is_full_build:
             self._rehydrate_csharp_type_locations()
+            # Same posture for the col-keyed indexes (issue #1240): the Go
+            # IMPLEMENTS and semantic-call joins below resolve against
+            # locations Pass 2 filled only for re-parsed files.
+            self._rehydrate_go_type_locations()
+            self._rehydrate_function_locations()
 
         # Partial groups join AFTER Pass 2: the Roslyn declaration
         # locations resolve against the Class qns Pass 2 just registered.
@@ -1392,6 +1407,145 @@ class GraphUpdater:
         if restored:
             logger.info(ls.CSHARP_TYPE_LOCATIONS_REHYDRATED.format(count=restored))
 
+    def _rehydrate_go_type_locations(self) -> None:
+        # Incremental runs fill go_type_locations only from re-parsed files,
+        # but _join_go_implements resolves BOTH ends of each pair against it.
+        # Restore (path, line, col) -> (qn, label) for types in unchanged .go
+        # files from the persisted graph (issue #1240). A pre-#1240 graph has
+        # no start_col: those rows are skipped and behavior degrades to
+        # today's until a re-index.
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        locations = self.factory.definition_processor.go_type_locations
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_ALL_GO_TYPE_LOCATIONS,
+                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            )
+        except Exception:
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.REHYDRATE_QUERY_FAILED)
+            return
+        restored = 0
+        for row in rows:
+            path = row.get(cs.KEY_PATH)
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            label = row.get(cs.KEY_LABEL)
+            start_line = _persisted_int(row.get(cs.KEY_START_LINE))
+            start_col = _persisted_int(row.get(cs.KEY_START_COL))
+            if not (
+                isinstance(path, str)
+                and path.endswith(cs.EXT_GO)
+                and isinstance(qn, str)
+                and isinstance(label, str)
+                and start_line is not None
+                and start_col is not None
+            ):
+                continue
+            key = (path, start_line, start_col)
+            if key not in locations:
+                locations[key] = (qn, label)
+                restored += 1
+        if restored:
+            logger.info(ls.GO_TYPE_LOCATIONS_REHYDRATED.format(count=restored))
+
+    def _rehydrate_function_locations(self) -> None:
+        # The C#/Go semantic call + LINQ joins resolve targets against
+        # function_locations, keyed (module_qn, line, col) at the definition
+        # START; Go's join additionally keys at the NAME token, whose column
+        # is persisted separately (issue #1240). Fresh Pass-2 entries win;
+        # rehydrated records serve the joins only (Pass 3 touches re-parsed
+        # files exclusively), so a METHOD's container comes from the query
+        # and is_named stays True (generated qns never persist under Module
+        # DEFINES).
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        locations = self.factory.definition_processor.function_locations
+        params = {cs.KEY_PROJECT_PREFIX: self.project_name + "."}
+        restored = 0
+        for query in (
+            cs.CYPHER_ALL_FUNCTION_LOCATIONS,
+            cs.CYPHER_ALL_METHOD_LOCATIONS,
+        ):
+            try:
+                rows = self.ingestor.fetch_all(query, params)
+            except Exception:
+                if not self._is_full_build:
+                    raise
+                logger.warning(ls.REHYDRATE_QUERY_FAILED)
+                return
+            restored += self._restore_function_rows(rows, locations)
+        if restored:
+            logger.info(ls.FUNCTION_LOCATIONS_REHYDRATED.format(count=restored))
+
+    @staticmethod
+    def _restore_function_rows(
+        rows: list[ResultRow], locations: FunctionLocations
+    ) -> int:
+        restored = 0
+        for row in rows:
+            module_qn = row.get("module_qn")
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            label = row.get(cs.KEY_LABEL)
+            container = row.get("container_qn")
+            start_line = _persisted_int(row.get(cs.KEY_START_LINE))
+            start_col = _persisted_int(row.get(cs.KEY_START_COL))
+            name_line = _persisted_int(row.get(cs.KEY_NAME_START_LINE))
+            name_col = _persisted_int(row.get(cs.KEY_NAME_START_COL))
+            if not (
+                isinstance(module_qn, str)
+                and isinstance(qn, str)
+                and isinstance(label, str)
+                and start_line is not None
+                and start_col is not None
+            ):
+                continue
+            record = FunctionLocation(
+                label=label,
+                qualified_name=qn,
+                container_qn=container if isinstance(container, str) else None,
+            )
+            keys = {(module_qn, start_line, start_col)}
+            if name_col is not None:
+                # The NAME token can sit on a LATER line than the declaration
+                # start (a multiline Go receiver), so the alias keys at its
+                # own persisted line, never the declaration's.
+                keys.add((module_qn, name_line or start_line, name_col))
+            for key in keys:
+                if key not in locations:
+                    locations[key] = record
+                    restored += 1
+        return restored
+
+    def _affected_caller_keys(self, reindexed_keys: list[str]) -> list[str]:
+        """Relative paths of files whose code depends on a re-indexed file.
+
+        One level deep is complete: an affected caller's own DEFINITIONS are
+        unchanged, so bindings in ITS callers cannot move. A failed read
+        degrades to today's verbatim restore, never worse.
+        """
+        if not reindexed_keys or not isinstance(self.ingestor, QueryProtocol):
+            return []
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_AFFECTED_CALLER_PATHS,
+                {
+                    cs.CYPHER_PARAM_PATHS: reindexed_keys,
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="affected callers")
+            return []
+        return sorted(
+            {
+                path
+                for row in rows
+                if isinstance(path := row.get(cs.KEY_CALLER_PATH), str) and path
+            }
+        )
+
     def _capture_inbound_edges(self, reindexed_keys: list[str]) -> list[ResultRow]:
         # Record the reference edges unchanged files point at the re-indexed
         # files, BEFORE those files' subtrees (and thus the inbound edges) are
@@ -1748,7 +1902,9 @@ class GraphUpdater:
         # A missing stamp on an existing graph means it was built by an
         # unknown (pre-fingerprint) parser: treat it as stale too, without
         # paying for a fingerprint computation that cannot match.
-        if stored is None or stored != compute_parser_fingerprint():
+        if stored is None or stored != compute_parser_fingerprint(
+            repo_path=self.repo_path
+        ):
             logger.warning(ls.PARSER_FINGERPRINT_MISMATCH)
 
     def _is_already_in_sync(self) -> bool:
@@ -1938,6 +2094,34 @@ class GraphUpdater:
         reindexed_keys = sorted(
             file_key for _fp, file_key, is_new, _b in changed_entries if not is_new
         )
+        # A file depending on a re-indexed one can have its bindings moved by
+        # the change (a new override shadowing an inherited method); restoring
+        # its old edges verbatim would freeze the stale binding, so it joins
+        # the re-parse set BEFORE capture: the capture query then excludes
+        # edges among the expanded set and Pass 3 recomputes them, while its
+        # own inbound edges are captured and restored like any re-indexed
+        # file's (issue #1229 phase 4).
+        present = {file_key for _fp, file_key, _new, _b in changed_entries}
+        eligible_by_key = {file_key: fp for fp, file_key in eligible_files}
+        affected = 0
+        for caller_key in self._affected_caller_keys(reindexed_keys):
+            if caller_key in present:
+                continue
+            caller_path = eligible_by_key.get(caller_key)
+            if caller_path is None or not caller_path.is_file():
+                continue
+            try:
+                caller_bytes = caller_path.read_bytes()
+            except OSError:
+                continue
+            changed_entries.append((caller_path, caller_key, False, caller_bytes))
+            present.add(caller_key)
+            affected += 1
+        if affected:
+            logger.info(ls.INCREMENTAL_AFFECTED_CALLERS, count=affected)
+            reindexed_keys = sorted(
+                file_key for _fp, file_key, is_new, _b in changed_entries if not is_new
+            )
         captured_inbound = self._capture_inbound_edges(reindexed_keys)
         self._reparsed_file_keys = {
             file_key for _fp, file_key, _new, _b in changed_entries
@@ -2030,7 +2214,7 @@ class GraphUpdater:
         if is_full_build:
             _save_parser_fingerprint(
                 self.repo_path / cs.PARSER_FINGERPRINT_FILENAME,
-                compute_parser_fingerprint(),
+                compute_parser_fingerprint(repo_path=self.repo_path),
             )
 
     def _pre_parse_changed_files(
@@ -2210,6 +2394,7 @@ class GraphUpdater:
         ]
 
         read_failed = False
+        legacy_file_keys: list[tuple[str, str]] = []
         for query_all, delete_query, label in prune_specs:
             try:
                 rows = self.ingestor.fetch_all(query_all)
@@ -2233,6 +2418,17 @@ class GraphUpdater:
                 if isinstance(abs_path, str) and not (
                     abs_path == repo_abs or abs_path.startswith(repo_abs + "/")
                 ):
+                    # An out-of-repo File key the containment gate would leak
+                    # forever: legacy pre-GHSA-85gg nodes were keyed on a
+                    # symlink's dereferenced TARGET. A key that disagrees with
+                    # the identity derivable from the relative path is such a
+                    # record; one that agrees is a file under a symlinked
+                    # ancestor directory, legitimate under the current scheme
+                    # (issue #1156).
+                    if label == "File" and abs_path != (
+                        cached_file_identity_posix(self.repo_path / path)
+                    ):
+                        legacy_file_keys.append((path, abs_path))
                     continue
                 if isinstance(qn, str) and qn and not qn.startswith(project_prefix):
                     continue
@@ -2266,6 +2462,8 @@ class GraphUpdater:
             # for the next healthy run.
             return
 
+        total_pruned += self._sweep_legacy_file_identities(legacy_file_keys)
+
         # Drop external import-target modules that no module imports anymore,
         # e.g. an imported name renamed/removed on an incremental rebuild.
         self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
@@ -2278,6 +2476,64 @@ class GraphUpdater:
             logger.info(ls.PRUNE_COMPLETE, count=total_pruned)
         else:
             logger.info(ls.PRUNE_SKIP)
+
+    def _sweep_legacy_file_identities(self, candidates: list[tuple[str, str]]) -> int:
+        """Delete legacy target-resolved File records, sparing shared keys.
+
+        File nodes MERGE globally on absolute_path, so the stale key can be
+        the very node another project legitimately owns (its repo contains
+        the old link's target); any container from outside this repository
+        vetoes the delete (issue #1156).
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return 0
+        swept = 0
+        for path, abs_path in candidates:
+            if not self._file_key_owned_only_by_this_project(abs_path):
+                continue
+            logger.debug(ls.PRUNE_DELETING, label="File", path=path)
+            self.ingestor.execute_write(cs.CYPHER_DELETE_FILE, {cs.KEY_PATH: abs_path})
+            swept += 1
+        if swept:
+            logger.info(ls.PRUNE_LEGACY_IDENTITIES, count=swept)
+        return swept
+
+    def _file_key_owned_only_by_this_project(self, abs_path: str) -> bool:
+        """Positive attribution: every container is this project's, and at
+        least one exists. A sibling project's node can share both the key
+        and the relative path (issue #897), and a node whose containers are
+        missing or unreadable offers no evidence of sole ownership, so both
+        veto the sweep.
+        """
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_FILE_CONTAINERS, {cs.KEY_PATH: abs_path}
+            )
+        except Exception:
+            # Unreadable ownership is unknown ownership: never delete a
+            # globally merged key on a failed read, and never let the
+            # failure escape mid-update.
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="File containers")
+            return False
+        repo_abs = self.repo_path.resolve().as_posix()
+        if not all(self._container_is_ours(row, repo_abs) for row in rows):
+            return False
+        return bool(rows)
+
+    def _container_is_ours(self, row: ResultRow, repo_abs: str) -> bool:
+        """Whether one container row proves THIS project's ownership.
+
+        A foreign Project or Folder, and equally a container with no usable
+        identity, reads as not-ours: partial evidence must never delete a
+        globally merged key.
+        """
+        labels = row.get("labels")
+        if isinstance(labels, list) and cs.NodeLabel.PROJECT.value in labels:
+            return row.get("name") == self.project_name
+        container_abs = row.get("absolute_path")
+        if isinstance(container_abs, str) and container_abs:
+            return container_abs == repo_abs or container_abs.startswith(repo_abs + "/")
+        return False
 
     def _generate_semantic_embeddings(self) -> None:
         if self.skip_embeddings:
