@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "source_date": "2026-08-19",
+  "batch": "AM",
+  "source_markdown": "knowledge/github-trending/2026-08-19.md",
+  "projects": [
+    {
+      "repository": "android/skills",
+      "source_url": "https://github.com/android/skills",
+      "category": "skill",
+      "subcategory": "development",
+      "slug": "android-skills",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "6685cac2923e3ccc7e5c385019464374699cda95"
+    },
+    {
+      "repository": "microsoft/playwright-mcp",
+      "source_url": "https://github.com/microsoft/playwright-mcp",
+      "category": "mcp",
+      "subcategory": "servers",
+      "slug": "playwright-mcp",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "7e0457a7cbf88823bf0146d12c46ae12c6818247"
+    },
+    {
+      "repository": "volcengine/OpenViking",
+      "source_url": "https://github.com/volcengine/OpenViking",
+      "category": "agent",
+      "subcategory": "memory",
+      "slug": "openviking",
+      "license": "AGPL-3.0",
+      "download": true,
+      "ref": "main",
+      "commit": "3590b47a25bd008068e35c8423149e3baa3203b8"
+    },
+    {
+      "repository": "bojieli/ai-agent-book",
+      "source_url": "https://github.com/bojieli/ai-agent-book",
+      "category": "knowledge",
+      "subcategory": "cases",
+      "slug": "ai-agent-book",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "1d8280707ba3cb5dbd1370fb3fda48b20bbe9523"
+    }
+  ]
+}
