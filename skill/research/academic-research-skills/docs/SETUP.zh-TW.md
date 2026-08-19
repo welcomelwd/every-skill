@@ -180,13 +180,13 @@ ARS 使用繼承的 Claude session 模型即可完整運作。想要更高信心
 
 ```bash
 # Step 1: Set your API key (choose one or both)
-export OPENAI_API_KEY="sk-your-key-here"        # For GPT-5.5 / GPT-5.5 Pro
+export OPENAI_API_KEY="sk-your-key-here"        # For GPT-5.6 Sol / GPT-5.5
 export GOOGLE_AI_API_KEY="AIza-your-key-here"    # For Gemini 3.1 Pro
 
 # Step 2: Choose your cross-verification model
-export ARS_CROSS_MODEL="gpt-5.5"                # Recommended pair (gpt-5.5-pro = strongest reasoning, ~6x cost)
-# or: export ARS_CROSS_MODEL="gemini-3.1-pro-preview"  # Strong at factual verification
-# or: export ARS_CROSS_MODEL="gpt-5.6-sol"      # Frontier, provisional pending ARS validation (same rates as gpt-5.5)
+export ARS_CROSS_MODEL="gpt-5.6-sol"            # Current OpenAI flagship — provisional pending ARS validation (run scripts/cross_model_smoke_test.sh)
+# or: export ARS_CROSS_MODEL="gemini-3.1-pro-preview"  # Current Google flagship — validated, strong at factual verification
+# or: export ARS_CROSS_MODEL="gpt-5.5"          # Previous generation — validated (designated bakeoff baseline)
 
 # Optional: reasoning effort for OpenAI verifier calls (unset = provider default)
 # export ARS_CROSS_MODEL_REASONING_EFFORT="medium"
@@ -221,6 +221,9 @@ OpenAI API key 而改走該訂閱。這不涵蓋魔鬼代言人、Reviewer 2、�
 ```bash
 # Citation-integrity calls only. General DA/reviewer/judgment calls remain on API transport.
 export ARS_CROSS_MODEL_TRANSPORT="codex"
+# Deliberate transport-specific exception to the generation-currency recommendation:
+# this closed citation adapter's example stays on validated gpt-5.5. Set another id
+# only after scripts/cross_model_smoke_test_codex.sh passes against your subscription.
 export ARS_CROSS_MODEL="gpt-5.5"
 
 python3 scripts/cross_model_codex_transport.py detect

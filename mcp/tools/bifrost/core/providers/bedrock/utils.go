@@ -1332,7 +1332,6 @@ func convertContentBlock(ctx context.Context, block schemas.ChatContentBlock) ([
 		if block.File.FileData != nil && strings.HasPrefix(*block.File.FileData, "data:") {
 			dataURLMediaType, dataURLIsBase64, dataURLPayload, isDataURL = schemas.ParseDataURL(*block.File.FileData)
 		}
-
 		// Resolve the document format, most authoritative hint first. Falls back to
 		// the "pdf" default only when nothing identifies the document.
 		format, isText := "", false
@@ -1378,7 +1377,16 @@ func convertContentBlock(ctx context.Context, block schemas.ChatContentBlock) ([
 						Document: documentSource,
 					},
 				}, nil
+			} else if strings.HasPrefix(*block.File.FileURL, "s3://") {
+				// The scheme is right but the reference is not: bedrockS3LocationFromURL
+				// rejects a bucket with no object key. Falling through would hand it to
+				// the http(s) fetch path, whose "unsupported URL scheme" refusal is
+				// actively misleading -- s3:// is supported, this one is just malformed.
+				return nil, fmt.Errorf("invalid s3:// document reference %q: expected s3://bucket/key", *block.File.FileURL)
 			}
+		}
+		if format != "" {
+			documentSource.Format = format
 		}
 
 		// URL-sourced document: fetch and inline the bytes. Converse has no url member
@@ -1410,9 +1418,11 @@ func convertContentBlock(ctx context.Context, block schemas.ChatContentBlock) ([
 					documentSource.Source.Bytes = &dataURLPayload
 				} else {
 					// Inline percent-encoded payload (data:text/plain,Hello%20World)
-					if decoded, err := url.PathUnescape(dataURLPayload); err == nil {
-						dataURLPayload = decoded
+					decoded, err := url.PathUnescape(dataURLPayload)
+					if err != nil {
+						return nil, fmt.Errorf("invalid percent-encoded data URL payload: %w", err)
 					}
+					dataURLPayload = decoded
 					if isText {
 						documentSource.Source.Text = &dataURLPayload
 					}
@@ -1458,10 +1468,6 @@ func convertContentBlock(ctx context.Context, block schemas.ChatContentBlock) ([
 	}
 }
 
-// bedrockImageFormatFromPath derives a Converse image format from a URI's extension.
-// Only needed on the s3Location path: nothing is downloaded there, so there is no
-// Content-Type to read the format from, and Converse requires one on every image block.
-// The four names are the formats Converse accepts.
 // bedrockDocumentFormatFromPath resolves a Converse document format from a URL's
 // object key, which is the only signal left for an s3:// reference: nothing is
 // downloaded, so there is no Content-Type and no bytes to sniff.
@@ -1482,6 +1488,10 @@ func bedrockDocumentFormatFromPath(rawURL string) (string, bool) {
 	return format, ok
 }
 
+// bedrockImageFormatFromPath derives a Converse image format from a URI's extension.
+// Only needed on the s3Location path: nothing is downloaded there, so there is no
+// Content-Type to read the format from, and Converse requires one on every image block.
+// The four names are the formats Converse accepts.
 func bedrockImageFormatFromPath(rawURL string) (string, error) {
 	path := rawURL
 	if i := strings.IndexAny(path, "?#"); i >= 0 {

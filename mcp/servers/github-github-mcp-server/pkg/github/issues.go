@@ -499,6 +499,12 @@ type IssueFragment struct {
 			Description githubv4.String
 		}
 	} `graphql:"labels(first: 100)"`
+	// GitHub caps issue assignees at 10, so first: 100 cannot truncate.
+	Assignees struct {
+		Nodes []struct {
+			Login githubv4.String
+		}
+	} `graphql:"assignees(first: 100)"`
 	Comments struct {
 		TotalCount githubv4.Int
 	} `graphql:"comments"`
@@ -507,14 +513,59 @@ type IssueFragment struct {
 	} `graphql:"issueFieldValues(first: 25)"`
 }
 
+type issueFragmentWithoutFieldValues struct {
+	Number     githubv4.Int
+	Title      githubv4.String
+	Body       githubv4.String
+	State      githubv4.String
+	DatabaseID int64
+
+	Author struct {
+		Login githubv4.String
+	}
+	CreatedAt githubv4.DateTime
+	UpdatedAt githubv4.DateTime
+	Labels    struct {
+		Nodes []struct {
+			Name        githubv4.String
+			ID          githubv4.String
+			Description githubv4.String
+		}
+	} `graphql:"labels(first: 100)"`
+	Assignees struct {
+		Nodes []struct {
+			Login githubv4.String
+		}
+	} `graphql:"assignees(first: 100)"`
+	Comments struct {
+		TotalCount githubv4.Int
+	} `graphql:"comments"`
+}
+
 // Common interface for all issue query types
 type IssueQueryResult interface {
 	GetIssueFragment() IssueQueryFragment
 	GetIsPrivate() bool
 }
 
+type issueQueryResultWithoutFieldValues interface {
+	getIssueFragmentWithoutFieldValues() issueQueryFragmentWithoutFieldValues
+	GetIsPrivate() bool
+}
+
 type IssueQueryFragment struct {
 	Nodes    []IssueFragment `graphql:"nodes"`
+	PageInfo struct {
+		HasNextPage     githubv4.Boolean
+		HasPreviousPage githubv4.Boolean
+		StartCursor     githubv4.String
+		EndCursor       githubv4.String
+	}
+	TotalCount int
+}
+
+type issueQueryFragmentWithoutFieldValues struct {
+	Nodes    []issueFragmentWithoutFieldValues `graphql:"nodes"`
 	PageInfo struct {
 		HasNextPage     githubv4.Boolean
 		HasPreviousPage githubv4.Boolean
@@ -556,6 +607,34 @@ type ListIssuesQueryTypeWithLabelsWithSince struct {
 	} `graphql:"repository(owner: $owner, name: $repo)"`
 }
 
+type listIssuesQueryWithoutFieldValues struct {
+	Repository struct {
+		Issues    issueQueryFragmentWithoutFieldValues `graphql:"issues(first: $first, after: $after, states: $states, orderBy: {field: $orderBy, direction: $direction})"`
+		IsPrivate githubv4.Boolean
+	} `graphql:"repository(owner: $owner, name: $repo)"`
+}
+
+type listIssuesQueryWithLabelsWithoutFieldValues struct {
+	Repository struct {
+		Issues    issueQueryFragmentWithoutFieldValues `graphql:"issues(first: $first, after: $after, labels: $labels, states: $states, orderBy: {field: $orderBy, direction: $direction})"`
+		IsPrivate githubv4.Boolean
+	} `graphql:"repository(owner: $owner, name: $repo)"`
+}
+
+type listIssuesQueryWithSinceWithoutFieldValues struct {
+	Repository struct {
+		Issues    issueQueryFragmentWithoutFieldValues `graphql:"issues(first: $first, after: $after, states: $states, orderBy: {field: $orderBy, direction: $direction}, filterBy: {since: $since})"`
+		IsPrivate githubv4.Boolean
+	} `graphql:"repository(owner: $owner, name: $repo)"`
+}
+
+type listIssuesQueryWithLabelsAndSinceWithoutFieldValues struct {
+	Repository struct {
+		Issues    issueQueryFragmentWithoutFieldValues `graphql:"issues(first: $first, after: $after, labels: $labels, states: $states, orderBy: {field: $orderBy, direction: $direction}, filterBy: {since: $since})"`
+		IsPrivate githubv4.Boolean
+	} `graphql:"repository(owner: $owner, name: $repo)"`
+}
+
 // IssueFieldValueFilter mirrors the GraphQL IssueFieldValueFilter input. Exactly one typed value
 // field should be set per filter (the monolith resolver rejects multiple).
 type IssueFieldValueFilter struct {
@@ -593,7 +672,39 @@ func (q *ListIssuesQueryTypeWithLabelsWithSince) GetIsPrivate() bool {
 	return bool(q.Repository.IsPrivate)
 }
 
-func getIssueQueryType(hasLabels bool, hasSince bool) any {
+func (q *listIssuesQueryWithoutFieldValues) getIssueFragmentWithoutFieldValues() issueQueryFragmentWithoutFieldValues {
+	return q.Repository.Issues
+}
+
+func (q *listIssuesQueryWithoutFieldValues) GetIsPrivate() bool {
+	return bool(q.Repository.IsPrivate)
+}
+
+func (q *listIssuesQueryWithLabelsWithoutFieldValues) getIssueFragmentWithoutFieldValues() issueQueryFragmentWithoutFieldValues {
+	return q.Repository.Issues
+}
+
+func (q *listIssuesQueryWithLabelsWithoutFieldValues) GetIsPrivate() bool {
+	return bool(q.Repository.IsPrivate)
+}
+
+func (q *listIssuesQueryWithSinceWithoutFieldValues) getIssueFragmentWithoutFieldValues() issueQueryFragmentWithoutFieldValues {
+	return q.Repository.Issues
+}
+
+func (q *listIssuesQueryWithSinceWithoutFieldValues) GetIsPrivate() bool {
+	return bool(q.Repository.IsPrivate)
+}
+
+func (q *listIssuesQueryWithLabelsAndSinceWithoutFieldValues) getIssueFragmentWithoutFieldValues() issueQueryFragmentWithoutFieldValues {
+	return q.Repository.Issues
+}
+
+func (q *listIssuesQueryWithLabelsAndSinceWithoutFieldValues) GetIsPrivate() bool {
+	return bool(q.Repository.IsPrivate)
+}
+
+func getIssueQueryType(hasLabels bool, hasSince bool) IssueQueryResult {
 	switch {
 	case hasLabels && hasSince:
 		return &ListIssuesQueryTypeWithLabelsWithSince{}
@@ -604,6 +715,32 @@ func getIssueQueryType(hasLabels bool, hasSince bool) any {
 	default:
 		return &ListIssuesQuery{}
 	}
+}
+
+func getIssueQueryTypeWithoutFieldValues(hasLabels bool, hasSince bool) issueQueryResultWithoutFieldValues {
+	switch {
+	case hasLabels && hasSince:
+		return &listIssuesQueryWithLabelsAndSinceWithoutFieldValues{}
+	case hasLabels:
+		return &listIssuesQueryWithLabelsWithoutFieldValues{}
+	case hasSince:
+		return &listIssuesQueryWithSinceWithoutFieldValues{}
+	default:
+		return &listIssuesQueryWithoutFieldValues{}
+	}
+}
+
+func isUnsupportedListIssuesIssueFieldsError(err error) bool {
+	message := err.Error()
+	if strings.Contains(message, "IssueFieldValueFilter") {
+		return true
+	}
+	if !strings.Contains(message, "issueFieldValues") {
+		return false
+	}
+	return strings.Contains(message, "doesn't exist on type") ||
+		strings.Contains(message, "doesn't accept argument") ||
+		(strings.Contains(message, "Argument 'filterBy'") && strings.Contains(message, "invalid value"))
 }
 
 // IssueRead creates a tool to get details of a specific issue in a GitHub repository.
@@ -3025,19 +3162,39 @@ func ListIssues(t translations.TranslationHelperFunc) inventory.ServerTool {
 			// input type unconditionally, so we always opt into the feature via header. This
 			// is a no-op once the flags are globally rolled out.
 			ctxWithFeatures := ghcontext.WithGraphQLFeatures(ctx, "issue_fields", "repo_issue_fields")
-			if err := client.Query(ctxWithFeatures, issueQuery, vars); err != nil {
-				return ghErrors.NewGitHubGraphQLErrorResponse(
-					ctx,
-					"failed to list issues",
-					err,
-				), nil, nil
-			}
+			issueFieldsErr := client.Query(ctxWithFeatures, issueQuery, vars)
 
 			var resp MinimalIssuesResponse
 			var isPrivate bool
-			if queryResult, ok := issueQuery.(IssueQueryResult); ok {
-				resp = convertToMinimalIssuesResponse(queryResult.GetIssueFragment())
-				isPrivate = queryResult.GetIsPrivate()
+			if issueFieldsErr == nil {
+				resp = convertToMinimalIssuesResponse(issueQuery.GetIssueFragment())
+				isPrivate = issueQuery.GetIsPrivate()
+			} else {
+				if len(fieldFilters) > 0 || !isUnsupportedListIssuesIssueFieldsError(issueFieldsErr) {
+					return ghErrors.NewGitHubGraphQLErrorResponse(
+						ctx,
+						"failed to list issues",
+						issueFieldsErr,
+					), nil, nil
+				}
+
+				issueQueryWithoutFieldValues := getIssueQueryTypeWithoutFieldValues(hasLabels, hasSince)
+				varsWithoutFieldValues := make(map[string]any, len(vars)-1)
+				for name, value := range vars {
+					if name != "issueFieldValues" {
+						varsWithoutFieldValues[name] = value
+					}
+				}
+				if fallbackErr := client.Query(ctx, issueQueryWithoutFieldValues, varsWithoutFieldValues); fallbackErr != nil {
+					return ghErrors.NewGitHubGraphQLErrorResponse(
+						ctx,
+						"failed to list issues",
+						fmt.Errorf("issue-fields query failed: %w; fallback query failed: %w", issueFieldsErr, fallbackErr),
+					), nil, nil
+				}
+
+				resp = convertToMinimalIssuesResponseWithoutFieldValues(issueQueryWithoutFieldValues.getIssueFragmentWithoutFieldValues())
+				isPrivate = issueQueryWithoutFieldValues.GetIsPrivate()
 			}
 
 			filtered := false

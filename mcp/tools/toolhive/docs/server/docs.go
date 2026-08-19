@@ -794,8 +794,12 @@ const docTemplate = `{
                         "description": "ActorClaim names the claim identifying the client that requested the\nsubject token from THIS EXTERNAL ISSUER (used by AllowedActors below).\nValues are in the external issuer's namespace, NOT ToolHive client\nIDs. Defaults to \"azp\"; use \"appid\" for Microsoft Entra v1, \"cid\" for\nOkta. The special value \"client_id\" reads ValidatedClaims.ClientID\ninstead of Extra (assignClaim routes it to that field) — it is still\nthe external token's client_id claim, not a ToolHive one.",
                         "type": "string"
                     },
+                    "actor_matcher": {
+                        "description": "ActorMatcher is an admin-authored CEL expression evaluated against the\ncomplete signature-verified JWT claims map as \"claims\". A true result\nauthorizes delegation alongside AllowedActors; a syntax or type error\nfails configuration validation. An expression that compiles but does\nnot return bool is NOT caught at that point, though — it compiles\nsuccessfully and is only rejected the first time it is evaluated\nagainst a real token, denying that token (and every one after it, since\nthe expression will never return bool). Any other runtime evaluation\nerror denies the token the same way.",
+                        "type": "string"
+                    },
                     "allow_may_act": {
-                        "description": "AllowMayAct permits this external issuer's may_act claim to authorize\ndelegation. It defaults to false; external issuers must be opted in\nexplicitly because may_act bypasses AllowedActors. It does not affect\nself-issued subject tokens. When enabled, AllowedDelegateClients must\nname specific ToolHive clients rather than use the wildcard.",
+                        "description": "AllowMayAct permits this external issuer's may_act claim to authorize\ndelegation. It defaults to false; external issuers must be opted in\nexplicitly because may_act bypasses AllowedActors and ActorMatcher. It\ndoes not affect self-issued subject tokens. When enabled,\nAllowedDelegateClients must name specific ToolHive clients rather than\nuse the wildcard.",
                         "type": "boolean"
                     },
                     "allow_private_ips": {
@@ -803,7 +807,7 @@ const docTemplate = `{
                         "type": "boolean"
                     },
                     "allowed_actors": {
-                        "description": "AllowedActors is the allowlist of ActorClaim values authorized to\nexchange a subject token from this issuer when it carries no\n\"may_act\" claim. Empty denies every token unless AllowMayAct is true\nand the token carries a permitted may_act claim. By itself names no\nToolHive client — see AllowedDelegateClients and\ndocs/arch/17-token-exchange-delegation.md (\"Accepted limitations\" #1).",
+                        "description": "AllowedActors is the allowlist of ActorClaim values authorized to\nexchange a subject token from this issuer when it carries no\n\"may_act\" claim. ActorMatcher can additionally authorize a token by\nmatching its complete verified claims map; either signal is sufficient.\nWhen both are empty, only may_act-bearing tokens are accepted, and only\nif AllowMayAct is also true for this issuer. By itself names no\nToolHive client — see AllowedDelegateClients and\ndocs/arch/17-token-exchange-delegation.md (\"Accepted limitations\" #1).",
                         "items": {
                             "type": "string"
                         },
@@ -4992,7 +4996,7 @@ const docTemplate = `{
                         "type": "object"
                     },
                     "enablePrometheusMetricsPath": {
-                        "description": "EnablePrometheusMetricsPath controls whether to expose Prometheus-style /metrics endpoint.\nThe metrics are served on the main transport port at /metrics.\nThis is separate from OTLP metrics which are sent to the Endpoint.\n+kubebuilder:default=false\n+optional",
+                        "description": "EnablePrometheusMetricsPath controls whether to expose Prometheus-style /metrics endpoint.\nThe metrics are served at /metrics on a dedicated diagnostics port rather than on the\nmain transport port, so the endpoint can be restricted by port and is not routed\nalongside application traffic. The endpoint is unauthenticated either way.\nSee PrometheusPort and pkg/diagnostics.\nThis is separate from OTLP metrics which are sent to the Endpoint.\n+kubebuilder:default=false\n+optional",
                         "type": "boolean"
                     },
                     "endpoint": {
@@ -5021,6 +5025,10 @@ const docTemplate = `{
                     "metricsEnabled": {
                         "description": "MetricsEnabled controls whether OTLP metrics are enabled.\nWhen false, OTLP metrics are not sent even if an endpoint is configured.\nThis is independent of EnablePrometheusMetricsPath.\n+kubebuilder:default=false\n+optional",
                         "type": "boolean"
+                    },
+                    "prometheusPort": {
+                        "description": "PrometheusPort is the port the Prometheus /metrics endpoint is served on when\nEnablePrometheusMetricsPath is true. It is deliberately not the main transport port,\nso that access can be restricted with a NetworkPolicy: NetworkPolicy matches on port,\nnot on HTTP path, so a shared port makes \"allow MCP traffic, deny metrics scraping\"\nimpossible to express. The endpoint itself is unauthenticated, so restricting who can\nreach this port is how it is protected.\n\nZero selects the default diagnostics port (9464, the OpenTelemetry specification's\nPrometheus exporter default). If that port is taken the listener falls back to an\navailable one and logs the resolved address. Do not route this port publicly.\n+optional",
+                        "type": "integer"
                     },
                     "samplingRate": {
                         "description": "SamplingRate is the trace sampling rate (0.0-1.0) as a string.\nOnly used when TracingEnabled is true.\nExample: \"0.05\" for 5% sampling.\n+kubebuilder:default=\"0.05\"\n+optional",
@@ -8333,7 +8341,7 @@ const docTemplate = `{
                 ]
             },
             "post": {
-                "description": "Create and start a new workload",
+                "description": "Create and start a new workload\nruntime_config is only accepted for protocol-scheme images\n(uvx://, npx://, go://); supplying it with an ordinary image\nreference or a remote url is rejected with 400.",
                 "requestBody": {
                     "content": {
                         "application/json": {
@@ -8698,7 +8706,7 @@ const docTemplate = `{
         },
         "/api/v1beta/workloads/{name}/edit": {
             "post": {
-                "description": "Update an existing workload configuration",
+                "description": "Update an existing workload configuration\nruntime_config on a non-protocol-scheme image is accepted only when it\nexactly matches the workload's persisted config and the image and url\nare unchanged (an inert echo, e.g. from a prior GET); otherwise it is\nrejected with 400.",
                 "parameters": [
                     {
                         "description": "Workload name",

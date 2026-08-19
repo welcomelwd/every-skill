@@ -80,6 +80,7 @@ repo to install.
   - [**Google Cloud global external Application Load Balancer Configuration Skill**](./skills/cloud/google-cloud-global-frontend-configuration)
   - [**Google Cloud Networking Observability Expert**](./skills/cloud/google-cloud-networking-observability)
   - [**Google Cloud Storage Basics**](./skills/cloud/google-cloud-storage-basics)
+  - [**Google Cloud Storage FUSE**](./skills/cloud/google-cloud-storage-fuse)
 - **Databases and analytics**
   - [**AlloyDB Basics**](./skills/cloud/alloydb-basics)
   - [**BigFrames (BigQuery DataFrame) basics**](./skills/cloud/bigquery-bigframes)

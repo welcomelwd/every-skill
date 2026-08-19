@@ -3,16 +3,16 @@
   "repository": "cline/cline",
   "source_url": "https://github.com/cline/cline",
   "ref": "main",
-  "resolved_commit": "38f8260bc322c90a8c395ff9d3d950334b740f4a",
+  "resolved_commit": "dfa34ecea85b6b2689be37b3480b17678eeed915",
   "category": "agent",
   "subcategory": "runtimes",
   "slug": "cline",
   "license": null,
   "source_date": null,
-  "imported_at": "2026-08-18T23:11:10+00:00",
+  "imported_at": "2026-08-19T10:07:39+00:00",
   "download_mode": "bounded source snapshot",
-  "copied_files": 3559,
-  "copied_bytes": 26022074,
+  "copied_files": 3574,
+  "copied_bytes": 26214286,
   "excluded_files": [
     ".worktreeinclude: symlink",
     ".claude/commands/hotfix-release.md: symlink",
@@ -171,7 +171,14 @@
     "docs/pull-requests/12941/after-model-combobox.png: binary content",
     "docs/pull-requests/12941/before-composer-bottom-bar.png: binary content",
     "docs/pull-requests/12941/before-composer.png: binary content",
-    "sdk/packages/llms/src/catalog/catalog.generated.ts: file exceeds 2097152 bytes"
+    "sdk/packages/llms/src/catalog/catalog.generated.ts: file exceeds 2097152 bytes",
+    "sdk/packages/ui/theme/scoped-tokens.css: project exceeds 26214400 bytes",
+    "sdk/packages/ui/theme/theme.css: project exceeds 26214400 bytes",
+    "sdk/packages/ui/theme/tokens.css: project exceeds 26214400 bytes",
+    "sdk/scripts/check-publish.ts: project exceeds 26214400 bytes",
+    "sdk/scripts/ci-node-smoke.ts: project exceeds 26214400 bytes",
+    "sdk/scripts/release.ts: project exceeds 26214400 bytes",
+    "sdk/scripts/version.ts: project exceeds 26214400 bytes"
   ],
   "execution": "never run by this importer"
 }

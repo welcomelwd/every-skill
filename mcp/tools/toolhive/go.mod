@@ -28,7 +28,7 @@ require (
 	github.com/gofrs/flock v0.13.0
 	github.com/google/cel-go v0.30.0
 	github.com/google/go-cmp v0.7.0
-	github.com/google/go-containerregistry v0.21.8
+	github.com/google/go-containerregistry v0.21.9
 	github.com/google/uuid v1.6.0
 	github.com/lestrrat-go/httprc/v3 v3.0.6
 	github.com/lestrrat-go/jwx/v3 v3.0.13
@@ -48,7 +48,7 @@ require (
 	github.com/redis/go-redis/v9 v9.21.0
 	github.com/shirou/gopsutil/v4 v4.26.5
 	github.com/spf13/viper v1.21.0
-	github.com/stacklok/toolhive-catalog v0.20260810.0
+	github.com/stacklok/toolhive-catalog v0.20260817.0
 	github.com/stacklok/toolhive-core v0.0.38
 	github.com/stretchr/testify v1.11.1
 	github.com/swaggo/swag/v2 v2.0.0-rc5
@@ -217,12 +217,12 @@ require (
 	github.com/mattn/go-runewidth v0.0.23 // indirect
 	github.com/mattn/goveralls v0.0.12 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
-	github.com/moby/go-archive v0.2.0 // indirect
+	github.com/moby/go-archive v0.3.0 // indirect
 	github.com/moby/moby/api v1.55.0
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/spdystream v0.5.1 // indirect
-	github.com/moby/sys/sequential v0.6.0 // indirect
-	github.com/moby/sys/user v0.4.0 // indirect
+	github.com/moby/sys/sequential v0.7.0 // indirect
+	github.com/moby/sys/user v0.4.1 // indirect
 	github.com/moby/sys/userns v0.1.0 // indirect
 	github.com/moby/term v0.5.2 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect

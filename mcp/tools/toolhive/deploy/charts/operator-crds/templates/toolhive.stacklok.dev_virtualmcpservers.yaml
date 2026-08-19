@@ -646,14 +646,27 @@ spec:
                             client_id claim instead.
                           maxLength: 64
                           type: string
+                        actorMatcher:
+                          description: |-
+                            ActorMatcher is an admin-authored CEL expression evaluated against the
+                            subject token's complete signature-verified claims map (bound as
+                            "claims") to authorize a class of external actors, in addition to (not
+                            instead of) allowedActors — either signal is sufficient. Must evaluate
+                            to a boolean; a non-boolean result denies the token at evaluation time,
+                            not at reconcile time. A syntactically invalid expression fails
+                            reconciliation (surfaced via the AuthServerConfigValidated condition),
+                            not admission — there is no validating webhook for this field.
+                          maxLength: 4096
+                          type: string
                         allowMayAct:
                           default: false
                           description: |-
                             AllowMayAct permits this external issuer's may_act claim to authorize
                             delegation. Defaults to false; external issuers must be opted in
-                            explicitly because may_act bypasses allowedActors. Does not affect
-                            self-issued subject tokens. The wildcard is never permitted alongside
-                            specific allowedDelegateClients, regardless of this setting.
+                            explicitly because may_act bypasses allowedActors and actorMatcher.
+                            Does not affect self-issued subject tokens. The wildcard is never
+                            permitted alongside specific allowedDelegateClients, regardless of
+                            this setting.
                           type: boolean
                         allowPrivateIPs:
                           description: |-
@@ -668,8 +681,10 @@ spec:
                           description: |-
                             AllowedActors is the allowlist of actorClaim values authorized to
                             exchange a subject token from this issuer when it carries no
-                            "may_act" claim. Empty denies every token unless allowMayAct is true
-                            and the token carries a permitted may_act claim.
+                            "may_act" claim, in addition to (not instead of) actorMatcher below —
+                            either signal is sufficient. Empty denies every token unless
+                            actorMatcher is set, or allowMayAct is true and the token carries a
+                            permitted may_act claim.
                           items:
                             maxLength: 256
                             minLength: 1
@@ -3141,7 +3156,10 @@ spec:
                         default: false
                         description: |-
                           EnablePrometheusMetricsPath controls whether to expose Prometheus-style /metrics endpoint.
-                          The metrics are served on the main transport port at /metrics.
+                          The metrics are served at /metrics on a dedicated diagnostics port rather than on the
+                          main transport port, so the endpoint can be restricted by port and is not routed
+                          alongside application traffic. The endpoint is unauthenticated either way.
+                          See PrometheusPort and pkg/diagnostics.
                           This is separate from OTLP metrics which are sent to the Endpoint.
                         type: boolean
                       endpoint:
@@ -3174,6 +3192,19 @@ spec:
                           When false, OTLP metrics are not sent even if an endpoint is configured.
                           This is independent of EnablePrometheusMetricsPath.
                         type: boolean
+                      prometheusPort:
+                        description: |-
+                          PrometheusPort is the port the Prometheus /metrics endpoint is served on when
+                          EnablePrometheusMetricsPath is true. It is deliberately not the main transport port,
+                          so that access can be restricted with a NetworkPolicy: NetworkPolicy matches on port,
+                          not on HTTP path, so a shared port makes "allow MCP traffic, deny metrics scraping"
+                          impossible to express. The endpoint itself is unauthenticated, so restricting who can
+                          reach this port is how it is protected.
+
+                          Zero selects the default diagnostics port (9464, the OpenTelemetry specification's
+                          Prometheus exporter default). If that port is taken the listener falls back to an
+                          available one and logs the resolved address. Do not route this port publicly.
+                        type: integer
                       samplingRate:
                         default: "0.05"
                         description: |-
@@ -4491,14 +4522,27 @@ spec:
                             client_id claim instead.
                           maxLength: 64
                           type: string
+                        actorMatcher:
+                          description: |-
+                            ActorMatcher is an admin-authored CEL expression evaluated against the
+                            subject token's complete signature-verified claims map (bound as
+                            "claims") to authorize a class of external actors, in addition to (not
+                            instead of) allowedActors — either signal is sufficient. Must evaluate
+                            to a boolean; a non-boolean result denies the token at evaluation time,
+                            not at reconcile time. A syntactically invalid expression fails
+                            reconciliation (surfaced via the AuthServerConfigValidated condition),
+                            not admission — there is no validating webhook for this field.
+                          maxLength: 4096
+                          type: string
                         allowMayAct:
                           default: false
                           description: |-
                             AllowMayAct permits this external issuer's may_act claim to authorize
                             delegation. Defaults to false; external issuers must be opted in
-                            explicitly because may_act bypasses allowedActors. Does not affect
-                            self-issued subject tokens. The wildcard is never permitted alongside
-                            specific allowedDelegateClients, regardless of this setting.
+                            explicitly because may_act bypasses allowedActors and actorMatcher.
+                            Does not affect self-issued subject tokens. The wildcard is never
+                            permitted alongside specific allowedDelegateClients, regardless of
+                            this setting.
                           type: boolean
                         allowPrivateIPs:
                           description: |-
@@ -4513,8 +4557,10 @@ spec:
                           description: |-
                             AllowedActors is the allowlist of actorClaim values authorized to
                             exchange a subject token from this issuer when it carries no
-                            "may_act" claim. Empty denies every token unless allowMayAct is true
-                            and the token carries a permitted may_act claim.
+                            "may_act" claim, in addition to (not instead of) actorMatcher below —
+                            either signal is sufficient. Empty denies every token unless
+                            actorMatcher is set, or allowMayAct is true and the token carries a
+                            permitted may_act claim.
                           items:
                             maxLength: 256
                             minLength: 1
@@ -6986,7 +7032,10 @@ spec:
                         default: false
                         description: |-
                           EnablePrometheusMetricsPath controls whether to expose Prometheus-style /metrics endpoint.
-                          The metrics are served on the main transport port at /metrics.
+                          The metrics are served at /metrics on a dedicated diagnostics port rather than on the
+                          main transport port, so the endpoint can be restricted by port and is not routed
+                          alongside application traffic. The endpoint is unauthenticated either way.
+                          See PrometheusPort and pkg/diagnostics.
                           This is separate from OTLP metrics which are sent to the Endpoint.
                         type: boolean
                       endpoint:
@@ -7019,6 +7068,19 @@ spec:
                           When false, OTLP metrics are not sent even if an endpoint is configured.
                           This is independent of EnablePrometheusMetricsPath.
                         type: boolean
+                      prometheusPort:
+                        description: |-
+                          PrometheusPort is the port the Prometheus /metrics endpoint is served on when
+                          EnablePrometheusMetricsPath is true. It is deliberately not the main transport port,
+                          so that access can be restricted with a NetworkPolicy: NetworkPolicy matches on port,
+                          not on HTTP path, so a shared port makes "allow MCP traffic, deny metrics scraping"
+                          impossible to express. The endpoint itself is unauthenticated, so restricting who can
+                          reach this port is how it is protected.
+
+                          Zero selects the default diagnostics port (9464, the OpenTelemetry specification's
+                          Prometheus exporter default). If that port is taken the listener falls back to an
+                          available one and logs the resolved address. Do not route this port publicly.
+                        type: integer
                       samplingRate:
                         default: "0.05"
                         description: |-

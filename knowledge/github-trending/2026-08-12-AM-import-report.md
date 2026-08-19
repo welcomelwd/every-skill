@@ -7,7 +7,7 @@
 | `cathrynlavery/diagram-design` | up-to-date | `skill/development/diagram-design @ da45d4a79a76dc0742c8554b7eabe551db100701` |
 | `datalayer/jupyter-mcp-server` | up-to-date | `mcp/servers/jupyter-mcp-server @ cf707a133123ea58a5a1db84b5260985c7dae330` |
 | `HKUDS/DeepTutor` | up-to-date | `agent/workflows/deeptutor @ 456f9c24226e008f1ff07a7e3455d7b4d39f6221` |
-| `stablyai/orca` | updated | `agent/runtimes/orca @ 1b5cc00870e58bd761b90e1d9c6c780328c4ba86 (3262 files, 26214396 bytes); excluded 13174 files` |
+| `stablyai/orca` | updated | `agent/runtimes/orca @ 73f7767eddce1d359c4f2cf342bd9a5a8b6013b9 (3255 files, 26214392 bytes); excluded 13219 files` |
 | `harveyai/harvey-labs` | up-to-date | `agent/evaluations/harvey-labs @ 60071cc424d6479569626b8c76d90b958fe2d6c0` |
 | `calesthio/OpenMontage` | up-to-date | `agent/workflows/openmontage @ 4eab34c5cfcccaa4f1970554928feccce73ee930` |
 | `huhusmang/Awesome-LLMs-for-Vulnerability-Detection` | up-to-date | `knowledge/security/awesome-llms-for-vulnerability-detection @ 25cae9f7293c4069c3c4a6245270fa57d1370719` |
