@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "source_date": "2026-08-20",
+  "batch": "AM",
+  "source_markdown": "knowledge/github-trending/2026-08-20.md",
+  "projects": [
+    {
+      "repository": "dotnet/skills",
+      "source_url": "https://github.com/dotnet/skills",
+      "category": "skill",
+      "subcategory": "development",
+      "slug": "dotnet-skills",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "ab761ad27acdf2751d97a3c4439182a6721f2631"
+    },
+    {
+      "repository": "microsoft/mcp",
+      "source_url": "https://github.com/microsoft/mcp",
+      "category": "mcp",
+      "subcategory": "servers",
+      "slug": "microsoft-mcp",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "a0da2e67e479d1fceba7dce68209c834fbf768ab"
+    },
+    {
+      "repository": "chaitanyagiri/munder-difflin",
+      "source_url": "https://github.com/chaitanyagiri/munder-difflin",
+      "category": "agent",
+      "subcategory": "workflows",
+      "slug": "munder-difflin",
+      "license": "MIT (source code; bundled assets restricted)",
+      "download": true,
+      "ref": "main",
+      "commit": "0c941d16e3d7eac32017cf345acc18d37ede1730"
+    },
+    {
+      "repository": "santifer/career-ops",
+      "source_url": "https://github.com/santifer/career-ops",
+      "category": "knowledge",
+      "subcategory": "tools",
+      "slug": "career-ops",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "8f3bcf3caf8ae6c010595d92e043993d98f0eb62"
+    }
+  ]
+}
