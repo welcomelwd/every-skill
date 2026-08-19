@@ -37,8 +37,15 @@ from .main import (
     update_model_settings,
 )
 from .parser_loader import load_parsers
+from .services.graph_diff import DiffError, diff_indexes, diff_is_empty
 from .services.graph_service import MemgraphIngestor
 from .services.protobuf_service import ProtobufFileIngestor
+from .services.provenance import (
+    capture_description,
+    source_state,
+    verify_index,
+    write_manifest,
+)
 from .stack import StackManager
 from .stack.cli import cli as daemon_cli
 from .stack.constants import StackState
@@ -688,8 +695,12 @@ def index(
         unignore_paths = cgrignore.unignore or None
 
     try:
+        indexed_source = source_state(Path(repo_to_index))
+        capture_config = _capture_selection(capture)
         ingestor = ProtobufFileIngestor(
-            output_path=output_proto_dir, split_index=split_index
+            output_path=output_proto_dir,
+            split_index=split_index,
+            repo_path=str(repo_to_index),
         )
         parsers, queries = load_parsers()
         updater = GraphUpdater(
@@ -699,10 +710,18 @@ def index(
             queries=queries,
             unignore_paths=unignore_paths,
             exclude_paths=exclude_paths,
-            capture=_capture_selection(capture),
+            capture=capture_config,
         )
 
         updater.run()
+        manifest_path = write_manifest(
+            Path(output_proto_dir),
+            indexed_source,
+            capture_description(capture_config),
+        )
+        _info(
+            style(cs.CLI_MSG_MANIFEST_WRITTEN.format(path=manifest_path), cs.Color.CYAN)
+        )
         _info(style(cs.CLI_MSG_INDEXING_DONE, cs.Color.GREEN))
 
     except Exception as e:
@@ -711,6 +730,58 @@ def index(
         )
         logger.exception(ls.INDEXING_FAILED)
         raise typer.Exit(1) from e
+
+
+@app.command(
+    name="verify-index",
+    help=ch.CMD_VERIFY_INDEX,
+    short_help=ch.CMD_VERIFY_INDEX,
+    rich_help_panel=ch.PANEL_GRAPH,
+)
+def verify_index_command(
+    index_dir: str = typer.Option(
+        ..., "-i", "--index-dir", help=ch.HELP_VERIFY_INDEX_DIR
+    ),
+    trusted_manifest_sha256: str | None = typer.Option(
+        None,
+        "--trusted-manifest-sha256",
+        help=ch.HELP_TRUSTED_MANIFEST_SHA,
+    ),
+) -> None:
+    problems = verify_index(Path(index_dir), trusted_manifest_sha256)
+    if problems:
+        for problem in problems:
+            app_context.console.print(
+                style(cs.CLI_MSG_VERIFY_PROBLEM.format(problem=problem), cs.Color.RED)
+            )
+        raise typer.Exit(1)
+    _info(style(cs.CLI_MSG_VERIFY_OK.format(path=index_dir), cs.Color.GREEN))
+
+
+@app.command(
+    name="diff-index",
+    help=ch.CMD_DIFF_INDEX,
+    short_help=ch.CMD_DIFF_INDEX,
+    rich_help_panel=ch.PANEL_GRAPH,
+)
+def diff_index_command(
+    old_dir: str = typer.Option(..., "--old", help=ch.HELP_DIFF_OLD),
+    new_dir: str = typer.Option(..., "--new", help=ch.HELP_DIFF_NEW),
+    json_out: str | None = typer.Option(None, "--json-out", help=ch.HELP_DIFF_JSON_OUT),
+) -> None:
+    try:
+        diff = diff_indexes(Path(old_dir), Path(new_dir))
+    except DiffError as error:
+        app_context.console.print(style(str(error), cs.Color.RED))
+        raise typer.Exit(2) from error
+    rendered = json.dumps(diff, indent=2, sort_keys=True)
+    if json_out is not None:
+        Path(json_out).write_text(rendered + "\n", encoding="utf-8")
+        _info(style(cs.CLI_MSG_DIFF_WRITTEN.format(path=json_out), cs.Color.CYAN))
+    else:
+        app_context.console.print(rendered)
+    if diff_is_empty(diff):
+        _info(style(cs.CLI_MSG_DIFF_EMPTY, cs.Color.GREEN))
 
 
 @app.command(

@@ -1284,6 +1284,7 @@ The following sets of tools are available:
 
 - **create_or_update_file** - Create or update file
   - **Required OAuth Scopes**: `repo`
+  - `allow_symlink_write`: Set true to update a symbolic link itself; content must be its new target path. (boolean, optional)
   - `branch`: Branch to create/update the file in (string, required)
   - `content`: Content of the file, exactly as it should appear once written. Do not base64-encode it; this server does that before calling the REST API. (string, required)
   - `message`: Commit message (string, required)
@@ -1601,6 +1602,10 @@ docker run -i --rm \
 
 Lockdown mode limits the content that the server will surface from public repositories. When enabled, the server checks whether the author of each item has push access to the repository. Private repositories are unaffected, and collaborators keep full access to their own content.
 
+Lockdown mode is a best-effort content filter intended to reduce the risk of prompt injection from untrusted repository content (issues, pull requests, comments, commits, etc.). It is **not** an authorization boundary: it does not change what the underlying GitHub credential can read or write, and content withheld from a filtered tool response may still be reachable through other tools or direct GitHub API access with the same credential.
+
+As an intentional exception, content authored by a small set of trusted bot accounts (currently `github-actions[bot]` and `copilot`) is always treated as safe, regardless of push access. This avoids filtering routine automation output (e.g. CI-generated commits or comments) that would otherwise be withheld under lockdown mode.
+
 ```bash
 ./github-mcp-server --lockdown-mode
 ```
@@ -1614,12 +1619,17 @@ docker run -i --rm \
   ghcr.io/github/github-mcp-server
 ```
 
+In HTTP mode, this flag (or `GITHUB_LOCKDOWN_MODE`) is an upper bound: the `X-MCP-Lockdown` request header can enable lockdown mode when the operator has not, but it cannot disable lockdown mode the operator has already enabled. See the [Server Configuration Guide](docs/server-configuration.md#lockdown-mode) for details.
+
 The behavior of lockdown mode depends on the tool invoked.
 
 Following tools will return an error when the author lacks the push access:
 
 - `issue_read:get`
 - `pull_request_read:get`
+- `pull_request_read:get_diff`
+- `pull_request_read:get_files`
+- `pull_request_read:get_commits`
 
 Following tools will filter out content from users lacking the push access:
 

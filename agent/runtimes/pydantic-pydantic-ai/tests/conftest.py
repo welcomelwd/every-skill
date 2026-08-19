@@ -587,6 +587,7 @@ def no_instrumentation_by_default():
 
 try:
     import logfire
+    from opentelemetry import context as otel_context
     from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
     logfire.DEFAULT_LOGFIRE_INSTANCE.config.ignore_no_config = True
@@ -601,6 +602,19 @@ try:
         # into other tests sharing the xdist worker (e.g. stray `POST` spans in `test_temporal` snapshots).
         if _httpx_instrumentor._is_instrumented_by_opentelemetry:  # pyright: ignore[reportPrivateUsage]
             _httpx_instrumentor.uninstrument()
+        # The worker's main-thread OTel context also persists across tests: an `attach` without a
+        # matching `detach` leaves its values (an active span, suppression flags) visible to every
+        # later test in the worker. A leaked *non-sampled* span is the nasty case: parent-based
+        # sampling then marks all descendant spans unsampled and exporters silently drop them
+        # (seen as `context_subtree()` returning an empty tree in `tests/evals/test_otel.py`).
+        # The detach below resets the context to its pre-test snapshot, so no leaked `attach`
+        # outlives its test. (The clean context itself only shields sync test bodies: async bodies
+        # run in anyio's runner task, whose context is copied before this fixture attaches.)
+        token = otel_context.attach(otel_context.Context())
+        try:
+            yield
+        finally:
+            otel_context.detach(token)
 
 except ImportError:
     pass

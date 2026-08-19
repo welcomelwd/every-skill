@@ -19,6 +19,9 @@ This directory contains specific developer guides for the ADK Python implementat
 ### Auth
 * [AuthConfig and authenticated tools](auth/tool_auth/index.md) - Declaring the credentials a tool needs, and the pause-for-consent handshake.
 
+### Code Executors
+* [BaseCodeExecutor](code_executors/code_executor/index.md) - Executing model-generated code safely across local, container, GKE, and managed sandbox backends.
+
 ### Events
 * [Event and NodeInfo](events/event/index.md) - Understanding Event and NodeInfo in workflows.
 * [RequestInput](events/request_input/index.md) - How to use RequestInput for human-in-the-loop interactions.
@@ -28,6 +31,9 @@ This directory contains specific developer guides for the ADK Python implementat
 
 ### Models
 * [BaseLlm and LLMRegistry](models/llm_registry/index.md) - The model interface, how a model name resolves to an implementation, and how to plug in your own.
+
+### Planners
+* [BasePlanner](planners/planner/index.md) - Guiding model execution with structured planning instructions, thinking configurations, and Plan-Re-Act thought tagging.
 
 ### Plugins
 * [ReflectAndRetryModelPlugin](plugins/reflect_retry_model_plugin/index.md) - Self-healing, concurrent-safe error recovery for model failures.

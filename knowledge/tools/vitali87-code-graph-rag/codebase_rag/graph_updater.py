@@ -60,6 +60,11 @@ from .parsers.factory import ProcessorFactory
 from .parsers.frontends import FRONTENDS, SemanticFacts
 from .parsers.frontends.protocol import QueryCall
 from .parsers.go_frontend import find_go_module
+from .parsers.java_generated import (
+    discover_generated_source_roots,
+    generated_prefixes_for,
+    unignore_patterns_for,
+)
 from .parsers.utils import sorted_captures
 from .path_filters import matches_test_path
 from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
@@ -277,6 +282,7 @@ class GraphUpdater:
         # spare foreign files' entries (issue #1025).
         self._frontend_owned_qns: dict[str, set[str]] = {}
         self.unignore_paths = unignore_paths
+        self._configured_unignore_paths = unignore_paths
         self.exclude_paths = exclude_paths
         # None defers to the CGR_SKIP_EMBEDDINGS setting so env-configured
         # callers (MCP, workspace sync) opt out without a CLI flag.
@@ -491,6 +497,37 @@ class GraphUpdater:
         self._apply_go_semantic_facts(facts)
         logger.info(
             ls.GO_FRONTEND_FACTS.format(
+                calls=len(facts.resolved_call_sites),
+                externals=len(facts.external_sites),
+            )
+        )
+
+    def _run_python_frontend(self) -> None:
+        # In-process Jedi facts (issue #1183): exact first-party callees
+        # through re-exports/decorators and external proofs for calls leaving
+        # the repo. Off (HEURISTIC) or unavailable degrades to the tree-sitter
+        # heuristics; reset first so a reused updater does not keep stale
+        # facts when the setting flips between runs.
+        dp = self.factory.definition_processor
+        dp.python_call_sites.clear()
+        dp.python_external_sites.clear()
+        if settings.PYTHON_FRONTEND == cs.PythonFrontend.HEURISTIC:
+            return
+        frontend = FRONTENDS.get(cs.SupportedLanguage.PYTHON)
+        if frontend is None or not frontend.available():
+            logger.warning(ls.PY_FRONTEND_UNAVAILABLE)
+            return
+        files = [
+            fp for fp, lang in self._parsed_files if lang == cs.SupportedLanguage.PYTHON
+        ]
+        if not files:
+            return
+        logger.info(ls.PY_FRONTEND_RUNNING)
+        facts = frontend.run(self.repo_path, files)
+        dp.python_call_sites.update(facts.resolved_call_sites)
+        dp.python_external_sites.update(facts.external_sites)
+        logger.info(
+            ls.PY_FRONTEND_FACTS.format(
                 calls=len(facts.resolved_call_sites),
                 externals=len(facts.external_sites),
             )
@@ -740,6 +777,10 @@ class GraphUpdater:
             self._drop_cache_if_graph_lost()
             self._warn_if_parser_changed()
 
+        # Discovery must precede the in-sync check: a build that appeared
+        # since the cached run changes the eligible set, and the check walks
+        # with the same unignore patterns the indexing pass will use.
+        self._register_generated_sources()
         if not force and self._is_already_in_sync():
             logger.info(ls.GRAPH_ALREADY_IN_SYNC)
             self.skipped_because_in_sync = True
@@ -791,6 +832,11 @@ class GraphUpdater:
         # Go IMPLEMENTS pairs join AFTER Pass 2 for the same reason: both ends
         # resolve against the go_type_locations index Pass 2 just registered.
         self._join_go_implements()
+
+        # The Jedi Python frontend runs AFTER Pass 2 (its facts join Pass 3
+        # calls against the function_locations Pass 2 just filled) and needs
+        # the parsed-file list, which Pass 2 produced (issue #1183).
+        self._run_python_frontend()
 
         # HYBRID must run after Pass 2: an incremental run deletes each
         # changed file's Module subtree before re-parsing it, so macro
@@ -1947,6 +1993,35 @@ class GraphUpdater:
             if _hash_file(Path(file_path_str)) != old_hash:
                 return False
         return True
+
+    def _register_generated_sources(self) -> None:
+        # Annotation-processor output next to a build file (issue #1140):
+        # carve those exact subtrees out of the target/build prune, register
+        # them as Java import-probe roots, and stamp their modules generated.
+        # Recomputed per run so a build that appears between watch runs is
+        # picked up; no roots leaves everything exactly as before.
+        roots = discover_generated_source_roots(self.repo_path)
+        dp = self.factory.definition_processor
+        dp.generated_source_prefixes = generated_prefixes_for(roots)
+        self.factory.import_processor.set_java_generated_roots(roots)
+        # Rebuilt from the CONFIGURED base every run, never accumulated: a
+        # root that vanished (target/ cleaned) must stop rescuing its subtree.
+        patterns = unignore_patterns_for(roots)
+        base = (
+            frozenset(self._configured_unignore_paths)
+            if self._configured_unignore_paths
+            else frozenset()
+        )
+        combined = base | patterns
+        resolved = combined if combined else None
+        self.unignore_paths = resolved
+        # The factory-owned processors hold their own copies for structure
+        # traversal and import-time walks; they must prune identically or a
+        # sweep could read files the indexer skipped (issue #1088 invariant).
+        self.factory.import_processor.unignore_paths = resolved
+        self.factory.structure_processor.unignore_paths = resolved
+        if roots:
+            logger.info(ls.GENERATED_SOURCES_REGISTERED, count=len(roots))
 
     def _collect_eligible_files(self) -> list[tuple[Path, str]]:
         if self._single_file is not None:

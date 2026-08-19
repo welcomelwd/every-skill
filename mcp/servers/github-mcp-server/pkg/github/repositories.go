@@ -16,6 +16,7 @@ import (
 	"github.com/github/github-mcp-server/pkg/ifc"
 	"github.com/github/github-mcp-server/pkg/inventory"
 	"github.com/github/github-mcp-server/pkg/octicons"
+	"github.com/github/github-mcp-server/pkg/sanitize"
 	"github.com/github/github-mcp-server/pkg/scopes"
 	"github.com/github/github-mcp-server/pkg/translations"
 	"github.com/github/github-mcp-server/pkg/utils"
@@ -451,6 +452,11 @@ SHA MUST be provided for existing file updates.
 						Type:        "string",
 						Description: "The blob SHA of the file being replaced. Required if the file already exists.",
 					},
+					"allow_symlink_write": {
+						Type:        "boolean",
+						Description: "Set true to update a symbolic link itself; content must be its new target path.",
+						Default:     json.RawMessage("false"),
+					},
 				},
 				Required: []string{"owner", "repo", "path", "content", "message", "branch"},
 			},
@@ -501,6 +507,11 @@ SHA MUST be provided for existing file updates.
 				opts.SHA = github.Ptr(sha)
 			}
 
+			allowSymlinkWrite, err := OptionalParam[bool](args, "allow_symlink_write")
+			if err != nil {
+				return utils.NewToolResultError(err.Error()), nil, nil
+			}
+
 			// Create or update the file
 			client, err := deps.GetClient(ctx)
 			if err != nil {
@@ -540,6 +551,22 @@ SHA MUST be provided for existing file updates.
 							"SHA mismatch: provided SHA %s is stale. Current file SHA is %s. "+
 								"Pull the latest changes and use git rev-parse %s:%s to get the current SHA.",
 							sha, currentSHA, branch, path)), nil, nil
+					}
+					if !allowSymlinkWrite {
+						if existingFile.GetType() == "symlink" {
+							return newSymlinkWriteBlockedResult(path, existingFile.GetTarget()), nil, nil
+						}
+						symlinkTarget, isSymlink, respTree, err := symlinkTargetAtPath(ctx, client, owner, repo, branch, path)
+						if err != nil {
+							return ghErrors.NewGitHubAPIErrorResponse(ctx,
+								"failed to verify whether file path is a symbolic link",
+								respTree,
+								err,
+							), nil, nil
+						}
+						if isSymlink {
+							return newSymlinkWriteBlockedResult(path, symlinkTarget), nil, nil
+						}
 					}
 				}
 			} else {
@@ -1045,23 +1072,39 @@ func GetFileContents(t translations.TranslationHelperFunc) inventory.ServerTool 
 				if fallbackUsed {
 					successNote = fmt.Sprintf(" Note: the provided ref '%s' does not exist, default branch '%s' was used instead.", originalRef, rawOpts.Ref)
 				}
+				const maxContentSize = 1024 * 1024 // 1MB
+
+				read, respInspect, err := inspectRepositoryFile(ctx, client, owner, repo, ref, path, fileContent)
+				if err != nil {
+					if respInspect != nil {
+						return ghErrors.NewGitHubAPIErrorResponse(ctx, "failed to inspect repository file", respInspect, err), nil, nil
+					}
+					return utils.NewToolResultError(fmt.Sprintf("failed to inspect repository file: %s", err)), nil, nil
+				}
+				if read.Metadata != nil && read.Metadata.Type == "submodule" {
+					return attachIFC(utils.NewToolResultText(marshalRepositoryPathMetadata(read.Metadata, "", successNote))), nil, nil
+				}
+				if read.Metadata != nil && fileContent.GetType() == "symlink" && !read.ContentAvailable {
+					return attachIFC(utils.NewToolResultText(marshalRepositoryPathMetadata(read.Metadata, "not_returned", successNote))), nil, nil
+				}
 
 				// Empty files (0 bytes) have no content to decode; return
 				// them directly as empty text to avoid errors from
 				// GetContent when the API returns null content with a
 				// base64 encoding field, and to avoid DetectContentType
 				// misclassifying them as binary.
-				if fileSize == 0 {
+				if read.ContentAvailable && len(read.Content) == 0 {
 					result := &mcp.ResourceContents{
 						URI:      resourceURI,
 						Text:     "",
 						MIMEType: "text/plain",
 					}
-					return attachIFC(utils.NewToolResultResource(fmt.Sprintf("successfully downloaded empty file (SHA: %s)%s", fileSHA, successNote), result)), nil, nil
+					message := fmt.Sprintf("successfully downloaded empty file (SHA: %s)%s", fileSHA, successNote)
+					message = repositoryReadMessage(read, message, successNote)
+					return attachIFC(utils.NewToolResultResource(message, result)), nil, nil
 				}
 
 				// For files >= 1MB, return a ResourceLink instead of content
-				const maxContentSize = 1024 * 1024 // 1MB
 				if fileSize >= maxContentSize {
 					size := int64(fileSize)
 					resourceLink := &mcp.ResourceLink{
@@ -1070,22 +1113,25 @@ func GetFileContents(t translations.TranslationHelperFunc) inventory.ServerTool 
 						Title: fmt.Sprintf("File: %s", path),
 						Size:  &size,
 					}
+					message := fmt.Sprintf("File %s is too large to display (%d bytes). Use the download URL to fetch the content: %s (SHA: %s)%s",
+						path, fileSize, fileContent.GetDownloadURL(), fileSHA, successNote)
+					if read.Metadata != nil {
+						resourceLink.Title = fmt.Sprintf("Dereferenced target %s via symlink %s", read.Metadata.ResolvedTargetPath, path)
+					}
+					message = repositoryReadMessage(read, message, successNote)
 					return attachIFC(utils.NewToolResultResourceLink(
-						fmt.Sprintf("File %s is too large to display (%d bytes). Use the download URL to fetch the content: %s (SHA: %s)%s",
-							path, fileSize, fileContent.GetDownloadURL(), fileSHA, successNote),
+						message,
 						resourceLink)), nil, nil
 				}
 
-				// For files < 1MB, get content directly from Contents API
-				content, err := fileContent.GetContent()
-				if err != nil {
-					return utils.NewToolResultError(fmt.Sprintf("failed to decode file content: %s", err)), nil, nil
+				if !read.ContentAvailable {
+					return utils.NewToolResultError("failed to inspect repository file: content unavailable"), nil, nil
 				}
 
 				// Detect content type from the actual content bytes,
 				// mirroring the original approach of using the Content-Type header
 				// from the raw API response.
-				contentBytes := []byte(content)
+				contentBytes := read.Content
 				contentType := http.DetectContentType(contentBytes)
 
 				// Determine if content is text or binary based on detected content type
@@ -1098,10 +1144,12 @@ func GetFileContents(t translations.TranslationHelperFunc) inventory.ServerTool 
 				if isTextContent {
 					result := &mcp.ResourceContents{
 						URI:      resourceURI,
-						Text:     content,
+						Text:     string(contentBytes),
 						MIMEType: contentType,
 					}
-					return attachIFC(utils.NewToolResultResource(fmt.Sprintf("successfully downloaded text file (SHA: %s)%s", fileSHA, successNote), result)), nil, nil
+					message := fmt.Sprintf("successfully downloaded text file (SHA: %s)%s", fileSHA, successNote)
+					message = repositoryReadMessage(read, message, successNote)
+					return attachIFC(utils.NewToolResultResource(message, result)), nil, nil
 				}
 
 				result := &mcp.ResourceContents{
@@ -1109,7 +1157,9 @@ func GetFileContents(t translations.TranslationHelperFunc) inventory.ServerTool 
 					Blob:     contentBytes,
 					MIMEType: contentType,
 				}
-				return attachIFC(utils.NewToolResultResource(fmt.Sprintf("successfully downloaded binary file (SHA: %s)%s", fileSHA, successNote), result)), nil, nil
+				message := fmt.Sprintf("successfully downloaded binary file (SHA: %s)%s", fileSHA, successNote)
+				message = repositoryReadMessage(read, message, successNote)
+				return attachIFC(utils.NewToolResultResource(message, result)), nil, nil
 			} else if dirContent != nil {
 				// file content or file SHA is nil which means it's a directory
 				filtered := false
@@ -2901,8 +2951,10 @@ func GetFileBlame(t translations.TranslationHelperFunc) inventory.ServerTool {
 				}
 				headline = strings.TrimRight(headline, " \t\r")
 				bc := BlameCommit{
-					SHA:             sha,
-					MessageHeadline: headline,
+					SHA: sha,
+					// Sanitized after truncation so the headline is cut at the author's real
+					// first line break rather than one introduced by sanitization.
+					MessageHeadline: sanitize.Sanitize(headline),
 					CommittedDate:   r.Commit.CommittedDate.Format("2006-01-02T15:04:05Z"),
 					Author: BlameAuthor{
 						Name:  string(r.Commit.Author.Name),

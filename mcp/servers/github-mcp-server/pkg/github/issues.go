@@ -265,7 +265,10 @@ func optionalIssueWriteFields(args map[string]any) ([]issueWriteFieldInput, erro
 			return nil, err
 		}
 
-		deleteField, _ := OptionalParam[bool](itemMap, "delete")
+		deleteField, err := OptionalParam[bool](itemMap, "delete")
+		if err != nil {
+			return nil, err
+		}
 		value, hasValue := itemMap["value"]
 		if hasValue && value == nil {
 			return nil, fmt.Errorf("value cannot be null for field %q", fieldName)
@@ -730,7 +733,48 @@ func getIssueQueryTypeWithoutFieldValues(hasLabels bool, hasSince bool) issueQue
 	}
 }
 
+func isUnsupportedIssueFieldValuesSchemaError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	message := strings.ToLower(err.Error())
+	mentionsIssueType := strings.Contains(message, "on type 'issue'") ||
+		strings.Contains(message, `on type "issue"`) ||
+		strings.Contains(message, "on type issue")
+	if strings.Contains(message, "issuefieldvalues") &&
+		mentionsIssueType &&
+		(strings.Contains(message, "doesn't exist on type") ||
+			strings.Contains(message, "does not exist on type") ||
+			strings.Contains(message, "cannot query field") ||
+			strings.Contains(message, "is not defined on type")) {
+		return true
+	}
+
+	issueFieldTypes := [...]string{
+		"issuefielddate",
+		"issuefieldnumber",
+		"issuefieldsingleselect",
+		"issuefieldtext",
+	}
+	for _, issueFieldType := range issueFieldTypes {
+		if !strings.Contains(message, issueFieldType) {
+			continue
+		}
+		return strings.Contains(message, "unknown type") ||
+			strings.Contains(message, "isn't a defined type") ||
+			strings.Contains(message, "is not a defined type") ||
+			strings.Contains(message, "fragment cannot be spread") ||
+			strings.Contains(message, "can never be of type")
+	}
+	return false
+}
+
 func isUnsupportedListIssuesIssueFieldsError(err error) bool {
+	if isUnsupportedIssueFieldValuesSchemaError(err) {
+		return true
+	}
+
 	message := err.Error()
 	if strings.Contains(message, "IssueFieldValueFilter") {
 		return true
@@ -873,16 +917,6 @@ func GetIssue(ctx context.Context, client *github.Client, deps ToolDependencies,
 	if flags.LockdownMode {
 		if restricted, err := authorLockdownResult(ctx, cache, owner, repo, issue.GetUser().GetLogin(), lockdownIssueRestrictedMessage); restricted != nil || err != nil {
 			return restricted, err
-		}
-	}
-
-	// Sanitize title/body on response
-	if issue != nil {
-		if issue.Title != nil {
-			issue.Title = github.Ptr(sanitize.Sanitize(*issue.Title))
-		}
-		if issue.Body != nil {
-			issue.Body = github.Ptr(sanitize.Sanitize(*issue.Body))
 		}
 	}
 
@@ -1959,9 +1993,31 @@ type SearchIssueResult struct {
 	FieldValues []MinimalFieldValue `json:"field_values,omitempty"`
 }
 
+// sanitizeIssueTitleAndBody mutates issue.Title and issue.Body in place, applying the shared
+// untrusted-content sanitization policy (pkg/sanitize). It exists for the handful of response
+// paths — search_issues and search_pull_requests — that marshal a raw *github.Issue directly
+// instead of routing through one of the convertToMinimal* helpers in minimal_types.go, which
+// sanitize on their own. It is a no-op for a nil issue or unset fields.
+func sanitizeIssueTitleAndBody(issue *github.Issue) {
+	if issue == nil {
+		return
+	}
+	if issue.Title != nil {
+		issue.Title = github.Ptr(sanitize.Sanitize(*issue.Title))
+	}
+	if issue.Body != nil {
+		issue.Body = github.Ptr(sanitize.Sanitize(*issue.Body))
+	}
+}
+
 // MarshalJSON serializes SearchIssueResult, suppressing the raw issue_field_values from the
 // embedded REST response in favour of the normalized field_values populated via GraphQL enrichment.
+// It also sanitizes the embedded issue's Title and Body in place: search_issues is one of the few
+// response paths that marshals a raw *github.Issue directly rather than routing through a
+// convertToMinimal* helper (see minimal_types.go), so sanitization must happen here instead.
 func (r SearchIssueResult) MarshalJSON() ([]byte, error) {
+	sanitizeIssueTitleAndBody(r.Issue)
+
 	issueBytes, err := json.Marshal(r.Issue)
 	if err != nil {
 		return nil, err
@@ -2140,13 +2196,13 @@ func fetchIssueReadEnrichment(ctx context.Context, gqlClient *githubv4.Client, n
 
 		if p := n.Issue.Parent; p != nil {
 			enrichment.Parent = &issueReadParent{
-				Ref: MinimalIssueRef{
-					Number:     int(p.Number),
-					Title:      sanitize.Sanitize(string(p.Title)),
-					State:      string(p.State),
-					URL:        string(p.URL),
-					Repository: string(p.Repository.NameWithOwner),
-				},
+				Ref: newMinimalIssueRef(
+					int(p.Number),
+					string(p.Title),
+					string(p.State),
+					string(p.URL),
+					string(p.Repository.NameWithOwner),
+				),
 				AuthorLogin: string(p.Author.Login),
 			}
 		}
@@ -2154,13 +2210,13 @@ func fetchIssueReadEnrichment(ctx context.Context, gqlClient *githubv4.Client, n
 		closing := make([]issueReadClosingPullRequest, 0, len(n.Issue.ClosedByPullRequestsReferences.Nodes))
 		for _, pr := range n.Issue.ClosedByPullRequestsReferences.Nodes {
 			closing = append(closing, issueReadClosingPullRequest{
-				Ref: MinimalPullRequestRef{
-					Number:     int(pr.Number),
-					Title:      sanitize.Sanitize(string(pr.Title)),
-					State:      string(pr.State),
-					URL:        string(pr.URL),
-					Repository: string(pr.Repository.NameWithOwner),
-				},
+				Ref: newMinimalPullRequestRef(
+					int(pr.Number),
+					string(pr.Title),
+					string(pr.State),
+					string(pr.URL),
+					string(pr.Repository.NameWithOwner),
+				),
 				AuthorLogin: string(pr.Author.Login),
 			})
 		}
@@ -2214,7 +2270,13 @@ func searchIssuesHandler(ctx context.Context, deps ToolDependencies, args map[st
 		}
 		fieldValuesByID, err = fetchIssueFieldValuesByNodeID(ctx, gqlClient, result.Issues)
 		if err != nil {
-			return ghErrors.NewGitHubGraphQLErrorResponse(ctx, errorPrefix+": failed to fetch issue field values", err), nil
+			const enrichmentError = errorPrefix + ": failed to fetch issue field values"
+			if !isUnsupportedIssueFieldValuesSchemaError(err) {
+				return ghErrors.NewGitHubGraphQLErrorResponse(ctx, enrichmentError, err), nil
+			}
+			// Older GHES schemas can lack this optional enrichment. Preserve the REST
+			// search results while retaining the compatibility failure for observability.
+			_, _ = ghErrors.NewGitHubGraphQLErrorToCtx(ctx, enrichmentError, err)
 		}
 	}
 
@@ -2437,19 +2499,19 @@ Options are:
 									Description: "Value to set. Use for text, number, and date fields " +
 										"(date as YYYY-MM-DD). For single-select fields, prefer " +
 										"'field_option_name' so the option is validated before the API " +
-										"call. Cannot be combined with 'field_option_name' or 'delete'.",
+										"call. Cannot be combined with 'field_option_name' or 'delete: true'.",
 								},
 								"field_option_name": {
 									Type: "string",
 									Description: "Option name for single-select fields. Validated against " +
 										"the field's options before the API call. Cannot be combined with " +
-										"'value' or 'delete'.",
+										"'value' or 'delete: true'.",
 								},
 								"delete": {
 									Type: "boolean",
-									Enum: []any{true},
 									Description: "Set to true to clear this field's current value on the " +
-										"issue. Cannot be combined with 'value' or 'field_option_name'.",
+										"issue. When false or omitted, this property is ignored. Cannot " +
+										"be true when 'value' or 'field_option_name' is provided.",
 								},
 							},
 							Required: []string{"field_name"},

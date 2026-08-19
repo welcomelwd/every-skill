@@ -8573,11 +8573,9 @@ class Router:
         Returns:
         - The added/updated deployment
         """
+        _deployment_model_id: Final = deployment.model_info.id or ""
+        _deployment_on_router: Final[Deployment | None] = self.get_deployment(model_id=_deployment_model_id)
         try:
-            # check if deployment already exists
-            _deployment_model_id: Final = deployment.model_info.id or ""
-
-            _deployment_on_router: Final[Deployment | None] = self.get_deployment(model_id=_deployment_model_id)
             if _deployment_on_router is not None:
                 # deployment with this model_id exists on the router
                 if (
@@ -8628,9 +8626,30 @@ class Router:
                     deployment.model_info.id,
                     e,
                 )
+                self._restore_deployment_after_failed_upsert(
+                    previous_deployment=_deployment_on_router, model_id=_deployment_model_id
+                )
                 return None
             else:
                 raise e
+
+    def _restore_deployment_after_failed_upsert(self, previous_deployment: Deployment | None, model_id: str) -> None:
+        if previous_deployment is None or self.has_model_id(model_id):
+            return
+        try:
+            self.add_deployment(deployment=previous_deployment)
+            verbose_router_logger.info(
+                "Restored deployment %s (id=%s); it keeps serving its previous configuration.",
+                previous_deployment.model_name,
+                model_id,
+            )
+        except Exception as restore_error:  # noqa: BLE001  # best-effort restore: a second failure must not abort the reload
+            verbose_router_logger.warning(
+                "Could not restore previously served deployment %s (id=%s) after the failed upsert: %s",
+                previous_deployment.model_name,
+                model_id,
+                restore_error,
+            )
 
     @staticmethod
     def _backend_cost_map_keys(model: str, custom_llm_provider: str | None) -> tuple[str, ...]:
@@ -10234,11 +10253,13 @@ class Router:
         returned_models.extend(self.get_model_list_from_routing_groups(model_name=model_name))
 
         if len(returned_models) == 0:  # check if wildcard route
-            potential_wildcard_models: Final = self.pattern_router.route(model_name) or []
+            potential_wildcard_models: Final = self.pattern_router.get_deployments_by_pattern(model=model_name or "")
 
             ## check for team-specific wildcard models
             if team_id is not None and team_id in self.team_pattern_routers:
-                potential_team_only_wildcard_models: Final = self.team_pattern_routers[team_id].route(model_name) or []
+                potential_team_only_wildcard_models: Final = self.team_pattern_routers[
+                    team_id
+                ].get_deployments_by_pattern(model=model_name or "")
                 potential_wildcard_models.extend(potential_team_only_wildcard_models)
 
             if model_name is not None and potential_wildcard_models is not None:

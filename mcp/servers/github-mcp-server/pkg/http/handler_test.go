@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	ghcontext "github.com/github/github-mcp-server/pkg/context"
 	"github.com/github/github-mcp-server/pkg/github"
 	"github.com/github/github-mcp-server/pkg/http/headers"
+	"github.com/github/github-mcp-server/pkg/http/middleware"
 	"github.com/github/github-mcp-server/pkg/inventory"
 	"github.com/github/github-mcp-server/pkg/scopes"
 	"github.com/github/github-mcp-server/pkg/translations"
@@ -1286,4 +1288,137 @@ func TestUIMetaStrippedWhenClientLacksCapability(t *testing.T) {
 	unknown := build().ToolsForRegistration(insidersCtx)
 	require.Len(t, unknown, 1)
 	require.NotNil(t, unknown[0].Tool.Meta["ui"], "_meta.ui should be preserved when capability is unknown and FF is on")
+}
+
+// TestMaxRequestBodyBytes checks the effective limit and, critically, that it
+// sits above the MCP SDK default — which is why it must also be passed to
+// StreamableHTTPOptions rather than left to the SDK.
+func TestMaxRequestBodyBytes(t *testing.T) {
+	t.Run("default leaves headroom above the MCP SDK limit", func(t *testing.T) {
+		h := &Handler{config: &ServerConfig{}}
+
+		assert.Equal(t, int64(5<<20), h.maxRequestBodyBytes())
+		assert.Greater(t, h.maxRequestBodyBytes(), int64(mcp.DefaultMaxRequestBodyBytes),
+			"the default intentionally exceeds the SDK limit, so the SDK must be told about it")
+	})
+
+	t.Run("configured value overrides the default", func(t *testing.T) {
+		h := &Handler{config: &ServerConfig{MaxRequestBodyBytes: 1234}}
+		assert.Equal(t, int64(1234), h.maxRequestBodyBytes())
+	})
+}
+
+// TestMaxRequestBodySizeEnforcement exercises both layers the limit is applied
+// at: the early middleware, and the MCP SDK handler the request is delegated to.
+func TestMaxRequestBodySizeEnforcement(t *testing.T) {
+	const limit = 256
+
+	apiHost, err := utils.NewAPIHost("https://api.github.com")
+	require.NoError(t, err)
+
+	buildBody := func(size int) string {
+		payload := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"pad":"PADDING"}}`
+		if len(payload) >= size {
+			return payload
+		}
+		pad := strings.Repeat("x", size-len(payload))
+		return strings.Replace(payload, "PADDING", "PADDING"+pad, 1)
+	}
+
+	newHandler := func(t *testing.T, maxBytes int64, mcpServerFactoryCalled *bool) *Handler {
+		t.Helper()
+		return NewHTTPMcpHandler(
+			context.Background(),
+			&ServerConfig{Version: "test", MaxRequestBodyBytes: maxBytes},
+			nil,
+			translations.NullTranslationHelper,
+			slog.Default(),
+			apiHost,
+			WithInventoryFactory(func(_ *http.Request) (*inventory.Inventory, error) {
+				return inventory.NewBuilder().Build()
+			}),
+			WithGitHubMCPServerFactory(func(_ *http.Request, _ github.ToolDependencies, _ *inventory.Inventory, _ *github.MCPServerConfig) (*mcp.Server, error) {
+				if mcpServerFactoryCalled != nil {
+					*mcpServerFactoryCalled = true
+				}
+				return mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.1"}, nil), nil
+			}),
+			WithScopeFetcher(allScopesFetcher{}),
+		)
+	}
+
+	newRouter := func(h *Handler) http.Handler {
+		r := chi.NewRouter()
+		h.RegisterMiddleware(r)
+		h.RegisterRoutes(r)
+		return r
+	}
+
+	newRequest := func(body string) *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+		req.Header.Set(headers.ContentTypeHeader, headers.ContentTypeJSON)
+		req.Header.Set(headers.AcceptHeader, strings.Join([]string{headers.ContentTypeJSON, headers.ContentTypeEventStream}, ", "))
+		req.Header.Set(headers.AuthorizationHeader, strings.Join([]string{"ghs", "test-token"}, "_"))
+		return req
+	}
+
+	t.Run("middleware rejects an oversized request before the MCP server is built", func(t *testing.T) {
+		var mcpServerFactoryCalled bool
+		r := newRouter(newHandler(t, limit, &mcpServerFactoryCalled))
+
+		body := buildBody(limit + 1)
+		require.Greater(t, len(body), limit)
+
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, newRequest(body))
+
+		assert.Equal(t, http.StatusRequestEntityTooLarge, rr.Code)
+		assert.Contains(t, rr.Body.String(), "request body too large")
+		assert.False(t, mcpServerFactoryCalled, "the MCP server should never be constructed for an oversized request")
+	})
+
+	t.Run("request at the configured limit succeeds", func(t *testing.T) {
+		var mcpServerFactoryCalled bool
+		r := newRouter(newHandler(t, limit, &mcpServerFactoryCalled))
+
+		body := buildBody(limit)
+		require.Len(t, body, limit)
+
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, newRequest(body))
+
+		assert.Equal(t, http.StatusOK, rr.Code, "response body: %s", rr.Body.String())
+		assert.True(t, mcpServerFactoryCalled, "the MCP server should be constructed for an allowed request")
+	})
+
+	t.Run("SDK handler enforces the configured limit when the middleware is bypassed", func(t *testing.T) {
+		h := newHandler(t, limit, nil)
+
+		body := buildBody(limit + 1)
+		require.Greater(t, len(body), limit)
+
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, newRequest(body))
+
+		assert.Equal(t, http.StatusRequestEntityTooLarge, rr.Code)
+		assert.Contains(t, rr.Body.String(), fmt.Sprintf("request body exceeds %d bytes", limit),
+			"the SDK should report the configured limit, not its own default")
+	})
+
+	// The default headroom only exists if it reaches the SDK as well; leaving
+	// the SDK on its own default would silently reject this request.
+	t.Run("unconfigured handler accepts a request above the MCP SDK limit", func(t *testing.T) {
+		var mcpServerFactoryCalled bool
+		r := newRouter(newHandler(t, 0, &mcpServerFactoryCalled))
+
+		body := buildBody(mcp.DefaultMaxRequestBodyBytes + 1024)
+		require.Greater(t, int64(len(body)), int64(mcp.DefaultMaxRequestBodyBytes))
+		require.Less(t, int64(len(body)), middleware.DefaultMaxRequestBodyBytes)
+
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, newRequest(body))
+
+		assert.Equal(t, http.StatusOK, rr.Code, "response body: %s", rr.Body.String())
+		assert.True(t, mcpServerFactoryCalled, "the MCP server should be constructed for an allowed request")
+	})
 }

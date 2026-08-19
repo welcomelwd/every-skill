@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "repository": "dotnet/skills",
+  "source_url": "https://github.com/dotnet/skills",
+  "ref": "main",
+  "resolved_commit": "ab761ad27acdf2751d97a3c4439182a6721f2631",
+  "category": "skill",
+  "subcategory": "development",
+  "slug": "dotnet-skills",
+  "license": "MIT",
+  "source_date": null,
+  "imported_at": "2026-08-19T23:12:03+00:00",
+  "download_mode": "bounded source snapshot",
+  "copied_files": 2469,
+  "copied_bytes": 14896312,
+  "excluded_files": [
+    "eng/vally-adapter/docs/images/vally-pr-comment-before.png: binary content",
+    "eng/vally-adapter/docs/images/vally-pr-comment-edge-cases.png: binary content",
+    "eng/vally-adapter/docs/images/vally-pr-comment-example.png: binary content",
+    "tests/dotnet-data/create-datadriven-aspnetcore/fixtures/blazor-crud/wwwroot/favicon.png: binary content",
+    "tests/dotnet-data/create-datadriven-aspnetcore/fixtures/razor-pages-crud/wwwroot/favicon.ico: binary content"
+  ],
+  "execution": "never run by this importer"
+}
