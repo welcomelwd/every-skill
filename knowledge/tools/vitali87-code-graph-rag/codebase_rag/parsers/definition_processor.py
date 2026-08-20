@@ -160,6 +160,10 @@ class DefinitionProcessor(
         # name-trie fabricate a first-party edge. Same in-place mutation
         # discipline as csharp_call_sites.
         self.csharp_external_sites: set[CallSiteKey] = set()
+        # Roslyn argument-flow facts (issue #1187): per call site and
+        # argument index, the locals/parameters the compiler proves reach it.
+        self.csharp_arg_flows: dict[CallSiteKey, dict[int, frozenset[str]]] = {}
+        self.csharp_bind_flows: dict[CallSiteKey, frozenset[str]] = {}
         # Go go/types frontend (issue #1179): the same two call families as C#
         # -- per-invocation exact first-party call targets keyed on the callee
         # NAME token location, and sites the compiler resolved OUTSIDE the module
@@ -167,6 +171,11 @@ class DefinitionProcessor(
         # engine holds the reference.
         self.go_call_sites: dict[CallSiteKey, ResolvedCallSite] = {}
         self.go_external_sites: set[CallSiteKey] = set()
+        # javac frontend facts (issue #1181): an exact first-party callee the
+        # name-and-arity heuristics cannot pick, and the proofs that a call
+        # leaves the repo. Empty when the frontend is off.
+        self.java_call_sites: dict[CallSiteKey, ResolvedCallSite] = {}
+        self.java_external_sites: set[CallSiteKey] = set()
         # go/types-proven implementer->interface pairs (each end a declaring
         # identifier position), stashed here at frontend time and resolved to
         # IMPLEMENTS edges after Pass 2 fills go_type_locations below.

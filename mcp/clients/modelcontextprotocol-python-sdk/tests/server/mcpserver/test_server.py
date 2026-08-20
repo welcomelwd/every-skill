@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import anyio
+import httpx2
 import pytest
 from inline_snapshot import snapshot
 from mcp_types import (
@@ -44,6 +45,7 @@ from mcp_types import (
 from pydantic import BaseModel
 from starlette.applications import Starlette
 from starlette.routing import Mount, Route
+from typing_extensions import NotRequired, TypedDict
 
 from mcp.client import Client
 from mcp.server.context import ServerRequestContext
@@ -713,6 +715,32 @@ class TestServerTools:
             content = result.content[0]
             assert isinstance(content, TextContent)
             assert "Unknown tool" in content.text
+
+
+async def test_typeddict_tool_omitting_optional_keys_passes_client_validation():
+    """The client validates structured content against the tool's output schema, so a `NotRequired`
+    key the tool leaves out must be absent from `structured_content` rather than null."""
+
+    class Person(TypedDict):
+        name: str
+        age: NotRequired[int]
+
+    mcp = MCPServer()
+
+    @mcp.tool()
+    def get_person() -> Person:
+        return {"name": "Dave"}
+
+    async with Client(mcp) as client:
+        (tool,) = (await client.list_tools()).tools
+        assert tool.output_schema == {
+            "type": "object",
+            "title": "Person",
+            "properties": {"name": {"title": "Name", "type": "string"}, "age": {"title": "Age", "type": "integer"}},
+            "required": ["name"],
+        }
+        result = await client.call_tool("get_person", {})
+        assert result.structured_content == {"name": "Dave"}
 
 
 class TestServerResources:
@@ -1783,6 +1811,19 @@ def test_streamable_http_no_redirect() -> None:
 
     # Verify path values
     assert streamable_routes[0].path == "/mcp", "Streamable route path should be /mcp"
+
+
+async def test_sse_app_applies_the_configured_request_body_limit() -> None:
+    """`sse_app(max_request_body_size=...)` rejects larger POSTs to the message endpoint with HTTP 413."""
+    app = MCPServer("test").sse_app(max_request_body_size=8, host="0.0.0.0")
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(transport=transport, base_url="http://localhost") as http:
+        response = await http.post(
+            "/messages/?session_id=12345678123456781234567812345678",
+            content=b"123456789",
+            headers={"Content-Type": "application/json"},
+        )
+    assert response.status_code == 413
 
 
 async def test_report_progress_delegates_to_session_report_progress():

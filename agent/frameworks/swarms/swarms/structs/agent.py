@@ -2144,20 +2144,36 @@ Subtask Breakdown:
 
         Args:
             tasks (List[str]): A list of tasks to run.
+
+        Returns:
+            List[Any]: One result per task, in the order the tasks were given.
+
+        Raises:
+            Exception: Whatever the underlying runs raise. Failures are logged
+                and re-raised rather than swallowed, so a caller never receives
+                None in place of results.
         """
         try:
             logger.info(f"Running concurrent tasks: {tasks}")
-            futures = [
-                self.executor.submit(
-                    self.run, task=task, *args, **kwargs
-                )
-                for task in tasks
-            ]
-            results = [future.result() for future in futures]
+            # Pool is scoped to the call, matching how the rest of the codebase
+            # runs concurrent work (heavy_swarm, majority_voting,
+            # multi_agent_router). An Agent-level pool would keep idle threads
+            # alive for the process lifetime of every agent a swarm builds.
+            with ContextThreadPoolExecutor(
+                max_workers=os.cpu_count()
+            ) as executor:
+                futures = [
+                    executor.submit(
+                        self.run, *args, task=task, **kwargs
+                    )
+                    for task in tasks
+                ]
+                results = [future.result() for future in futures]
             logger.info(f"Completed tasks: {results}")
             return results
         except Exception as error:
             logger.error(f"Error running concurrent tasks: {error}")
+            raise
 
     def bulk_run(self, inputs: List[Dict[str, Any]]) -> List[str]:
         """
@@ -2480,12 +2496,10 @@ Subtask Breakdown:
                     rules=self.rules,
                 )
 
-            # Reinitialize executor if needed
-            # if not hasattr(self, "executor") or self.executor is None:
-            with ContextThreadPoolExecutor(
-                max_workers=os.cpu_count()
-            ) as executor:
-                self.executor = executor
+            # No executor to reinitialize: concurrent work creates its own
+            # call-scoped pool. The assignment that used to live here stored an
+            # executor the enclosing `with` had already shut down, so anything
+            # reading it back would have submitted to a dead pool.
 
         except Exception as e:
             logger.error(f"Error reinitializing components: {e}")
@@ -3335,20 +3349,36 @@ Subtask Breakdown:
         **kwargs,
     ):
         """
-        Run a batch of tasks concurrently.
+        Run a batch of tasks, one after another.
 
         Args:
             tasks (List[str]): List of tasks to run.
-            imgs (List[str], optional): List of images to run. Defaults to None.
+            imgs (List[str], optional): One image per task, paired by position.
+                Omit to run the tasks without images. Defaults to None.
             *args: Additional positional arguments to be passed to the execution method.
             **kwargs: Additional keyword arguments to be passed to the execution method.
 
         Returns:
             List[Any]: List of results from each task execution.
         """
+        # `for task, imgs in zip(...)` rebound the parameter to one image per
+        # iteration, so a List[str] field received a bare str -- and with the
+        # documented default of imgs=None the zip raised before any task ran.
+        if imgs is None:
+            return [
+                self.run(task=task, *args, **kwargs) for task in tasks
+            ]
+
+        if len(imgs) != len(tasks):
+            raise ValueError(
+                f"run_batched got {len(tasks)} tasks and {len(imgs)} images; "
+                "pass one image per task, or omit imgs entirely. Zipping them "
+                "would silently drop the extras."
+            )
+
         return [
-            self.run(task=task, imgs=imgs, *args, **kwargs)
-            for task, imgs in zip(tasks, imgs)
+            self.run(task=task, img=img, *args, **kwargs)
+            for task, img in zip(tasks, imgs)
         ]
 
     def showcase_config(self):
@@ -3401,24 +3431,39 @@ Subtask Breakdown:
     ) -> Any:
         """
         Talk to multiple agents.
-        """
-        # Create futures for each agent conversation
-        futures = [
-            self.executor.submit(
-                self.talk_to, agent, task, *args, **kwargs
-            )
-            for agent in agents
-        ]
 
-        # Wait for all futures to complete and collect results
-        outputs = []
-        for future in futures:
-            try:
-                result = future.result()
-                outputs.append(result)
-            except Exception as e:
-                logger.error(f"Error in agent communication: {e}")
-                outputs.append(None)  # or handle error case as needed
+        Args:
+            agents (List[Union[Any, Callable]]): The agents to talk to.
+            task (str): The message to send to each agent.
+
+        Returns:
+            List[Any]: One entry per agent, in the order the agents were given.
+                An agent whose conversation raised contributes None.
+        """
+        # Pool is scoped to the call — see run_concurrent_tasks for why this is
+        # not an Agent-level executor.
+        with ContextThreadPoolExecutor(
+            max_workers=os.cpu_count()
+        ) as executor:
+            # Create futures for each agent conversation
+            futures = [
+                executor.submit(
+                    self.talk_to, agent, task, *args, **kwargs
+                )
+                for agent in agents
+            ]
+
+            # Wait for all futures to complete and collect results
+            outputs = []
+            for future in futures:
+                try:
+                    result = future.result()
+                    outputs.append(result)
+                except Exception as e:
+                    logger.error(f"Error in agent communication: {e}")
+                    outputs.append(
+                        None
+                    )  # or handle error case as needed
 
         return outputs
 

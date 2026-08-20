@@ -20,6 +20,33 @@ from ..core.untrusted_content import (
 from ..core.validation import validate_params
 from ..core.write_confirmation import unconfirmed_write_warning
 
+# Issue #283: a permission error on create_announcement is not license to
+# post the same content as a discussion instead. Client models were doing
+# exactly that — a silent, unconfirmed write the user never asked for. This
+# text rides along with the error so the model sees the guardrail at the
+# moment it would otherwise reach for a fallback tool.
+ANNOUNCEMENT_PERMISSION_FALLBACK_WARNING = (
+    "Do not attempt to post this content via discussion tools as a "
+    "fallback; announcements require instructor/TA permissions in this "
+    "course. Report this to the user instead."
+)
+
+# Substrings that show up in make_canvas_request's {"error": ...} payload
+# for an authorization failure (see core/client.py: "HTTP error: 401/403,
+# Details: {...}"), plus the Canvas API's own wording for the same failure.
+_PERMISSION_ERROR_MARKERS = (
+    "HTTP error: 401",
+    "HTTP error: 403",
+    "unauthorized",
+    "forbidden",
+)
+
+
+def _is_permission_error(error_text: str) -> bool:
+    """True if a Canvas API error looks like an auth/permission failure."""
+    lowered = error_text.lower()
+    return any(marker.lower() in lowered for marker in _PERMISSION_ERROR_MARKERS)
+
 
 def register_shared_discussion_tools(mcp: FastMCP) -> None:
     """Register discussion tools accessible to both students and educators."""
@@ -766,6 +793,11 @@ def register_shared_discussion_tools(mcp: FastMCP) -> None:
                                   message: str) -> str:
         """Post a new top-level entry to a discussion topic.
 
+        IMPORTANT: Never use this tool to post or work around a failed course
+        announcement. If create_announcement failed (e.g. insufficient
+        permissions), report the failure to the user — do NOT post the
+        content as a discussion instead.
+
         Args:
             course_identifier: Course code or Canvas ID
             topic_id: Discussion topic ID
@@ -877,6 +909,11 @@ def register_educator_discussion_tools(mcp: FastMCP) -> None:
                                     require_initial_post: bool = False,
                                     pinned: bool = False) -> str:
         """Create a new discussion topic for a course.
+
+        IMPORTANT: Never use this tool to post or work around a failed course
+        announcement. If create_announcement failed (e.g. insufficient
+        permissions), report the failure to the user — do NOT post the
+        content as a discussion instead.
 
         Args:
             course_identifier: Course code or Canvas ID
@@ -1055,6 +1092,26 @@ def register_educator_discussion_tools(mcp: FastMCP) -> None:
 
         course_id = await get_course_id(course_identifier)
 
+        # Pre-check (#283): the single-course endpoint reports whether this
+        # token may create announcements here. Measured live 2026-08-14:
+        # only /courses/:id?include[]=permissions carries these two flags —
+        # the list endpoint ignores the include and the dedicated
+        # /permissions endpoint omits them. Refuse only on an explicit
+        # False; any other shape (error, missing key) falls open to the
+        # post-create backstop below.
+        course_info = await make_canvas_request(
+            "get", f"/courses/{course_id}", params={"include[]": "permissions"}
+        )
+        if isinstance(course_info, dict) and "error" not in course_info:
+            permissions = course_info.get("permissions")
+            if isinstance(permissions, dict) and permissions.get("create_announcement") is False:
+                return (
+                    "Error creating announcement: your Canvas token does not have "
+                    "permission to create announcements in this course (checked "
+                    "via the course permissions API before posting anything).\n\n"
+                    f"{ANNOUNCEMENT_PERMISSION_FALLBACK_WARNING}"
+                )
+
         data = {
             "title": title,
             "message": message,
@@ -1073,7 +1130,13 @@ def register_educator_discussion_tools(mcp: FastMCP) -> None:
         )
 
         if "error" in response:
-            return f"Error creating announcement: {response['error']}"
+            error_text = str(response["error"])
+            if _is_permission_error(error_text):
+                return (
+                    f"Error creating announcement: {error_text}\n\n"
+                    f"{ANNOUNCEMENT_PERMISSION_FALLBACK_WARNING}"
+                )
+            return f"Error creating announcement: {error_text}"
 
         announcement_id = response.get("id")
         announcement_title = response.get("title", title)
@@ -1085,8 +1148,37 @@ def register_educator_discussion_tools(mcp: FastMCP) -> None:
         # announcement permission — it silently drops is_announcement and
         # creates a regular discussion topic instead (#220). The response
         # echoes the flag (measured live), so its absence means the write
-        # did not do what was asked.
+        # did not do what was asked. Backstop to the pre-check above: clean
+        # up the unintended topic instead of leaving it visible (#283).
         if not response.get("is_announcement"):
+            cleanup_note = (
+                "Canvas did not return a topic ID, so automatic cleanup could "
+                "not be attempted; check the course and delete the topic in "
+                "Canvas if it was unintended."
+            )
+            if announcement_id is not None:
+                cleanup_note = (
+                    "Automatic cleanup of the topic did not succeed, so it is "
+                    "visible to the course; delete it in Canvas if it was "
+                    "unintended."
+                )
+                delete_response = await make_canvas_request(
+                    "delete", f"/courses/{course_id}/discussion_topics/{announcement_id}"
+                )
+                # A null 200 body would surface here as None — treat any
+                # non-dict as unconfirmed cleanup, never claim the delete
+                # succeeded (and never crash on `in`).
+                if isinstance(delete_response, dict) and "error" not in delete_response:
+                    return (
+                        "Error creating announcement: Canvas ignored "
+                        "is_announcement and created a regular discussion topic "
+                        "instead — this usually means your token lacks permission "
+                        "to post announcements in this course (e.g. a student "
+                        f"account). The unintended topic (ID: {announcement_id}) "
+                        "was deleted automatically; nothing is visible to the "
+                        "course.\n\n"
+                        f"{ANNOUNCEMENT_PERMISSION_FALLBACK_WARNING}"
+                    )
             return unconfirmed_write_warning(
                 "the announcement was created",
                 {
@@ -1096,8 +1188,7 @@ def register_educator_discussion_tools(mcp: FastMCP) -> None:
                 },
                 "Canvas ignored is_announcement — this usually means your token "
                 "lacks permission to post announcements in this course (e.g. a "
-                "student account). The discussion topic above is visible to the "
-                "course; delete it in Canvas if it was unintended.",
+                f"student account). {cleanup_note}",
             )
 
         return f"Announcement created successfully in course {course_display}:\n\n" + \

@@ -582,6 +582,8 @@ struct ggml_backend_opencl_context {
     bool adreno_use_bin_kernels;
     get_adreno_bin_kernel_func_t get_adreno_bin_kernel_func = nullptr;
     ggml_cl_compiler_version adreno_cl_compiler_version;
+    // The q6_K flat mul_mat codegen workarounds are needed by old E031 compilers only.
+    bool q6_k_flat_old_compiler;
 
     std::string kernel_compile_opts;  // cached for lazy-compiled kernels.
 
@@ -895,6 +897,7 @@ struct ggml_backend_opencl_context {
     cl_kernel kernel_gemm_moe_q4_0_q8_1_dp4a = nullptr;    // dp4a (int8) q4_0 MoE prefill GEMM
     cl_kernel kernel_moe_reorder_b;
     cl_kernel kernel_moe_histogram, kernel_moe_scan, kernel_moe_fill, kernel_moe_scatter;
+    cl_kernel kernel_moe_scatter_stable = nullptr;   // deterministic slot assignment
     cl_kernel kernel_moe_combine_f32 = nullptr;   // fused router-weight mul + cross-expert sum
     cl_kernel kernel_mul_mv_id_q4_0_f32_8x_flat;
     cl_kernel kernel_mul_mv_id_q8_0_f32, kernel_mul_mv_id_q8_0_f32_flat;
@@ -1930,8 +1933,14 @@ static void load_cl_kernels(ggml_backend_opencl_context *backend_ctx) {
 #else
         const std::string kernel_src = read_file("mul_mv_q6_k_f32_flat.cl");
 #endif
+        // The codegen workarounds in this kernel are a measured 13-20% loss on
+        // compilers that do not need them, so only the affected ones build them;
+        // everyone else gets the original source.
+        const std::string q6k_opts = backend_ctx->q6_k_flat_old_compiler
+            ? compile_opts + " -DADRENO_OLD_COMPILER=1"
+            : compile_opts;
         cl_program prog =
-            build_program_from_source(backend_ctx, kernel_src.c_str(), compile_opts);
+            build_program_from_source(backend_ctx, kernel_src.c_str(), q6k_opts);
 
         CL_CHECK((backend_ctx->kernel_mul_mv_q6_K_f32_flat = clCreateKernel(prog, "kernel_mul_mv_q6_K_f32_flat", &err), err));
         CL_CHECK(clReleaseProgram(prog));
@@ -4463,6 +4472,7 @@ static void load_cl_kernels(ggml_backend_opencl_context *backend_ctx) {
         CL_CHECK((backend_ctx->kernel_moe_scan = clCreateKernel(prog, "kernel_moe_scan", &err), err));
         CL_CHECK((backend_ctx->kernel_moe_fill = clCreateKernel(prog, "kernel_moe_fill", &err), err));
         CL_CHECK((backend_ctx->kernel_moe_scatter = clCreateKernel(prog, "kernel_moe_scatter", &err), err));
+        CL_CHECK((backend_ctx->kernel_moe_scatter_stable = clCreateKernel(prog, "kernel_moe_scatter_stable", &err), err));
         CL_CHECK(clReleaseProgram(prog));
         GGML_LOG_CONT(".");
     }
@@ -5914,6 +5924,16 @@ static ggml_backend_opencl_context * ggml_cl_init(ggml_backend_dev_t dev) {
     backend_ctx->has_vector_subgroup_broadcast =
         (backend_ctx->adreno_cl_compiler_version.type == E031 && backend_ctx->adreno_cl_compiler_version.major >= 47) ||
         (backend_ctx->adreno_cl_compiler_version.type == DX   && backend_ctx->adreno_cl_compiler_version.major >= 17);
+
+    // The q6_K flat mul_mat miscompile is a defect of the older E031 compilers, not a
+    // property of any GPU generation: it reproduces on E031.38 (Adreno 642L) and E031.41
+    // (Adreno 740) and is fixed by E031.45 (Adreno 619). Gate on the compiler so parts
+    // that do not need the workarounds do not pay for them. The explicit type check is
+    // required: newer_than_or_same() is false for every non-E031 compiler, so negating it
+    // alone would enable the workarounds on E17/DX.
+    backend_ctx->q6_k_flat_old_compiler =
+        backend_ctx->adreno_cl_compiler_version.type == E031 &&
+        !backend_ctx->adreno_cl_compiler_version.newer_than_or_same(E031, 45, 0, 0);
 
     size_t ext_str_size;
     clGetDeviceInfo(device, CL_DEVICE_EXTENSIONS, 0, NULL, &ext_str_size);
@@ -7414,9 +7434,6 @@ static bool ggml_opencl_supports_op(ggml_backend_dev_t dev, const struct ggml_te
         case GGML_OP_DIAG_MASK_INF:
             return op->ne[3] == 1;
         case GGML_OP_ROPE: {
-            if (((const int32_t *) op->op_params)[15] != 0) {
-                return false; // FIXME: support ggml_rope_set_offset
-            }
             const int mode = ((const int32_t *) op->op_params)[2];
             const bool is_mrope = mode & GGML_ROPE_TYPE_MROPE;
             const bool is_vision = mode == GGML_ROPE_TYPE_VISION;
@@ -7494,12 +7511,28 @@ static bool ggml_opencl_supports_op(ggml_backend_dev_t dev, const struct ggml_te
                                      v->type == GGML_TYPE_F16 && op->type == GGML_TYPE_F16;
             const bool is_f32_f16  = q->type == GGML_TYPE_F32 && k->type == GGML_TYPE_F16 &&
                                      v->type == GGML_TYPE_F16 && op->type == GGML_TYPE_F32;
+
             const bool is_f32_q8_0 = q->type == GGML_TYPE_F32 && k->type == GGML_TYPE_Q8_0 &&
                                      v->type == GGML_TYPE_Q8_0 && op->type == GGML_TYPE_F32 &&
                                      dk % 32 == 0 && dv % 32 == 0;
             const bool is_f32_q4_0 = q->type == GGML_TYPE_F32 && k->type == GGML_TYPE_Q4_0 &&
                                      v->type == GGML_TYPE_Q4_0 && op->type == GGML_TYPE_F32 &&
                                      dk % 32 == 0 && dv % 32 == 0;
+
+            // A7X (Adreno 740, compiler E031.41) SIGSEGVs inside clBuildProgram
+            // building the flash_attn programs whose KV path is mixed-type or
+            // dequantized — f32_f16, q8_0, q4_0 (reproduced at DK=40 and DK=64; it
+            // is DK-independent). It is a driver crash, not codegen-wrong-output, so
+            // it cannot be caught in-process (fatal=false only handles clean compile
+            // errors). The uniform f16_f16 / f32_f32 programs compile fine on this
+            // compiler, so decline only the KV-convert variants; ggml then runs
+            // those (f16-KV / quant-KV) attention layers on the CPU backend.
+            // Negative compiler carve-out, same idiom as the Intel DK=512 decline
+            // below and the X1E driver-quirk guards.
+            if (backend_ctx && backend_ctx->adreno_gen == ADRENO_GPU_GEN::A7X &&
+                (is_f32_f16 || is_f32_q8_0 || is_f32_q4_0)) {
+                return false;
+            }
 
             // Asymmetric KV: host-dequants both sides to F32, uses f32 kernel.
             auto is_kv_type_ok = [](ggml_type t) {
@@ -12828,7 +12861,10 @@ static void ggml_cl_norm(ggml_backend_t backend, const ggml_tensor * src0, const
     GGML_TENSOR_LOCALS(int,      ne0, src0, ne);
     GGML_TENSOR_LOCALS(cl_ulong, nb0, src0, nb);
 
-    const int nth = MIN(64, ne00);
+    int nth = 1;
+    while (nth < ne00 && nth < 64) {
+        nth *= 2;
+    }
 
     cl_kernel kernel = backend_ctx->kernel_norm;
 
@@ -20578,6 +20614,12 @@ static void ggml_cl_mul_mat(ggml_backend_t backend, const ggml_tensor * src0, co
             CL_CHECK(clSetKernelArg(kernel, 14, sizeof(int),      &ne1));
             CL_CHECK(clSetKernelArg(kernel, 15, sizeof(int),      &r2));
             CL_CHECK(clSetKernelArg(kernel, 16, sizeof(int),      &r3));
+            // The optimizer-barrier arg exists only in the ADRENO_OLD_COMPILER build of
+            // this kernel; conformant compilers get the original 17-arg signature.
+            if (backend_ctx->q6_k_flat_old_compiler) {
+                cl_uchar q6k_mask = 0xFF;   // never 0xFE in prod; see the kernel note
+                CL_CHECK(clSetKernelArg(kernel, 17, sizeof(cl_uchar), &q6k_mask));
+            }
 #else
             kernel = backend_ctx->kernel_mul_mv_q6_K_f32;
 
@@ -20863,18 +20905,42 @@ static void moe_router_reoerder(ggml_backend_t backend, const ggml_tensor * src,
     size_t fill_local_size[] = {64, 1, 1};
     backend_ctx->enqueue_ndrange_kernel(kernel, 3, fill_global_size, fill_local_size, src);
 
-    // Scatter
-    kernel = backend_ctx->kernel_moe_scatter;
-    CL_CHECK(clSetKernelArg(kernel, 0, sizeof(cl_mem), &original_router_buf));
-    CL_CHECK(clSetKernelArg(kernel, 1, sizeof(cl_mem), &post_router_buf));
-    CL_CHECK(clSetKernelArg(kernel, 2, sizeof(cl_mem), &emap_buf));
-    CL_CHECK(clSetKernelArg(kernel, 3, sizeof(cl_mem), &tile_offset_buf));
-    CL_CHECK(clSetKernelArg(kernel, 4, sizeof(cl_mem), &slot_counter_buf));
-    CL_CHECK(clSetKernelArg(kernel, 5, sizeof(int), &ne21));
-    CL_CHECK(clSetKernelArg(kernel, 6, sizeof(int), &ne20));
-    CL_CHECK(clSetKernelArg(kernel, 7, sizeof(int), &ne02));
+    // Scatter. The deterministic variant is the default: kernel_moe_scatter derives
+    // each token's slot from an atomic counter, so the packing inside an expert - and
+    // with it the output of the ragged prefill GEMM - changes from run to run. Set
+    // GGML_OPENCL_MOE_STABLE_SCATTER=0 to restore the atomic version.
+    static const bool stable_scatter = []{
+        const char * e = getenv("GGML_OPENCL_MOE_STABLE_SCATTER");
+        return !e || e[0] == '\0' || e[0] != '0';
+    }();
 
-    backend_ctx->enqueue_ndrange_kernel(kernel, 3, histogram_global_size, histogram_local_size, src);
+    if (stable_scatter) {
+        kernel = backend_ctx->kernel_moe_scatter_stable;
+        CL_CHECK(clSetKernelArg(kernel, 0, sizeof(cl_mem), &original_router_buf));
+        CL_CHECK(clSetKernelArg(kernel, 1, sizeof(cl_mem), &post_router_buf));
+        CL_CHECK(clSetKernelArg(kernel, 2, sizeof(cl_mem), &emap_buf));
+        CL_CHECK(clSetKernelArg(kernel, 3, sizeof(cl_mem), &tile_offset_buf));
+        CL_CHECK(clSetKernelArg(kernel, 4, sizeof(int), &ne21));
+        CL_CHECK(clSetKernelArg(kernel, 5, sizeof(int), &ne20));
+        CL_CHECK(clSetKernelArg(kernel, 6, sizeof(int), &ne02));
+
+        // one workgroup (one wave) per expert; each ranks its own tokens
+        size_t scatter_global_size[] = {64, (size_t)ne02};
+        size_t scatter_local_size[]  = {64, 1};
+        backend_ctx->enqueue_ndrange_kernel(kernel, 2, scatter_global_size, scatter_local_size, src);
+    } else {
+        kernel = backend_ctx->kernel_moe_scatter;
+        CL_CHECK(clSetKernelArg(kernel, 0, sizeof(cl_mem), &original_router_buf));
+        CL_CHECK(clSetKernelArg(kernel, 1, sizeof(cl_mem), &post_router_buf));
+        CL_CHECK(clSetKernelArg(kernel, 2, sizeof(cl_mem), &emap_buf));
+        CL_CHECK(clSetKernelArg(kernel, 3, sizeof(cl_mem), &tile_offset_buf));
+        CL_CHECK(clSetKernelArg(kernel, 4, sizeof(cl_mem), &slot_counter_buf));
+        CL_CHECK(clSetKernelArg(kernel, 5, sizeof(int), &ne21));
+        CL_CHECK(clSetKernelArg(kernel, 6, sizeof(int), &ne20));
+        CL_CHECK(clSetKernelArg(kernel, 7, sizeof(int), &ne02));
+
+        backend_ctx->enqueue_ndrange_kernel(kernel, 3, histogram_global_size, histogram_local_size, src);
+    }
 
     // [MOE_TILES] env-gated padding probe: read back total_tiles (= Sum_e
     // ceil(k_e/n_tile_size)) and compare to the ideal tile count for the real
@@ -23841,6 +23907,7 @@ static void ggml_cl_rope(ggml_backend_t backend, const ggml_tensor * src0, const
     const int n_dims     = ((int *) dst->op_params)[1];
     const int mode       = ((int *) dst->op_params)[2];
     const int n_ctx_orig = ((int32_t *) dst->op_params)[4];
+    const int n_offs     = ((int32_t *) dst->op_params)[15];
 
     float freq_base;
     float freq_scale;
@@ -23869,6 +23936,7 @@ static void ggml_cl_rope(ggml_backend_t backend, const ggml_tensor * src0, const
 
     if (is_vision) {
         GGML_ASSERT(n_dims == ne00/2);
+        GGML_ASSERT(n_offs == 0); // offset not supported for vision, as the rotated pairs span the whole row
     }
 
     cl_kernel kernel;
@@ -23959,6 +24027,12 @@ static void ggml_cl_rope(ggml_backend_t backend, const ggml_tensor * src0, const
     // only mrope has is_imrope
     if (is_mrope && !is_vision) {
         CL_CHECK(clSetKernelArg(kernel, 34, sizeof(int), &is_imrope));
+    }
+    // norm and neox have n_offs after beta_slow, mrope has it after is_imrope
+    if (!is_mrope && !is_vision) {
+        CL_CHECK(clSetKernelArg(kernel, 33, sizeof(int), &n_offs));
+    } else if (is_mrope && !is_vision) {
+        CL_CHECK(clSetKernelArg(kernel, 35, sizeof(int), &n_offs));
     }
 
     size_t global_work_size[] = {(size_t)ne01*nth, (size_t)ne02, (size_t)ne03};

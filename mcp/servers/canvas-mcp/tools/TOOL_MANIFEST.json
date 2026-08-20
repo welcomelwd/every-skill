@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "name": "canvas-mcp",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "MCP server for Canvas Learning Management System API",
   "categories": [
     {
@@ -138,7 +138,7 @@
           "description": "Check a specific assignment directly, bypassing the per-course discovery scan"
         }
       ],
-      "returns": "Incomplete peer reviews with assignment and course info",
+      "returns": "Incomplete peer reviews with assignment and course info, labeled with discovery source (assignment scan or Planner feed)",
       "examples": [
         "What peer reviews do I need to complete?",
         "Show me my pending peer reviews",
@@ -692,14 +692,14 @@
     {
       "name": "search_canvas_tools",
       "category": "developer",
-      "description": "Search available Canvas code API operations by keyword",
+      "description": "Search registered MCP tools AND Canvas code API operations by keyword",
       "parameters": [
         {
           "name": "query",
           "type": "string",
           "required": false,
           "default": "",
-          "description": "Search term (empty returns all tools)"
+          "description": "Search term (empty returns all tools); matched against tool name and description"
         },
         {
           "name": "detail_level",
@@ -709,8 +709,9 @@
           "description": "names | signatures | full"
         }
       ],
-      "returns": "JSON with matching tools based on detail level",
+      "returns": "JSON with mcp_tools and code_execution_api sections, each with matching tools based on detail level",
       "examples": [
+        "Search for peer review tools",
         "Search for grading tools in the code API",
         "What bulk operations are available?"
       ]
@@ -718,7 +719,7 @@
     {
       "name": "execute_typescript",
       "category": "developer",
-      "description": "Execute TypeScript code for bulk operations with 99.7% token savings",
+      "description": "Execute TypeScript locally so bulk item processing can stay out of model context",
       "parameters": [
         {
           "name": "code",
@@ -2443,9 +2444,9 @@
       ]
     },
     {
-      "name": "send_peer_review_reminders",
+      "name": "send_peer_review_inbox_messages",
       "category": "educator",
-      "description": "Send peer review completion reminders to specific students. Two-step: preview returns the composed message plus a confirmation_token; confirm with the token and identical arguments to send.",
+      "description": "Send direct Canvas Inbox messages about incomplete peer reviews. This does not invoke Canvas's native reminder action. Requires manage_grades permission. Two-step: preview returns the composed message plus a confirmation_token; confirm with the token and identical arguments to send.",
       "parameters": [
         {
           "name": "course_identifier",
@@ -2492,7 +2493,7 @@
           "description": "Single-use token from the preview call; omit to preview without sending"
         }
       ],
-      "returns": "Without a token: a preview (recipients, composed subject and body) plus a confirmation_token (nothing sent). With a valid token: per-student send results",
+      "returns": "Without a token: a direct Canvas Inbox message preview (recipients, composed subject and body) plus a confirmation_token (nothing sent). With a valid token: the Canvas conversation send result",
       "examples": [
         "Send peer review reminders to these five students"
       ]

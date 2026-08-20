@@ -121,6 +121,7 @@ repo to install.
 - **Security and identity**
   - [**GKE Platform Security**](./skills/cloud/gke-platform-security)
   - [**GKE Workload Security**](./skills/cloud/gke-workload-security)
+  - [**IAM Policy Simulator (v1 Allow)**](./skills/cloud/iam-helper-for-policy-simulator)
   - [**Privileged Access Manager (PAM)**](./skills/cloud/iam-helper-for-privileged-access-management)
   - [**SecOps Detection Coverage Skill**](./skills/cloud/detection-engineering-coverage-evaluation)
 - **Web and app hosting**

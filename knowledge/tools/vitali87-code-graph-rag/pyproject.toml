@@ -1,6 +1,6 @@
 [project]
 name = "code-graph-rag"
-version = "0.0.687"
+version = "0.0.699"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "PYPI_README.md"
 requires-python = ">=3.12"
@@ -87,6 +87,7 @@ codebase_rag = [
     "parsers/go_frontend/gotypes/*.go",
     "parsers/go_frontend/gotypes/go.mod",
     "parsers/go_frontend/gotypes/go.sum",
+    "parsers/java_frontend/javac/cgr/*.java",
     "parsers/ast_grep_patterns/*.yaml",
     "analyzers/ast_grep_rules/*/*.yaml",
 ]

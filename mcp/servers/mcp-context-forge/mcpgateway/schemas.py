@@ -3260,8 +3260,16 @@ class GatewayCreate(BaseModelWithConfigDict):
     @field_validator("oauth_config", mode="before")
     @classmethod
     def validate_oauth_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """Validate URL-bearing OAuth configuration entries."""
-        return _validate_oauth_config_urls(v)
+        """Validate URL-bearing OAuth configuration entries and reject deprecated grants.
+
+        The OAuth 2.1 resource owner password credentials grant is rejected for
+        new MCP server registrations. Existing records keep working via
+        ``GatewayUpdate`` (backwards compatibility).
+        """
+        v = _validate_oauth_config_urls(v)
+        if isinstance(v, dict) and v.get("grant_type") == "password":
+            raise ValueError("The OAuth 2.1 resource owner password grant is not supported for new MCP servers. Use authorization_code or client_credentials instead.")
+        return v
 
     @field_validator("description")
     @classmethod
@@ -7323,7 +7331,7 @@ class TokenScopeRequest(BaseModel):
     def validate_permissions(cls, v: List[str]) -> List[str]:
         """Validate permission scope format.
 
-        Permissions must be in format 'resource.action' or wildcard '*'.
+        Permissions must be in format 'resource.action' (or the legacy colon form 'resource:action') or wildcard '*'.
 
         Args:
             v: List of permission strings to validate.
@@ -7339,12 +7347,16 @@ class TokenScopeRequest(BaseModel):
             ['tools.read', 'resources.write']
             >>> TokenScopeRequest.validate_permissions(["*"])
             ['*']
+            >>> TokenScopeRequest.validate_permissions(["audit:read", "security:read"])
+            ['audit:read', 'security:read']
         """
         if not v:
             return v
 
-        # Permission pattern: resource.action (alphanumeric with underscores)
-        permission_pattern = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*\.[a-zA-Z][a-zA-Z0-9_]*$")
+        # Permission pattern: resource.action or resource:action (alphanumeric with underscores).
+        # Colon form covers the handful of Permissions constants (audit:read, security:read,
+        # logs:read, metrics:read) that predate the dot-form convention.
+        permission_pattern = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*[.:][a-zA-Z][a-zA-Z0-9_]*$")
 
         validated = []
         for perm in v:

@@ -624,7 +624,7 @@ const docTemplate = `{
                         "$ref": "#/components/schemas/github_com_stacklok_toolhive_pkg_authserver.TokenLifespanRunConfig"
                     },
                     "trusted_issuers": {
-                        "description": "TrustedIssuers lists external OIDC issuers whose tokens are accepted as\nsubject tokens during RFC 8693 token exchange. Empty (the default) means\nonly self-issued subject tokens are accepted.\n\nSee tokenexchange.TrustedIssuer for the per-issuer field reference, and\ndocs/arch/17-token-exchange-delegation.md for the trust model, consent\nsignals, and operator-facing constraints (audience/scope bounding,\nsubject namespace qualification, required client binding) that aren't\nvisible from the config shape alone.",
+                        "description": "TrustedIssuers lists external OIDC issuers whose tokens are accepted as\nRFC 8693 subject tokens or RFC 7523 JWT-bearer assertions. Issuers with\njwtBearerGrant enabled may be used for the JWT-bearer grant without an\nRFC 8693 delegation policy. Empty (the default) means only self-issued\nsubject tokens are accepted.\n\nSee tokenexchange.TrustedIssuer for the per-issuer field reference, and\ndocs/arch/17-token-exchange-delegation.md for the trust model, consent\nsignals, and operator-facing constraints (audience/scope bounding,\nsubject namespace qualification, required client binding) that aren't\nvisible from the config shape alone.",
                         "items": {
                             "$ref": "#/components/schemas/github_com_stacklok_toolhive_pkg_authserver_server_tokenexchange.TrustedIssuer"
                         },
@@ -788,6 +788,45 @@ const docTemplate = `{
                 },
                 "type": "object"
             },
+            "github_com_stacklok_toolhive_pkg_authserver_server_tokenexchange.JWTBearerGrantPolicy": {
+                "description": "JWTBearerGrant optionally enables the plain RFC 7523 JWT-bearer grant.\nIt accepts assertions from this issuer without client authentication and\nlimits their maximum age, subjects, and RFC 8707 resources. It is\nindependent from RFC 8693 delegation policy.",
+                "properties": {
+                    "accepted_audiences": {
+                        "description": "AcceptedAudiences is the set of \"this AS\" identity strings an\nassertion's \"aud\" claim must intersect — e.g. to support migrating\nthis server's issuer/token-endpoint URL, or exposing it under more\nthan one valid name. Each value uniquely identifies this\nauthorization server for this grant; it is NOT a resource/API\nidentifier — a bare resource audience is deliberately not accepted\nhere, that would let any RFC 8707 resource-scoped token satisfy the\ngrant instead of only tokens minted for this AS. Defaults to\n[tokenEndpoint] when empty, preserving prior exact-match behavior.",
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "max_assertion_age": {
+                        "type": "string"
+                    },
+                    "subject_bindings": {
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_stacklok_toolhive_pkg_authserver_server_tokenexchange.JWTBearerSubjectBinding"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    }
+                },
+                "type": "object"
+            },
+            "github_com_stacklok_toolhive_pkg_authserver_server_tokenexchange.JWTBearerSubjectBinding": {
+                "properties": {
+                    "allowed_resources": {
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "subject": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
             "github_com_stacklok_toolhive_pkg_authserver_server_tokenexchange.TrustedIssuer": {
                 "properties": {
                     "actor_claim": {
@@ -823,7 +862,7 @@ const docTemplate = `{
                         "uniqueItems": false
                     },
                     "expected_audience": {
-                        "description": "ExpectedAudience is the expected \"aud\" claim value that must appear\nin the token's audience list (a resource/API identifier, not a\nclient ID — required, but not enforced; see looksLikeResourceIdentifier).\nSee docs/arch/17-token-exchange-delegation.md (\"ID/access-token\ndiscrimination\") for why and its limits.",
+                        "description": "ExpectedAudience is the expected \"aud\" claim value that must appear\nin an RFC 8693 subject token's audience list (a resource/API identifier,\nnot a client ID — required for delegation unless JWTBearerGrant is\nconfigured; see looksLikeResourceIdentifier). RFC 7523 assertions use\nthe token endpoint as their audience instead.\nSee docs/arch/17-token-exchange-delegation.md (\"ID/access-token\ndiscrimination\") for why and its limits.",
                         "type": "string"
                     },
                     "insecure_allow_http": {
@@ -837,6 +876,9 @@ const docTemplate = `{
                     "jwks_url": {
                         "description": "JWKSURL is the URL to fetch the issuer's JSON Web Key Set from.\nIf empty, it is resolved via OIDC discovery at {IssuerURL}/.well-known/openid-configuration.",
                         "type": "string"
+                    },
+                    "jwt_bearer_grant": {
+                        "$ref": "#/components/schemas/github_com_stacklok_toolhive_pkg_authserver_server_tokenexchange.JWTBearerGrantPolicy"
                     }
                 },
                 "type": "object"
@@ -1317,6 +1359,19 @@ const docTemplate = `{
                         "description": "RemovedFromLock lists previously managed skills absent from the lock file.",
                         "items": {
                             "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    }
+                },
+                "type": "object"
+            },
+            "github_com_stacklok_toolhive_pkg_plugins.UpgradeResult": {
+                "properties": {
+                    "outcomes": {
+                        "description": "Outcomes contains one entry per skill considered for upgrade.",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_stacklok_toolhive_pkg_skills.UpgradeOutcome"
                         },
                         "type": "array",
                         "uniqueItems": false
@@ -3587,6 +3642,10 @@ const docTemplate = `{
             "pkg_api_v1.pushSkillRequest": {
                 "description": "Request to push a built skill artifact",
                 "properties": {
+                    "identity_token": {
+                        "description": "IdentityToken is a short-lived OIDC identity token used for keyless\nsigning, mutually exclusive with Key",
+                        "type": "string"
+                    },
                     "key": {
                         "description": "Key is the path to a cosign private key used to sign the pushed\nartifact",
                         "type": "string"
@@ -4062,6 +4121,44 @@ const docTemplate = `{
                 "properties": {
                     "result": {
                         "$ref": "#/components/schemas/github_com_stacklok_toolhive_pkg_workloads_upgrade.CheckResult"
+                    }
+                },
+                "type": "object"
+            },
+            "pkg_api_v1.upgradePluginsRequest": {
+                "description": "Request to re-resolve a project's lock entries and install newer content",
+                "properties": {
+                    "allow_ref_change": {
+                        "description": "AllowRefChange permits resolvedReference changes during upgrade",
+                        "type": "boolean"
+                    },
+                    "clients": {
+                        "description": "Clients lists target client identifiers. Empty means every\nplugin-supporting client detected on this host.",
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "fail_on_changes": {
+                        "description": "FailOnChanges exits with an error when any mutable source would upgrade",
+                        "type": "boolean"
+                    },
+                    "names": {
+                        "description": "Names restricts the upgrade to specific plugin names. Empty means every entry.",
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "preview": {
+                        "description": "Preview reports what would change without installing (still fetches to compare digests)",
+                        "type": "boolean"
+                    },
+                    "project_root": {
+                        "description": "ProjectRoot is the project root path whose lock file should be upgraded",
+                        "type": "string"
                     }
                 },
                 "type": "object"
@@ -5125,6 +5222,10 @@ const docTemplate = `{
                     },
                     "metricsEnabled": {
                         "description": "MetricsEnabled controls whether OTLP metrics are enabled.\nWhen false, OTLP metrics are not sent even if an endpoint is configured.\nThis is independent of EnablePrometheusMetricsPath.\n+kubebuilder:default=false\n+optional",
+                        "type": "boolean"
+                    },
+                    "metricsOnTransportPort": {
+                        "description": "MetricsOnTransportPort controls whether /metrics is ALSO served on the main\ntransport port, in addition to the diagnostics port. It exists to give\ndeployments a migration window: while true, an existing scrape configuration\naimed at the transport port keeps working, and a new one aimed at\nPrometheusPort works too, so a scraper can be moved and verified before the\nold location goes away. See https://github.com/stacklok/toolhive/issues/6384 for\nthe removal timeline.\n\nDeliberately a pointer with NO kubebuilder default. Nil means \"unset\", and is\nresolved against DefaultMetricsOnTransportPort at the point of use rather than\nwritten into config. A plain bool with a default marker would be materialised\ninto the persisted RunConfig and into CRD objects at admission, so changing\nthe default later would not move any workload that already exists — the flip\nwould silently do nothing.\n\n+optional",
                         "type": "boolean"
                     },
                     "prometheusPort": {
@@ -6436,6 +6537,97 @@ const docTemplate = `{
                     }
                 },
                 "summary": "Sync project plugins from the lock file",
+                "tags": [
+                    "plugins"
+                ]
+            }
+        },
+        "/api/v1beta/plugins/upgrade": {
+            "post": {
+                "description": "Re-resolve a project's lock entries and install newer content where available",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/pkg_api_v1.upgradePluginsRequest",
+                                        "summary": "request",
+                                        "description": "Upgrade request"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "Upgrade request",
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_stacklok_toolhive_pkg_plugins.UpgradeResult"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "description": "Forbidden (feature not enabled)"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "description": "Not Found (a requested name is not in the lock file)"
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "description": "Internal Server Error"
+                    },
+                    "501": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "description": "Not Implemented"
+                    }
+                },
+                "summary": "Upgrade project plugins",
                 "tags": [
                     "plugins"
                 ]

@@ -4,7 +4,7 @@
 
 | 项目 | 状态 | 目录或原因 |
 | --- | --- | --- |
-| `github/github-mcp-server` | updated | `mcp/servers/github-mcp-server @ 55f7b721fd9ae5867382b6c3208c9d9be5e5fe20 (490 files, 4696035 bytes); excluded 62 files` |
+| `github/github-mcp-server` | updated | `mcp/servers/github-mcp-server @ 64a49f34d076b6f5917dae1424521d43c7bcae84 (490 files, 4702257 bytes); excluded 62 files` |
 | `ark-forge/mcp-eu-ai-act` | up-to-date | `mcp/security/mcp-eu-ai-act @ 980e749d188d7e9b6d31c2d6c7f29d713cedd806` |
 | `UKGovernmentBEIS/inspect_ai` | up-to-date | `agent/evaluations/inspect-ai @ 1e7082c897f0324c7269f0703a85d4be881a34f7` |
 | `sattyamjjain/agent-audit-kit` | up-to-date | `knowledge/security/agent-audit-kit @ 56cecf4f4ff4b70d5a70e30dde6b1443b1487107` |

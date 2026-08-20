@@ -15,7 +15,7 @@ Standalone terminals use OpenTUI's retained full-screen layout: the transcript r
 
 ## Herdr host mode
 
-When Herdr supplies `HERDR_ENV=1` and `HERDR_PANE_ID`, nanobot becomes a quiet hosted client. It uses OpenTUI's main-screen mode instead of hiding the whole run in a temporary alternate screen, removes the launch card and persistent session/model chrome, and keeps only the transcript, last user task, current progress, and composer. Herdr remains responsible for workspace, tab, pane, and attention navigation; hosted command discovery therefore omits the duplicate session/new-chat/branch controls.
+When Herdr supplies `HERDR_ENV=1` and `HERDR_PANE_ID`, nanobot becomes a quiet hosted client. It uses OpenTUI's main-screen mode instead of hiding the whole run in a temporary alternate screen, removes the launch card and persistent session/model chrome, and keeps only the transcript, last user task, current progress, and composer. Herdr remains responsible for workspace, tab, pane, and attention navigation, while nanobot keeps its application-level session, new-chat, and branch commands.
 
 The TUI reports its WebSocket session ID, model, Git branch, workspace, last task, and current action through Herdr's supported pane CLI. Sending work reports `working`; a persisted explicit nanobot goal block reports `blocked`; a completed turn reports `idle`; exit releases lifecycle authority. The gateway session remains the durable transcript and resume path. Standalone terminals keep the richer full-screen navigation described below.
 
@@ -41,9 +41,11 @@ Unsent prompts return to the composer if the turn stops or fails.
 
 Use `/sessions` to search and switch persisted conversations without leaving the terminal.
 `/new-chat` preserves the current conversation and starts another one; nanobot's existing `/new`
-command keeps its cross-channel behavior and resets the current chat. The next launch returns to
-the last session unless `--session` selects another one. When earlier transcript pages exist,
-press `PageUp` at the top to load them in place.
+command keeps its cross-channel behavior and resets the current chat. Each launch starts a new
+session using the launch directory as its workspace; `--session` selects an existing session and
+`--workspace` overrides the launch directory. On exit, the restored terminal prints a ready-to-run
+`nanobot agent --session ...` command that resumes the current session. When earlier transcript
+pages exist, press `PageUp` at the top to load them in place.
 
 The native client accepts bare WebSocket chat IDs or `websocket:<id>` selectors. Use
 `nanobot agent --classic --session <channel:id>` to resume a session owned by another channel;

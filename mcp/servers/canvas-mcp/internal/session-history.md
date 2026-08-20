@@ -1,3 +1,30 @@
+### 2026-08-10 (night) — #275 peer-review false-negative triaged; PR #277 merged; Copilot's PR #276 rejected
+
+- **#275 reported**: `get_my_peer_reviews_todo` answers "no pending peer reviews" for a
+  caller (`khagyard`) with a real, incomplete review assigned — on v1.9.0, despite #219
+  already fixing this exact tool's error-swallowing + missing assessor-filter defects.
+- **PR #276 (Copilot bot) closed, not merged.** Its fix added `include[]=all_dates`/
+  `submission` to the assignments listing, but those params don't filter which
+  assignments Canvas returns — the premise didn't match the endpoint's actual behavior,
+  and its regression test only asserted the params were *passed*, not that real API
+  results changed. Same "green test proves the fixture, not reality" class as #191.
+- **PR #277 MERGED** (admin-bypass — checks green, review-approval requirement waived).
+  Adds optional `assignment_identifier` to `get_my_peer_reviews_todo`, letting a caller
+  check one known assignment directly, bypassing the per-course discovery scan's
+  `peer_reviews`-flag gate entirely. Confirmed via live API-doc lookup: `assessor_id`/
+  `user_id` field mapping is correct, and this endpoint isn't touched by the
+  anonymization layer — both ruled out as the cause. **Root cause still not found** — no
+  student-scoped token available to reproduce.
+- Independent Codex diagnosis (`codex:codex-rescue`) never returned a usable result —
+  the wrapper agent is stdout-forwarding-only, no polling/status capability. Proceeded
+  without it per direct instruction.
+- **#275 stays open.** Reporter replied post-merge: regular assignment, not anonymous,
+  assigned before due date — still not found. A separate process (daily triage routine,
+  `trig_011HVR6j4c5hDR2fj7k3ujxC`) caught that #277 merged *after* v1.9.0 shipped, so the
+  reporter's original test was against code that didn't have the new parameter yet, and
+  floated checking the student TODO feed next — that thread continued independently,
+  not yet reconciled with this session.
+
 ### 2026-08-10 (evening) — Release v1.9.0 shipped, all five channels verified
 
 - **v1.9.0 released** (the pending minor bump): #258's four two-step fan-out senders +
@@ -1084,3 +1111,43 @@ as a plaintext `--header` CLI arg → visible in `ps` on the client machine; inh
   `[Unreleased]` notes are written. (7) **#249** CLI decision (stdio wizard / instructions-only /
   deprecate). (8) **#157** sandbox egress needs a proxy or netns; the in-process Node guard is
   bypassable and now says so. (9) `cli/package-lock.json` version drift (1.0.0 vs 1.1.0).
+
+### 2026-08-13 — autonomous issue/PR sweep (/loop): #285 + #286 merged, #288 gated, Dependabot cleared
+
+- **Run mode**: user-authorized autonomous loop; Sonnet subagents in per-PR worktrees did the
+  implementation, opencode did independent review (Codex workspace out of credits — MCP *and*
+  CLI share the billing, both dead until refill).
+- **PR #285 merged** (#283): anti-fallback steering after a student's failed `create_announcement`
+  led the client to post a discussion instead. Review verdict APPROVE.
+- **PR #286 merged** (#281): `search_canvas_tools` now searches the live MCP registry too.
+  Review caught a real breaking-change gap (flat `tools` key silently dropped) → `schema_version: 2`
+  + shape-pinning test. Also `run_middleware=False` and output caps; #287 filed for the
+  pre-existing uncapped full-mode dump. Main re-verified green after both merges (1342 passed).
+- **PR #288 MERGED later that night** (#275): khagyard delivered the real payload ~2h after the
+  ask — it falsified `plannable.user_id` (absent → would have rendered "Student None"; fixed, real
+  payload became the acceptance-replay fixture) and confirmed the completed-items filter is
+  load-bearing. Devin verified the final diff (3/3 PASS; note: devin non-interactive needs
+  `--respect-workspace-trust=false` and can't run tools without `--permission-mode dangerous` —
+  pipe the diff inline instead). Earlier: opencode REQUEST CHANGES caught the
+  28-day window re-creating #275's own blind spot and a missing assessor guard — both fixed.
+  Merge gate: real payload from khagyard (asked on #275 with exact curl|jq).
+- **Reporter engagement**: khagyard asked to retest #283 fix + capture the #275 planner payload
+  (they hold the student credential we lack); zqian asked to confirm #281.
+- **Dependabot**: #266 merged (typescript 7 — dev-only, nothing invokes tsc in CI/runtime);
+  #264 merged (python:3.14 Docker — full suite run locally under 3.14 first: 1325 passed).
+  PR #253 closed (underlying #252 closed by zqian's retest; encoding change had no live bug).
+- **#270 scoped** on-issue (central wrapper + ship with #271), implementation deferred to a
+  supervised session.
+- **Next** (as of that session): close #275/#283/#281 on reporter confirmations; minor-bump
+  release; supervised #270+#271 session; #287 good-first-issue; Codex credits out — opencode +
+  devin until refilled.
+
+### 2026-08-14 — #281 closed on zqian's confirmation (archived from CLAUDE.md)
+
+- Completed: zqian retested `search_canvas_tools` on `main` across multiple queries (peer review,
+  assignment, pages) and confirmed the fix — **#281 CLOSED** with credit to bruchris (diagnosis)
+  and zqian (retest). Closing comment corrected in place after posting (section key is
+  `code_execution_api`, not `code_api` — verified against discovery.py before letting it stand).
+  PR #289 (2026-08-14 triage brief) merged by the triage routine.
+- Next (as of that session): close #275/#283 on khagyard's retest; minor-bump release;
+  supervised #270+#271 session; #287 good-first-issue; Codex credits out — opencode + devin.

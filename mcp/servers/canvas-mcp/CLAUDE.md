@@ -326,8 +326,38 @@ See: [Issue #56](https://github.com/vishalsachdev/canvas-mcp/issues/56) for comp
   Copilot-authored PR (#276) whose fix didn't match how the Canvas endpoint actually
   behaves. Reporter (`khagyard`) confirmed: regular assignment, not anonymous, assigned
   before due date — still not found even with the direct lookup, per the daily triage
-  routine's follow-up on the issue. Next lead floated (unverified): check the student
-  TODO feed instead of the assignment-scoped peer_reviews endpoint.
+  routine's follow-up on the issue. **PR #288 MERGED 2026-08-13 (night)** — Planner-API
+  discovery path (community-confirmed: student UI uses `/planner/items`, the
+  assignment-scoped peer_reviews endpoints are instructor-focused). The merge gate
+  worked exactly as designed: khagyard posted a **real production payload** ~2h after
+  the ask, which falsified `plannable.user_id`/`assessor_id` (absent in reality —
+  output would have said "Student None") and confirmed completed items still appear
+  under `filter=incomplete_items`. Their 3-item payload is now the acceptance-replay
+  fixture (JWT image URLs stripped). Verified: opencode review + Devin 3/3 PASS + CI +
+  main suite green (1350). Issue stays open for khagyard's retest from main; close on
+  their confirmation. Ships in next release (minor bump already owed)
+- [x] **#283 announcement→discussion silent fallback — two-layer fix complete (PR #285 +
+  PR #291, merged 2026-08-14).** jonespm's retest showed the deeper mechanism: Canvas answers
+  200 to a student's create_announcement, silently drops `is_announcement`, and creates a real
+  discussion topic. PR #291 adds (1) a permission pre-check — `GET /courses/:id?include[]=permissions`,
+  measured live: flags exist ONLY on the single-course endpoint (list ignores the include;
+  `/permissions` omits them); refuses only on explicit `false`, fails open otherwise — and
+  (2) cleanup: the orphaned topic is auto-deleted on downgrade detection. Two opencode rounds
+  (round 1 found a None-body TypeError on the cleanup DELETE; round 2 APPROVE). Issue stays
+  open for khagyard's student-token retest from main (their test course still has orphan topic 674)
+- [x] **#281 search_canvas_tools never searched MCP tools — fixed (PR #286, merged 2026-08-13).**
+  It searched only code_api TS files (bruchris's outside diagnosis, correct). Now also
+  queries the live registry (`mcp.list_tools(run_middleware=False)`) with labeled sections;
+  **breaking: response shape v2** (`schema_version: 2`, flat `tools` key gone), shape pinned
+  by test. Follow-up #287 filed (pre-existing uncapped `full`-mode TS dumps). zqian confirmed
+  on `main` (multiple queries) — **issue CLOSED 2026-08-14**
+- [x] **#287 uncapped full-mode TS dumps — CLOSED (PR #290, merged 2026-08-14).** Second
+  outside code contribution (@SHIL0018): 2,000-char cap + regression test on the discovery
+  code-API full branch. Fork CI needed manual approve-runs; `claude-review` failed as always
+  on forks (not required). Verified the fixture can't pass vacuously (matched file is 18.8KB)
+- [ ] **#270 isError — scoped, not implemented** (design comment on issue 2026-08-13):
+  central registration-time wrapper, ship together with #271; deferred to a supervised
+  session (touches every tool module)
 
 ## Roadmap
 - [x] Release v1.0.8 — all CI/CD pipelines passing (PyPI, MCP Registry, GitHub Release)
@@ -370,29 +400,29 @@ these local-only files publicly; `docs/.assetsignore` is now a backstop).
 > Full history: [internal/session-history.md](./internal/session-history.md)
 
 
-### 2026-08-10 (night) — #275 peer-review false-negative triaged; PR #277 merged; Copilot's PR #276 rejected
+### 2026-08-15 — v1.10.0 shipped; #290/#291 merged; Reynolds hosted-test invite sent
 
-- **#275 reported**: `get_my_peer_reviews_todo` answers "no pending peer reviews" for a
-  caller (`khagyard`) with a real, incomplete review assigned — on v1.9.0, despite #219
-  already fixing this exact tool's error-swallowing + missing assessor-filter defects.
-- **PR #276 (Copilot bot) closed, not merged.** Its fix added `include[]=all_dates`/
-  `submission` to the assignments listing, but those params don't filter which
-  assignments Canvas returns — the premise didn't match the endpoint's actual behavior,
-  and its regression test only asserted the params were *passed*, not that real API
-  results changed. Same "green test proves the fixture, not reality" class as #191.
-- **PR #277 MERGED** (admin-bypass — checks green, review-approval requirement waived).
-  Adds optional `assignment_identifier` to `get_my_peer_reviews_todo`, letting a caller
-  check one known assignment directly, bypassing the per-course discovery scan's
-  `peer_reviews`-flag gate entirely. Confirmed via live API-doc lookup: `assessor_id`/
-  `user_id` field mapping is correct, and this endpoint isn't touched by the
-  anonymization layer — both ruled out as the cause. **Root cause still not found** — no
-  student-scoped token available to reproduce.
-- Independent Codex diagnosis (`codex:codex-rescue`) never returned a usable result —
-  the wrapper agent is stdout-forwarding-only, no polling/status capability. Proceeded
-  without it per direct instruction.
-- **#275 stays open.** Reporter replied post-merge: regular assignment, not anonymous,
-  assigned before due date — still not found. A separate process (daily triage routine,
-  `trig_011HVR6j4c5hDR2fj7k3ujxC`) caught that #277 merged *after* v1.9.0 shipped, so the
-  reporter's original test was against code that didn't have the new parameter yet, and
-  floated checking the student TODO feed next — that thread continued independently,
-  not yet reconciled with this session.
+- Completed: **PR #290 merged, #287 CLOSED** — @SHIL0018's outside contribution (2nd ever)
+  capping full-mode TS dumps; fork CI manually approved, fixture verified non-vacuous.
+  **PR #291 merged** — two-layer #283 fix: permission pre-check (`include[]=permissions`,
+  measured live: flags exist only on the single-course endpoint) + auto-delete of the silently
+  downgraded discussion topic; 2 opencode rounds (round 1 caught a None-body TypeError), live
+  acceptance on a real no-permission course. **Release v1.10.0 shipped** — all five channels
+  live + verified: GitHub Release (`.mcpb` + SLSA, attestation exit 0), PyPI 200, MCP Registry
+  `isLatest=True` (no propagation race), site wrangler-deployed, hosted Azure auto-deployed
+  (401 challenge healthy). Community release: #281 schema v2 (breaking), #275 Planner-feed,
+  #283 pre-check+cleanup, #287 caps. **Mark Reynolds hosted-test invite SENT** (verified in
+  Thunderbird Sent Items, 02:29 UTC, `.mcpb` attached); his OID is on `MCP_ENTRA_ALLOWED_OIDS`
+  (11 now); local draft files cleaned up post-send. Key framing correction that shaped the
+  email: the HOSTED instance is the sole object of UIUC review, stdio is not.
+- Next: (1) close #275/#283 on khagyard's retest — can now run against the released v1.10.0,
+  not just main (daily triage watches both threads); (2) supervised #270+#271 session — add
+  the two pre-existing nits found in review (bare `"error" in response` in
+  `delete_announcement`; `ID: None` interpolation); (3) awaiting Mark Reynolds's hosted-test
+  results / review-side feedback (see `[[umich-adoption-illinois-review]]` memory);
+  (4) Codex credits still out — opencode (deep) + devin (quick) until refilled.
+
+### 2026-08-19 — marketing-claim review, PR #310, and README follow-up
+
+- Completed: Tempered unsupported performance, privacy, compliance, sandbox, and client-compatibility claims across the public documentation and website. PR #310 landed in `main`, and the refreshed Cloudflare Pages production deployment was verified on both the Pages URL and custom domain. Follow-up README clarifications (tool-count scope, client variability, and stale test-count wording) are committed as `b3a3475` on `docs/temper-marketing-claims`.
+- Next: Open and merge a follow-up pull request for `b3a3475` if the README clarifications should land on `main`.

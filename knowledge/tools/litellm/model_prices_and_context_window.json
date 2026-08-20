@@ -12373,6 +12373,7 @@
             "search_context_size_medium": 0.01
         },
         "supports_adaptive_thinking": true,
+        "supports_mid_conversation_system": true,
         "supports_assistant_prefill": false,
         "supports_computer_use": true,
         "supports_function_calling": true,
@@ -12769,6 +12770,7 @@
             "search_context_size_medium": 0.01
         },
         "supports_adaptive_thinking": true,
+        "supports_mid_conversation_system": true,
         "supports_assistant_prefill": false,
         "supports_computer_use": true,
         "supports_function_calling": true,
@@ -12805,6 +12807,7 @@
             "search_context_size_medium": 0.01
         },
         "supports_adaptive_thinking": true,
+        "supports_mid_conversation_system": true,
         "supports_assistant_prefill": false,
         "supports_computer_use": true,
         "supports_function_calling": true,
@@ -12844,6 +12847,7 @@
             "search_context_size_medium": 0.01
         },
         "supports_adaptive_thinking": true,
+        "supports_mid_conversation_system": true,
         "supports_assistant_prefill": false,
         "supports_computer_use": true,
         "supports_function_calling": true,
@@ -19760,6 +19764,7 @@
         "mode": "chat",
         "output_cost_per_reasoning_token": 9e-06,
         "output_cost_per_token": 9e-06,
+        "regional_endpoint_uplift_multiplier": 1.1,
         "source": "https://cloud.google.com/vertex-ai/generative-ai/pricing",
         "supported_endpoints": [
             "/v1/chat/completions",
@@ -19816,6 +19821,7 @@
         "output_cost_per_token": 3.75e-06,
         "output_cost_per_token_batches": 1.875e-06,
         "output_cost_per_token_flex": 1.875e-06,
+        "regional_endpoint_uplift_multiplier": 1.1,
         "source": "https://cloud.google.com/vertex-ai/generative-ai/pricing",
         "supported_endpoints": [
             "/v1/chat/completions",
@@ -19871,6 +19877,7 @@
         "output_cost_per_token": 3.75e-06,
         "output_cost_per_token_batches": 1.875e-06,
         "output_cost_per_token_flex": 1.875e-06,
+        "regional_endpoint_uplift_multiplier": 1.1,
         "source": "https://cloud.google.com/vertex-ai/generative-ai/pricing",
         "supported_endpoints": [
             "/v1/chat/completions",
@@ -25361,6 +25368,7 @@
         "supports_none_reasoning_effort": true,
         "supports_parallel_function_calling": true,
         "supports_pdf_input": true,
+        "supports_prompt_cache_breakpoint": true,
         "supports_prompt_caching": true,
         "supports_reasoning": true,
         "supports_response_schema": true,
@@ -25423,6 +25431,7 @@
         "supports_none_reasoning_effort": true,
         "supports_parallel_function_calling": true,
         "supports_pdf_input": true,
+        "supports_prompt_cache_breakpoint": true,
         "supports_prompt_caching": true,
         "supports_reasoning": true,
         "supports_response_schema": true,
@@ -25485,6 +25494,7 @@
         "supports_none_reasoning_effort": true,
         "supports_parallel_function_calling": true,
         "supports_pdf_input": true,
+        "supports_prompt_cache_breakpoint": true,
         "supports_prompt_caching": true,
         "supports_reasoning": true,
         "supports_response_schema": true,
@@ -25547,6 +25557,7 @@
         "supports_none_reasoning_effort": true,
         "supports_parallel_function_calling": true,
         "supports_pdf_input": true,
+        "supports_prompt_cache_breakpoint": true,
         "supports_prompt_caching": true,
         "supports_reasoning": true,
         "supports_response_schema": true,
@@ -29468,6 +29479,40 @@
         "source": "https://mistral.ai/news/devstral-2-vibe-cli",
         "supports_assistant_prefill": true,
         "supports_function_calling": true,
+        "supports_response_schema": true,
+        "supports_tool_choice": true
+    },
+    "mistral/zai-glm-5-2": {
+        "cache_read_input_token_cost": 1.4e-07,
+        "input_cost_per_token": 1.4e-06,
+        "litellm_provider": "mistral",
+        "max_input_tokens": 1048576,
+        "max_output_tokens": 131072,
+        "max_tokens": 131072,
+        "mode": "chat",
+        "output_cost_per_token": 4.4e-06,
+        "source": "https://docs.mistral.ai/models/zai-glm-5-2",
+        "supports_assistant_prefill": true,
+        "supports_function_calling": true,
+        "supports_prompt_caching": true,
+        "supports_reasoning": true,
+        "supports_response_schema": true,
+        "supports_tool_choice": true
+    },
+    "mistral/glm-5-2": {
+        "cache_read_input_token_cost": 1.4e-07,
+        "input_cost_per_token": 1.4e-06,
+        "litellm_provider": "mistral",
+        "max_input_tokens": 1048576,
+        "max_output_tokens": 131072,
+        "max_tokens": 131072,
+        "mode": "chat",
+        "output_cost_per_token": 4.4e-06,
+        "source": "https://docs.mistral.ai/models/zai-glm-5-2",
+        "supports_assistant_prefill": true,
+        "supports_function_calling": true,
+        "supports_prompt_caching": true,
+        "supports_reasoning": true,
         "supports_response_schema": true,
         "supports_tool_choice": true
     },
@@ -34713,6 +34758,50 @@
         "supports_reasoning": false,
         "supports_function_calling": true
     },
+    "perplexity/perplexity/deepseek-v4-flash-0731": {
+        "cache_read_input_token_cost": 2.8e-08,
+        "input_cost_per_token": 1.3e-07,
+        "litellm_provider": "perplexity",
+        "mode": "responses",
+        "output_cost_per_token": 2.6e-07,
+        "source": "https://docs.perplexity.ai/docs/agent-api/models",
+        "supports_web_search": true,
+        "supports_reasoning": true,
+        "supports_function_calling": true
+    },
+    "perplexity/perplexity/glm-5.2": {
+        "cache_read_input_token_cost": 1.4e-07,
+        "input_cost_per_token": 1.4e-06,
+        "litellm_provider": "perplexity",
+        "mode": "responses",
+        "output_cost_per_token": 4.4e-06,
+        "source": "https://docs.perplexity.ai/docs/agent-api/models",
+        "supports_web_search": true,
+        "supports_reasoning": true,
+        "supports_function_calling": true
+    },
+    "perplexity/perplexity/kimi-k3": {
+        "cache_read_input_token_cost": 3e-07,
+        "input_cost_per_token": 3e-06,
+        "litellm_provider": "perplexity",
+        "mode": "responses",
+        "output_cost_per_token": 1.5e-05,
+        "source": "https://docs.perplexity.ai/docs/agent-api/models",
+        "supports_web_search": true,
+        "supports_reasoning": true,
+        "supports_function_calling": true
+    },
+    "perplexity/perplexity/kimi-k2.7-code": {
+        "cache_read_input_token_cost": 1.9e-07,
+        "input_cost_per_token": 9.5e-07,
+        "litellm_provider": "perplexity",
+        "mode": "responses",
+        "output_cost_per_token": 4e-06,
+        "source": "https://docs.perplexity.ai/docs/agent-api/models",
+        "supports_web_search": true,
+        "supports_reasoning": false,
+        "supports_function_calling": true
+    },
     "perplexity/pplx-embed-v1-0.6b": {
         "input_cost_per_token": 4e-09,
         "litellm_provider": "perplexity",
@@ -38880,6 +38969,7 @@
         "max_tokens": 8192,
         "mode": "chat",
         "output_cost_per_token": 5e-06,
+        "regional_endpoint_uplift_multiplier": 1.1,
         "source": "https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/claude/haiku-4-5",
         "supports_assistant_prefill": true,
         "supports_function_calling": true,
@@ -38904,6 +38994,7 @@
         "max_tokens": 8192,
         "mode": "chat",
         "output_cost_per_token": 5e-06,
+        "regional_endpoint_uplift_multiplier": 1.1,
         "source": "https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/claude/haiku-4-5",
         "supports_assistant_prefill": true,
         "supports_function_calling": true,
@@ -39123,6 +39214,7 @@
         "max_tokens": 64000,
         "mode": "chat",
         "output_cost_per_token": 2.5e-05,
+        "regional_endpoint_uplift_multiplier": 1.1,
         "search_context_cost_per_query": {
             "search_context_size_high": 0.01,
             "search_context_size_low": 0.01,
@@ -39152,6 +39244,7 @@
         "max_tokens": 64000,
         "mode": "chat",
         "output_cost_per_token": 2.5e-05,
+        "regional_endpoint_uplift_multiplier": 1.1,
         "search_context_cost_per_query": {
             "search_context_size_high": 0.01,
             "search_context_size_low": 0.01,
@@ -39172,6 +39265,7 @@
     },
     "vertex_ai/claude-opus-4-6": {
         "deprecation_date": "2027-02-05",
+        "regional_endpoint_uplift_multiplier": 1.1,
         "supports_adaptive_thinking": true,
         "cache_creation_input_token_cost": 6.25e-06,
         "cache_creation_input_token_cost_above_1hr": 1e-05,
@@ -39203,6 +39297,7 @@
     },
     "vertex_ai/claude-opus-4-6@default": {
         "deprecation_date": "2027-02-05",
+        "regional_endpoint_uplift_multiplier": 1.1,
         "supports_adaptive_thinking": true,
         "cache_creation_input_token_cost": 6.25e-06,
         "cache_creation_input_token_cost_above_1hr": 1e-05,
@@ -39234,6 +39329,7 @@
     },
     "vertex_ai/claude-opus-4-7": {
         "deprecation_date": "2027-04-16",
+        "regional_endpoint_uplift_multiplier": 1.1,
         "supports_adaptive_thinking": true,
         "cache_creation_input_token_cost": 6.25e-06,
         "cache_creation_input_token_cost_above_1hr": 1e-05,
@@ -39266,6 +39362,7 @@
     },
     "vertex_ai/claude-opus-4-7@default": {
         "deprecation_date": "2027-04-16",
+        "regional_endpoint_uplift_multiplier": 1.1,
         "supports_adaptive_thinking": true,
         "cache_creation_input_token_cost": 6.25e-06,
         "cache_creation_input_token_cost_above_1hr": 1e-05,
@@ -39298,6 +39395,7 @@
     },
     "vertex_ai/claude-fable-5": {
         "deprecation_date": "2027-06-08",
+        "regional_endpoint_uplift_multiplier": 1.1,
         "supports_mid_conversation_system": true,
         "cache_creation_input_token_cost": 1.25e-05,
         "cache_creation_input_token_cost_above_1hr": 2e-05,
@@ -39330,6 +39428,7 @@
     },
     "vertex_ai/claude-fable-5@default": {
         "deprecation_date": "2027-06-08",
+        "regional_endpoint_uplift_multiplier": 1.1,
         "supports_mid_conversation_system": true,
         "cache_creation_input_token_cost": 1.25e-05,
         "cache_creation_input_token_cost_above_1hr": 2e-05,
@@ -39362,6 +39461,7 @@
     },
     "vertex_ai/claude-opus-5": {
         "deprecation_date": "2027-01-24",
+        "regional_endpoint_uplift_multiplier": 1.1,
         "supports_mid_conversation_system": true,
         "supports_adaptive_thinking": true,
         "cache_creation_input_token_cost": 6.25e-06,
@@ -39395,6 +39495,7 @@
     },
     "vertex_ai/claude-opus-5@default": {
         "deprecation_date": "2027-01-24",
+        "regional_endpoint_uplift_multiplier": 1.1,
         "supports_mid_conversation_system": true,
         "supports_adaptive_thinking": true,
         "cache_creation_input_token_cost": 6.25e-06,
@@ -39428,6 +39529,7 @@
     },
     "vertex_ai/claude-opus-4-8": {
         "deprecation_date": "2027-05-28",
+        "regional_endpoint_uplift_multiplier": 1.1,
         "supports_mid_conversation_system": true,
         "supports_adaptive_thinking": true,
         "cache_creation_input_token_cost": 6.25e-06,
@@ -39461,6 +39563,7 @@
     },
     "vertex_ai/claude-opus-4-8@default": {
         "deprecation_date": "2027-05-28",
+        "regional_endpoint_uplift_multiplier": 1.1,
         "supports_mid_conversation_system": true,
         "supports_adaptive_thinking": true,
         "cache_creation_input_token_cost": 6.25e-06,
@@ -39510,6 +39613,7 @@
         "mode": "chat",
         "output_cost_per_token": 1.5e-05,
         "output_cost_per_token_batches": 7.5e-06,
+        "regional_endpoint_uplift_multiplier": 1.1,
         "supports_assistant_prefill": true,
         "supports_computer_use": true,
         "supports_function_calling": true,
@@ -39523,6 +39627,7 @@
     },
     "vertex_ai/claude-sonnet-5": {
         "deprecation_date": "2026-12-24",
+        "regional_endpoint_uplift_multiplier": 1.1,
         "supports_mid_conversation_system": true,
         "cache_creation_input_token_cost": 2.5e-06,
         "cache_creation_input_token_cost_above_1hr": 4e-06,
@@ -39555,6 +39660,7 @@
         "prompt_cache_min_tokens": 1024
     },
     "vertex_ai/claude-sonnet-4-6": {
+        "regional_endpoint_uplift_multiplier": 1.1,
         "supports_adaptive_thinking": true,
         "cache_creation_input_token_cost": 3.75e-06,
         "cache_creation_input_token_cost_above_1hr": 6e-06,
@@ -39602,6 +39708,7 @@
         "mode": "chat",
         "output_cost_per_token": 1.5e-05,
         "output_cost_per_token_batches": 7.5e-06,
+        "regional_endpoint_uplift_multiplier": 1.1,
         "supports_assistant_prefill": true,
         "supports_computer_use": true,
         "supports_function_calling": true,
@@ -40015,6 +40122,7 @@
         "output_cost_per_token_batches": 7.5e-07,
         "output_cost_per_token_flex": 7.5e-07,
         "output_cost_per_token_priority": 2.7e-06,
+        "regional_endpoint_uplift_multiplier": 1.1,
         "source": "https://cloud.google.com/vertex-ai/generative-ai/pricing#gemini-models",
         "supported_endpoints": [
             "/v1/chat/completions",
@@ -40071,6 +40179,7 @@
         "output_cost_per_token_batches": 1.25e-06,
         "output_cost_per_token_flex": 1.25e-06,
         "output_cost_per_token_priority": 4.5e-06,
+        "regional_endpoint_uplift_multiplier": 1.1,
         "source": "https://cloud.google.com/vertex-ai/generative-ai/pricing#gemini-models",
         "supported_endpoints": [
             "/v1/chat/completions",
@@ -47242,6 +47351,7 @@
     },
     "vertex_ai/claude-sonnet-5@default": {
         "deprecation_date": "2026-12-24",
+        "regional_endpoint_uplift_multiplier": 1.1,
         "supports_mid_conversation_system": true,
         "cache_creation_input_token_cost": 2.5e-06,
         "cache_creation_input_token_cost_above_1hr": 4e-06,
@@ -47274,6 +47384,7 @@
         "prompt_cache_min_tokens": 1024
     },
     "vertex_ai/claude-sonnet-4-6@default": {
+        "regional_endpoint_uplift_multiplier": 1.1,
         "supports_adaptive_thinking": true,
         "cache_creation_input_token_cost": 3.75e-06,
         "cache_creation_input_token_cost_above_1hr": 6e-06,
@@ -47606,6 +47717,57 @@
         "supports_tool_choice": true,
         "supports_vision": true,
         "source": "https://aws.amazon.com/bedrock/pricing/"
+    },
+    "bedrock_mantle/xai.grok-4.6": {
+        "use_openai_responses_path": true,
+        "input_cost_per_token": 2.2e-06,
+        "output_cost_per_token": 6.6e-06,
+        "cache_read_input_token_cost": 5.5e-07,
+        "litellm_provider": "bedrock_mantle",
+        "max_input_tokens": 500000,
+        "max_output_tokens": 500000,
+        "max_tokens": 500000,
+        "mode": "chat",
+        "supported_endpoints": [
+            "/v1/chat/completions",
+            "/v1/responses"
+        ],
+        "supports_function_calling": true,
+        "supports_prompt_caching": true,
+        "supports_reasoning": true,
+        "supports_response_schema": true,
+        "supports_tool_choice": true,
+        "supports_vision": true
+    },
+    "us.xai.grok-4.6": {
+        "input_cost_per_token": 2.2e-06,
+        "output_cost_per_token": 6.6e-06,
+        "cache_read_input_token_cost": 5.5e-07,
+        "litellm_provider": "bedrock_converse",
+        "max_input_tokens": 500000,
+        "max_output_tokens": 500000,
+        "max_tokens": 500000,
+        "mode": "chat",
+        "supports_function_calling": true,
+        "supports_prompt_caching": true,
+        "supports_reasoning": true,
+        "supports_tool_choice": true,
+        "supports_vision": true
+    },
+    "global.xai.grok-4.6": {
+        "input_cost_per_token": 2e-06,
+        "output_cost_per_token": 6e-06,
+        "cache_read_input_token_cost": 5e-07,
+        "litellm_provider": "bedrock_converse",
+        "max_input_tokens": 500000,
+        "max_output_tokens": 500000,
+        "max_tokens": 500000,
+        "mode": "chat",
+        "supports_function_calling": true,
+        "supports_prompt_caching": true,
+        "supports_reasoning": true,
+        "supports_tool_choice": true,
+        "supports_vision": true
     },
     "volcengine/doubao-seed-2-0-pro-260215": {
         "litellm_provider": "volcengine",
@@ -48603,6 +48765,7 @@
         },
         "source": "https://docs.claude.com/en/docs/about-claude/models/overview",
         "supports_adaptive_thinking": true,
+        "supports_mid_conversation_system": true,
         "supports_assistant_prefill": false,
         "supports_computer_use": true,
         "supports_function_calling": true,

@@ -2,31 +2,25 @@
 name: google-cloud-storage-fuse
 description: >-
   Mounts Cloud Storage buckets as a POSIX file system with Cloud Storage FUSE
-  (gcsfuse). Use when you need to interact with gcsfuse — decide whether FUSE,
-  native gs:// reads, or Filestore/Managed Lustre fits a workload, deploy
-  tuned mounts on GKE, Compute Engine, or Cloud Run, enable and size the
-  file, stat, and list caches, tune mount flags or config-file settings,
-  apply workload profiles, keep ML checkpointing safe (rename atomicity,
-  hierarchical namespace, close-time finalization, concurrent writers), or
-  diagnose slow training, low throughput, or Cloud Storage bill spikes on
-  existing mounts with gcsfuse metrics. Covers mount semantics, the gcsfuse
-  CLI and config file, the GKE gcsfuse CSI driver (Workload Identity
-  principal:// bindings, profile StorageClasses, sidecar sizing), and Cloud
-  Run volume mounts. Don't use for bucket administration or data management
-  without a mount (use the google-cloud-storage-basics skill instead) or for
-  fully POSIX-compliant shared file systems (use Filestore or Managed Lustre).
+  (gcsfuse). Use when interacting with gcsfuse: decide whether FUSE, native
+  gs:// reads, or Filestore/Managed Lustre fits a workload, deploy tuned mounts
+  on GKE, Compute Engine, or Cloud Run, enable and size file, stat, and list
+  caches, tune mount flags or config-file settings, apply workload profiles,
+  keep ML checkpointing safe (rename atomicity, hierarchical namespace/HNS,
+  close-time finalization, concurrent writers), or diagnose slow training,
+  low throughput, or bill spikes with gcsfuse metrics. Covers mount semantics,
+  gcsfuse CLI and config files, GKE gcsfuse CSI driver (Workload Identity
+  principal:// bindings, profile StorageClasses, sidecar sizing), and Cloud Run
+  volume mounts. Don't use for bucket administration or data management without
+  a mount (google-cloud-storage-basics) or fully POSIX-compliant shared file
+  systems (Filestore, Managed Lustre).
 license: Apache-2.0
 metadata:
-    version: v1
-    publisher: google
-    tags:
-      - gcs
-      - gcsfuse
-      - fuse
-      - mount
-      - file-system
-    category: Storage
-    support_tier: primary
+  version: v1
+  publisher: google
+  tags: "gcs, gcsfuse, fuse, mount, file-system"
+  category: Storage
+  support_tier: primary
 ---
 
 # Google Cloud Storage FUSE

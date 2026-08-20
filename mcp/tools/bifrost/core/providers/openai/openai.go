@@ -924,7 +924,7 @@ func HandleOpenAIChatCompletionRequest(
 	if customResponseHandler != nil {
 		rawRequest, rawResponse, bifrostErr = customResponseHandler(body, response, jsonData, sendBackRawRequest, sendBackRawResponse)
 	} else {
-		rawRequest, rawResponse, bifrostErr = providerUtils.HandleProviderResponse(body, response, jsonData, sendBackRawRequest, sendBackRawResponse)
+		rawRequest, rawResponse, bifrostErr = providerUtils.HandleProviderResponseCtx(ctx, body, response, jsonData, sendBackRawRequest, sendBackRawResponse)
 	}
 
 	if bifrostErr != nil {
@@ -6501,8 +6501,9 @@ func (provider *OpenAIProvider) BatchResults(ctx *schemas.BifrostContext, keys [
 		})
 
 		batchResultsResp := &schemas.BifrostBatchResultsResponse{
-			BatchID: request.BatchID,
-			Results: results,
+			BatchID:  request.BatchID,
+			Endpoint: schemas.BatchEndpoint(batchResp.Endpoint),
+			Results:  results,
 			ExtraFields: schemas.BifrostResponseExtraFields{
 				Latency: latency.Milliseconds(),
 			},

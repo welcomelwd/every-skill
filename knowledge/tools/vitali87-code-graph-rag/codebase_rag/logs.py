@@ -920,3 +920,23 @@ PY_FRONTEND_BUDGET_DEGRADED = (
 GENERATED_SOURCES_REGISTERED = (
     "Indexing {count} annotation-processor generated source root(s)"
 )
+DELOMBOK_RUN_FAILED = "delombok run failed ({error}); parsing raw source"
+DELOMBOK_OVERLAY_BUILT = "Delombok overlay covers {count} Lombok-affected file(s)"
+FINGERPRINT_DIST_UNREADABLE = (
+    "Skipping a distribution whose metadata could not be read while computing "
+    "the parser fingerprint"
+)
+JAVA_FRONTEND_RUNNING = "javac frontend: attributing Java sources"
+JAVA_FRONTEND_BUILD_FAILED = (
+    "javac frontend tool build failed ({stderr}); using tree-sitter"
+)
+JAVA_FRONTEND_RUN_FAILED = "javac frontend did not finish ({error}); using tree-sitter"
+JAVA_FRONTEND_PARSE_FAILED = (
+    "javac frontend emitted unreadable output (stdout={stdout}, stderr={stderr})"
+)
+JAVA_FRONTEND_UNAVAILABLE = (
+    "JAVA_FRONTEND is set to javac but no working JDK was found; using tree-sitter"
+)
+JAVA_FRONTEND_FACTS = (
+    "javac facts: {calls} resolved call sites, {externals} external sites"
+)

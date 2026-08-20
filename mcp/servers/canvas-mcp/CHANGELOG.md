@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Raised the FastMCP 3.x dependency floor from 3.4.4 to 3.4.7, picking up
+  upstream fixes for Azure scope fallback, deterministic transformed-tool
+  schemas, trusted OAuth metadata/JWKS proxies, and `private_key_jwt` audience
+  validation
+  ([issue 293](https://github.com/vishalsachdev/canvas-mcp/issues/293)).
+- **Breaking:** `send_peer_review_reminders` is now
+  `send_peer_review_inbox_messages` to accurately describe that it sends
+  ordinary Canvas Inbox messages rather than invoking Canvas's native reminder
+  action. The tool now resolves the course and requires `manage_grades` before
+  previewing or sending, failing closed when permission cannot be verified
+  ([issue 303](https://github.com/vishalsachdev/canvas-mcp/issues/303)).
+
+### Fixed
+
+- Tool failures now set MCP `isError: true` while preserving their existing
+  text or structured payload ([issue 270](https://github.com/vishalsachdev/canvas-mcp/issues/270)).
+- String-returning tools no longer duplicate the same value in text content
+  and `structuredContent.result`; dictionary tools retain their structured
+  schemas ([issue 271](https://github.com/vishalsachdev/canvas-mcp/issues/271)).
+
+## [1.10.0] — 2026-08-15
+
+A community bug-fix release driven by live reporter testing
+([@khagyard](https://github.com/khagyard), [@zqian](https://github.com/zqian),
+[@jonespm](https://github.com/jonespm)). One change is **breaking**.
+
+### Changed
+
+- **Breaking: `search_canvas_tools` response shape v2**
+  ([issue 281](https://github.com/vishalsachdev/canvas-mcp/issues/281),
+  [#286](https://github.com/vishalsachdev/canvas-mcp/pull/286)). The tool now
+  searches the ~99 registered MCP tools as well as the TypeScript
+  code-execution API files (previously it silently searched only the latter,
+  so "peer review" returned nothing useful despite ~10 peer-review MCP tools
+  existing). The response carries `schema_version: 2` with labeled
+  `mcp_tools` and `code_execution_api` sections; the old flat `tools` key is
+  gone. Diagnosis credit: [@bruchris](https://github.com/bruchris).
+- **Full-detail code-API content is capped at 2,000 characters**
+  ([issue 287](https://github.com/vishalsachdev/canvas-mcp/issues/287),
+  [#290](https://github.com/vishalsachdev/canvas-mcp/pull/290) by
+  [@SHIL0018](https://github.com/SHIL0018)) so discovery cannot flood the
+  model context with entire source files.
+
+### Fixed
+
+- **Students' peer-review to-dos are now discoverable**
+  ([issue 275](https://github.com/vishalsachdev/canvas-mcp/issues/275)).
+  `get_my_peer_reviews_todo` gained a direct `assignment_identifier` lookup
+  ([#277](https://github.com/vishalsachdev/canvas-mcp/pull/277)) and a
+  Planner-feed discovery path
+  ([#288](https://github.com/vishalsachdev/canvas-mcp/pull/288)) — the same
+  data source Canvas's own student UI uses; the assignment-scoped endpoints
+  the scan previously relied on are instructor-focused. Validated against a
+  real production payload supplied by the reporter.
+- **`create_announcement` no longer leaves a silent discussion topic behind
+  on a student token**
+  ([issue 283](https://github.com/vishalsachdev/canvas-mcp/issues/283)).
+  Canvas answers 200 to the create but drops `is_announcement` for tokens
+  without announcement permission, creating a regular discussion topic. The
+  tool now pre-checks course permissions
+  (`GET /courses/:id?include[]=permissions` — measured live: only the
+  single-course endpoint carries the flag) and refuses before creating
+  anything; if a downgrade still slips through, the unintended topic is
+  deleted automatically. Both discussion tools and the error text also steer
+  AI clients away from "posting it as a discussion instead"
+  ([#285](https://github.com/vishalsachdev/canvas-mcp/pull/285),
+  [#291](https://github.com/vishalsachdev/canvas-mcp/pull/291)). Mechanism
+  identified by [@jonespm](https://github.com/jonespm).
+
+### Security
+
+- Stricter URL validation replaces an incomplete substring check
+  (code-scanning alert, [#278](https://github.com/vishalsachdev/canvas-mcp/pull/278)).
+- Docker base image bumped to `python:3.14-slim`; CI actions group updated.
+
 ## [1.9.0] — 2026-08-10
 
 ### Security
@@ -496,4 +573,4 @@ Four reports arriving within ~40 minutes on 2026-08-03 — three from a first-ti
 
 ## [1.0.4]
 
-- Code Execution API (99.7% token savings), Bulk Operations, MCP 2.14 compliance
+- Code Execution API for token-efficient bulk operations, MCP 2.14 compliance
