@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "source_date": "2026-08-21",
+  "batch": "AM",
+  "source_markdown": "knowledge/github-trending/2026-08-21.md",
+  "projects": [
+    {
+      "repository": "JuliusBrussee/caveman",
+      "source_url": "https://github.com/JuliusBrussee/caveman",
+      "category": "skill",
+      "subcategory": "development",
+      "slug": "caveman",
+      "license": "MIT + BSL-1.1 (path-scoped)",
+      "download": true,
+      "ref": "main",
+      "commit": "a42ef766cedef6160407418a359a52939b2d20b9"
+    },
+    {
+      "repository": "vishalsachdev/canvas-mcp",
+      "source_url": "https://github.com/vishalsachdev/canvas-mcp",
+      "category": "mcp",
+      "subcategory": "servers",
+      "slug": "canvas-mcp",
+      "license": "MIT",
+      "download": true,
+      "ref": "main",
+      "commit": "bb2bfcdf9e96de27b8ba00699bac47966224fe66"
+    },
+    {
+      "repository": "agent-substrate/substrate",
+      "source_url": "https://github.com/agent-substrate/substrate",
+      "category": "agent",
+      "subcategory": "runtimes",
+      "slug": "agent-substrate",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "6fd47c137179d05c542f63403f0113a22f0157b6"
+    },
+    {
+      "repository": "Tencent/AI-Infra-Guard",
+      "source_url": "https://github.com/Tencent/AI-Infra-Guard",
+      "category": "knowledge",
+      "subcategory": "security",
+      "slug": "ai-infra-guard",
+      "license": "Apache-2.0",
+      "download": true,
+      "ref": "main",
+      "commit": "be8974cd0e518be308847ae3f62c193c9b97cd78"
+    }
+  ]
+}
